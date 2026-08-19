@@ -9,10 +9,10 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 | Módulo | Status | Linhas |
 |--------|--------|--------|
 | `lib.rs` | Funcional (loop de frame) | 59 |
-| `cpu/` | Stub (0% execução) | 92 |
+| `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
 | `ppu/` | Timing apenas, sem renderização | 62 |
 | `apu/` | Esqueleto (silêncio) | 36 |
-| `memory/` | Mais completo, mas incompleto | 80 |
+| `memory/` | ROM conectada, I/O parcial | 90 |
 | `timer/` | ~80% funcional | 73 |
 | `cart/` | ROM funcional, save placeholder | 116 |
 
@@ -23,28 +23,28 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 > **Objetivo:** Emular o hardware suficiente para rodar pelo menos um ROM simples.
 
 ### 1.1 CPU — Decodificador de Instruções
-- [ ] Decodificador ARM (32-bit) — TODAS as instruções
-  - [ ] ALU (ADD, SUB, AND, ORR, EOR, MOV, MVN, CMP, TST)
-  - [ ] Multiply (MUL, MLA, UMULL, UMLAL, SMULL, SMLAL)
-  - [ ] Load/Store (LDR, STR, LDM, STM)
-  - [ ] Branch (B, BL, BX, BLX)
-  - [ ] PSR Transfer (MRS, MSR)
-  - [ ] Multiply Long
-  - [ ] Swap (SWP, SWPB)
-  - [ ] Barrel Shifter (LSL, LSR, ASR, ROR)
+- [x] Decodificador ARM (32-bit) — TODAS as instruções
+  - [x] ALU (ADD, SUB, AND, ORR, EOR, MOV, MVN, CMP, TST)
+  - [x] Multiply (MUL, MLA, UMULL, UMLAL, SMULL, SMLAL)
+  - [x] Load/Store (LDR, STR, LDM, STM)
+  - [x] Branch (B, BL, BX, BLX)
+  - [x] PSR Transfer (MRS, MSR)
+  - [x] Multiply Long
+  - [x] Swap (SWP, SWPB)
+  - [x] Barrel Shifter (LSL, LSR, ASR, ROR)
   - [ ] Coprocessor (暂未 necessário)
-- [ ] Decodificador THUMB (16-bit) — TODAS as instruções
-  - [ ] Format 1-19 (todas as categorias)
-  - [ ] Operações de stack (PUSH, POP)
-  - [ ] Load/Store de múltiplos
-  - [ ] Branch condicional e incondicional
-- [ ] Barrel Shifter completo ( Carry Out )
+- [x] Decodificador THUMB (16-bit) — TODAS as instruções
+  - [x] Format 1-19 (todas as categorias)
+  - [x] Operações de stack (PUSH, POP)
+  - [x] Load/Store de múltiplos
+  - [x] Branch condicional e incondicional
+- [x] Barrel Shifter completo ( Carry Out )
 - [ ] Pipeline de 3 estágios correto
 - [ ] Tratamento de interrupções (IRQ/FIQ)
 
 ### 1.2 Memory Bus
-- [ ] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
-- [ ] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
+- [x] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
+- [x] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
 - [ ] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
 - [ ] Wait States (ciclos de acesso por região)
 - [ ] Prefetch Buffer (0x04000000+)

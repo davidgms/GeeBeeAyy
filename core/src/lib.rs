@@ -39,6 +39,7 @@ impl Gba {
 
     pub fn load_rom(&mut self, data: &[u8]) -> Result<(), cart::CartError> {
         self.cartridge = Cartridge::from_bytes(data)?;
+        self.bus.load_rom(data);
         Ok(())
     }
 

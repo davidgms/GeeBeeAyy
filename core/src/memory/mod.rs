@@ -6,6 +6,7 @@ pub struct MemoryBus {
     vram: Vec<u8>,     // 96 KB Video RAM
     oam: Vec<u8>,      // 1 KB OAM
     bios: Vec<u8>,     // 16 KB BIOS (HLE or real)
+    rom: Vec<u8>,      // Cartridge ROM (up to 32 MB)
 }
 
 impl MemoryBus {
@@ -18,6 +19,7 @@ impl MemoryBus {
             vram: vec![0; 96 * 1024],
             oam: vec![0; 1024],
             bios: vec![0; 16 * 1024],
+            rom: Vec::new(),
         }
     }
 
@@ -30,7 +32,23 @@ impl MemoryBus {
             0x0500_0000..=0x0500_03FF => self.palette[(address & 0x3FF) as usize],
             0x0600_0000..=0x0601_7FFF => self.vram[(address & 0x17FFF) as usize],
             0x0700_0000..=0x0700_03FF => self.oam[(address & 0x3FF) as usize],
-            0x0800_0000..=0x09FF_FFFF => 0, // TODO: ROM read
+            // ROM region (0x08000000 - 0x09FFFFFF) with mirroring
+            0x0800_0000..=0x09FF_FFFF => {
+                let addr = (address - 0x0800_0000) as usize;
+                if addr < self.rom.len() {
+                    self.rom[addr]
+                } else {
+                    0
+                }
+            }
+            0x0A00_0000..=0x0BFF_FFFF => {
+                let addr = (address - 0x0A00_0000) as usize;
+                if addr < self.rom.len() {
+                    self.rom[addr]
+                } else {
+                    0
+                }
+            }
             _ => 0,
         }
     }
@@ -76,5 +94,9 @@ impl MemoryBus {
     pub fn load_bios(&mut self, data: &[u8]) {
         let len = data.len().min(self.bios.len());
         self.bios[..len].copy_from_slice(&data[..len]);
+    }
+
+    pub fn load_rom(&mut self, data: &[u8]) {
+        self.rom = data.to_vec();
     }
 }
