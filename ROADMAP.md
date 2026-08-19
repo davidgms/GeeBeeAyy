@@ -8,13 +8,14 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 
 | Módulo | Status | Linhas |
 |--------|--------|--------|
-| `lib.rs` | Funcional (loop de frame) | 59 |
+| `lib.rs` | Funcional (loop de frame) | 75 |
 | `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
-| `ppu/` | Timing apenas, sem renderização | 62 |
+| `ppu/` | Mode 0/3/4 render, I/O sync | ~370 |
 | `apu/` | Esqueleto (silêncio) | 36 |
-| `memory/` | ROM conectada, I/O parcial | 90 |
-| `timer/` | ~80% funcional | 73 |
+| `memory/` | ROM + I/O parcial | 102 |
+| `timer/` | Prescaler + IRQ | ~80 |
 | `cart/` | ROM funcional, save placeholder | 116 |
+| `io/` | I/O register handler | ~150 |
 
 ---
 
@@ -39,20 +40,20 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
   - [x] Load/Store de múltiplos
   - [x] Branch condicional e incondicional
 - [x] Barrel Shifter completo ( Carry Out )
-- [ ] Pipeline de 3 estágios correto
-- [ ] Tratamento de interrupções (IRQ/FIQ)
+- [x] Pipeline de 3 estágios correto (PC+8 ARM, PC+4 THUMB)
+- [x] Tratamento de interrupções (IRQ/FIQ) — handler básico
 
 ### 1.2 Memory Bus
 - [x] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
 - [x] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
-- [ ] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
+- [x] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
 - [ ] Wait States (ciclos de acesso por região)
 - [ ] Prefetch Buffer (0x04000000+)
 - [ ] BIOS execute permission
 
 ### 1.3 Timer
-- [ ] Prescaler (1, 64, 256, 1024)
-- [ ] IRQ no overflow
+- [x] Prescaler (1, 64, 256, 1024)
+- [x] IRQ no overflow
 - [ ] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
 
 ### 1.4 Cartridge
@@ -68,12 +69,12 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 
 ### 2.1 PPU — Renderização
 - [ ] **Mode 0** — 4 backgrounds tiled (4bpp e 8bpp)
-  - [ ] Tile Data (Char Base)
-  - [ ] Screen Entry (Screen Base)
-  - [ ] Scrolling (BG0HOFS/BG0VOFS)
+  - [x] Tile Data (Char Base)
+  - [x] Screen Entry (Screen Base)
+  - [x] Scrolling (BG0HOFS/BG0VOFS)
   - [ ] Priority
-- [ ] **Mode 3** — Bitmap 16bpp (1 framebuffer)
-- [ ] **Mode 4** — Bitmap 8bpp (2 framebuffers)
+- [x] **Mode 3** — Bitmap 16bpp (1 framebuffer)
+- [x] **Mode 4** — Bitmap 8bpp (2 framebuffers)
 - [ ] Paleta de cores (256 cores BG, 256 cores OBJ)
 - [ ] OAM — Sprites básicos (normal, affine)
 - [ ] WIN0/WIN1/WINOUT (janelas)
