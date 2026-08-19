@@ -1,0 +1,207 @@
+# GeeBee-A — Roadmap de Desenvolvimento
+
+Visão geral do plano de desenvolvimento do emulador, dividido por fases e prioridades.
+
+---
+
+## Estado Atual
+
+| Módulo | Status | Linhas |
+|--------|--------|--------|
+| `lib.rs` | Funcional (loop de frame) | 59 |
+| `cpu/` | Stub (0% execução) | 92 |
+| `ppu/` | Timing apenas, sem renderização | 62 |
+| `apu/` | Esqueleto (silêncio) | 36 |
+| `memory/` | Mais completo, mas incompleto | 80 |
+| `timer/` | ~80% funcional | 73 |
+| `cart/` | ROM funcional, save placeholder | 116 |
+
+---
+
+## Fase 1 — Core Funcional (MVP)
+
+> **Objetivo:** Emular o hardware suficiente para rodar pelo menos um ROM simples.
+
+### 1.1 CPU — Decodificador de Instruções
+- [ ] Decodificador ARM (32-bit) — TODAS as instruções
+  - [ ] ALU (ADD, SUB, AND, ORR, EOR, MOV, MVN, CMP, TST)
+  - [ ] Multiply (MUL, MLA, UMULL, UMLAL, SMULL, SMLAL)
+  - [ ] Load/Store (LDR, STR, LDM, STM)
+  - [ ] Branch (B, BL, BX, BLX)
+  - [ ] PSR Transfer (MRS, MSR)
+  - [ ] Multiply Long
+  - [ ] Swap (SWP, SWPB)
+  - [ ] Barrel Shifter (LSL, LSR, ASR, ROR)
+  - [ ] Coprocessor (暂未 necessário)
+- [ ] Decodificador THUMB (16-bit) — TODAS as instruções
+  - [ ] Format 1-19 (todas as categorias)
+  - [ ] Operações de stack (PUSH, POP)
+  - [ ] Load/Store de múltiplos
+  - [ ] Branch condicional e incondicional
+- [ ] Barrel Shifter completo ( Carry Out )
+- [ ] Pipeline de 3 estágios correto
+- [ ] Tratamento de interrupções (IRQ/FIQ)
+
+### 1.2 Memory Bus
+- [ ] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
+- [ ] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
+- [ ] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
+- [ ] Wait States (ciclos de acesso por região)
+- [ ] Prefetch Buffer (0x04000000+)
+- [ ] BIOS execute permission
+
+### 1.3 Timer
+- [ ] Prescaler (1, 64, 256, 1024)
+- [ ] IRQ no overflow
+- [ ] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
+
+### 1.4 Cartridge
+- [ ] Detecção de save type por game code (GBTE, GBXP, etc.)
+- [ ] Detecção por conteúdo ROM (string "SRAM", "FLASH", "EEPROM")
+- [ ] Save RAM (SRAM 32KB)
+
+---
+
+## Fase 2 — Graphics Básico
+
+> **Objetivo:** Renderizar scanlines para ver algo na tela.
+
+### 2.1 PPU — Renderização
+- [ ] **Mode 0** — 4 backgrounds tiled (4bpp e 8bpp)
+  - [ ] Tile Data (Char Base)
+  - [ ] Screen Entry (Screen Base)
+  - [ ] Scrolling (BG0HOFS/BG0VOFS)
+  - [ ] Priority
+- [ ] **Mode 3** — Bitmap 16bpp (1 framebuffer)
+- [ ] **Mode 4** — Bitmap 8bpp (2 framebuffers)
+- [ ] Paleta de cores (256 cores BG, 256 cores OBJ)
+- [ ] OAM — Sprites básicos (normal, affine)
+- [ ] WIN0/WIN1/WINOUT (janelas)
+
+### 2.2 PPU — Intermediário
+- [ ] **Mode 1** — BG0+BG1 tiled, BG2 affine
+- [ ] **Mode 2** — BG2+BG3 affine
+- [ ] **Mode 5** — Bitmap 16bpp (2 framebuffers)
+- [ ] Affine backgrounds (scaling, rotation)
+- [ ] Affine sprites
+- [ ] Mosaic
+
+### 2.3 PPU — Avançado
+- [ ] HBlank / VBlank DMA
+- [ ] OAM DMA
+- [ ] BLDCNT/BLDALPHA (efeitos de blending)
+- [ ] BLDY (brightness)
+
+---
+
+## Fase 3 — Áudio
+
+> **Objetivo:** Áudio funcional sem crackle.
+
+### 3.1 APU — Canais Básicos
+- [ ] Canal 1 — PSG Quadrada (square wave)
+- [ ] Canal 2 — PSG Quadrada
+- [ ] Canal 3 — PSG Onda (wave)
+- [ ] Canal 4 — PSG Ruído (noise)
+- [ ] Sweep (Canal 1)
+- [ ] Envelope (todos os canais)
+- [ ] Sound Length Counter
+
+### 3.2 APU — FIFO
+- [ ] Canal A — Sound A (FIFO/Timer 0/1)
+- [ ] Canal B — Sound B (FIFO/Timer 2/3)
+- [ ] DMA Sound
+- [ ] Mixing (PSG + FIFO)
+
+### 3.3 APU — Sincronização
+- [ ] Master timer (Timer 0 como timing master)
+- [ ] Double buffering
+- [ ] Buffer de áudio com back-pressure
+- [ ] Cross-platform audio API (AAudio Android, CoreAudio iOS)
+
+---
+
+## Fase 4 — Android Frontend
+
+> **Objetivo:** App funcional para testar em dispositivo.
+
+### 4.1 UI Básica
+- [ ] Rom browser com lista de jogos
+- [ ] Tela de emulação (OpenGL ES rendering)
+- [ ] Controles touch na tela
+- [ ] Menu de pausa
+
+### 4.2 Funcionalidades Core
+- [ ] Save states (10 slots)
+- [ ] Fast forward (2x, 4x)
+- [ ] Controle Bluetooth/USB (Xbox, PS, Switch Pro)
+- [ ] Screen scaling (1x, 2x, 3x, fit)
+- [ ] Screen filters (2xSaI, CRT, pixel-perfect)
+
+### 4.3 UX
+- [ ] Customização de controles (tamanho, posição, opacidade)
+- [ ] ROM com capas e metadata
+- [ ] Swipe gestures (rewind, save state)
+- [ ] Landscape/Portrait auto-detect
+
+---
+
+## Fase 5 — iOS Frontend
+
+> **Objetivo:** App nativo para iOS.
+
+- [ ] SwiftUI UI
+- [ ] MFi controller support
+- [ ] Touch controls + gesture support
+- [ ] Save states + iCloud sync
+- [ ] Widget para retomada rápida
+- [ ] App Store distribution
+
+---
+
+## Fase 6 — Avançado
+
+> **Objetivo:** Features que diferenciam de outros emuladores.
+
+- [ ] JIT recompilation (ARM host only)
+- [ ] Link cable emulation (local WiFi)
+- [ ] Cheat codes (GameShark / CodeBreaker)
+- [ ] Rewind support
+- [ ] Screen recording / screenshots
+- [ ] Lua scripting interface
+- [ ] Debug tools (breakpoints, memory viewer, register inspector)
+- [ ] RetroAchievements support
+
+---
+
+## Ordem de Prioridade Recomendada
+
+```
+1. CPU (ARM + THUMB)  ─────┐
+2. Memory Bus (ROM, I/O)   ├──→  Fase 1 (Core funcional)
+3. Timer completo          │
+4. Cart save               ─┘
+                             │
+5. PPU Mode 0 + Mode 3  ────┤  Fase 2 (Graphics)
+6. OAM (sprites básicos)    │
+7. Palette + blending       ─┘
+                             │
+8. APU (PSG channels)    ────┤  Fase 3 (Áudio)
+9. FIFO + sync             ─┘
+                             │
+10. Android frontend     ────┤  Fase 4 (App)
+11. Save states, FF       ─┘
+```
+
+---
+
+## Referências
+
+| Recurso | Link |
+|---------|------|
+| GBATEK (hardware reference) | https://problemkaputt.de/gbatek.htm |
+| TONC (programação GBA) | https://www.coranac.com/tonc/text/toc.htm |
+| ARM7TDMI TRM | https://developer.arm.com/documentation/ddi0029/ |
+| mGBA (código de referência) | https://github.com/mgba-emu/mgba |
+| SkyEmu (per-pixel PPU) | https://github.com/skylersaleh/SkyEmu |
+| rustboyadvance-ng (Rust reference) | https://github.com/rustboyadvance-ng |
