@@ -9,6 +9,8 @@ pub struct Timer {
     prescaler: [u32; 4],
     irq_enabled: [bool; 4],
     tick_counters: [u32; 4],
+    /// Tracks which timers overflowed this tick (for APU sound DMA)
+    pub overflow_flags: [bool; 4],
 }
 
 impl Timer {
@@ -22,6 +24,7 @@ impl Timer {
             prescaler: [1; 4],
             irq_enabled: [false; 4],
             tick_counters: [0; 4],
+            overflow_flags: [false; 4],
         }
     }
 
@@ -45,6 +48,7 @@ impl Timer {
                 // Timer overflow at 0x10000 (16-bit counter)
                 if self.counters[i] >= 0x10000 {
                     self.counters[i] = self.reloads[i];
+                    self.overflow_flags[i] = true;
 
                     // Handle cascade to next timer
                     if i < 3 && self.cascaded[i + 1] {
@@ -93,5 +97,12 @@ impl Timer {
         } else {
             0
         }
+    }
+
+    /// Drain overflow flags (returns which timers overflowed).
+    pub fn drain_overflows(&mut self) -> [bool; 4] {
+        let flags = self.overflow_flags;
+        self.overflow_flags = [false; 4];
+        flags
     }
 }

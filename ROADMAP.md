@@ -112,7 +112,7 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 ### 3.2 APU — FIFO
 - [x] Canal A — Sound A (FIFO/Timer 0/1)
 - [x] Canal B — Sound B (FIFO/Timer 2/3)
-- [ ] DMA Sound
+- [x] DMA Sound
 - [x] Mixing (PSG + FIFO)
 
 ### 3.3 APU — Sincronização

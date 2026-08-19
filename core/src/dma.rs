@@ -192,7 +192,7 @@ impl Dma {
     }
 
     /// Called on scanline 0 (start of frame). Triggers special DMA channels.
-    pub fn on_vcounter(&mut self, _bus: &mut super::memory::MemoryBus) {
+    pub fn on_vcounter(&mut self, bus: &mut super::memory::MemoryBus) {
         for i in 0..4 {
             let timing = self.channels[i].timing;
             let enabled = self.channels[i].enabled;
@@ -201,6 +201,32 @@ impl Dma {
                 // TODO: Video capture DMA
             }
         }
+    }
+
+    /// Check if a DMA channel is set up for sound FIFO refill.
+    /// Returns (channel_index, source_address) if it's a sound DMA.
+    pub fn is_sound_dma(&self, channel: usize) -> bool {
+        if channel >= 4 { return false; }
+        let ch = &self.channels[channel];
+        // Sound DMA: timing=3 (special), dest fixed to 0x040000A0/0x040000A4
+        ch.timing == 3 && ch.enabled
+            && (ch.dest == 0x0400_00A0 || ch.dest == 0x0400_00A4)
+    }
+
+    /// Perform a sound DMA transfer (4 words = 16 bytes to FIFO).
+    pub fn do_sound_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) -> Option<(u32, Vec<u8>)> {
+        if channel >= 4 { return None; }
+        let ch = &mut self.channels[channel];
+        if !ch.enabled || ch.timing != 3 { return None; }
+
+        let mut data = Vec::with_capacity(16);
+        for _ in 0..4 {
+            let val = bus.read32(ch.source);
+            data.extend_from_slice(&val.to_le_bytes());
+            ch.source = ch.source.wrapping_add(4);
+        }
+
+        Some((ch.dest, data))
     }
 
     pub fn tick(&mut self, _bus: &mut super::memory::MemoryBus) {

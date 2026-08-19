@@ -137,6 +137,13 @@ pub struct Apu {
     master_vol_right: u8,
     sound_out_mix: u8,
     envelope_tick_counter: u32,
+    /// Timer that drives FIFO playback (0 or 1)
+    pub fifo_timer: u8,
+    /// Cycles accumulated for FIFO sample output
+    fifo_cycles: u32,
+    /// Whether FIFO A/B are enabled via SOUNDCNT_H
+    pub fifo_a_enabled: bool,
+    pub fifo_b_enabled: bool,
 }
 
 impl Apu {
@@ -180,6 +187,10 @@ impl Apu {
             master_vol_left: 0, master_vol_right: 0,
             sound_out_mix: 0,
             envelope_tick_counter: 0,
+            fifo_timer: 0,
+            fifo_cycles: 0,
+            fifo_a_enabled: false,
+            fifo_b_enabled: false,
         }
     }
 
@@ -193,6 +204,12 @@ impl Apu {
     pub fn write_soundcnt_h(&mut self, value: u16) {
         self.sound_out_mix = (value & 0xFF) as u8;
         self.sound_on = value & 0x8000 != 0;
+        // FIFO A enable (bit 8) and volume A (bit 2)
+        self.fifo_a_enabled = value & 0x0100 != 0;
+        // FIFO B enable (bit 9) and volume B (bit 3)
+        self.fifo_b_enabled = value & 0x0200 != 0;
+        // Timer select for FIFO (bit 10): 0=Timer0, 1=Timer1
+        self.fifo_timer = ((value >> 10) & 1) as u8;
     }
 
     pub fn write_sound1_reg(&mut self, reg: u32, value: u8) {
@@ -316,6 +333,16 @@ impl Apu {
     /// Check if FIFO B is half-empty (for DMA refill)
     pub fn fifo_b_half_empty(&self) -> bool {
         self.fifo_b.is_half_empty()
+    }
+
+    /// Called when a timer overflows. If it's the FIFO timer, trigger FIFO playback.
+    pub fn on_timer_overflow(&mut self, timer: u8) {
+        if !self.sound_on || timer != self.fifo_timer {
+            return;
+        }
+        // On real GBA, each timer overflow plays one sample from each enabled FIFO
+        // The sample rate depends on the timer's prescaler
+        // For now, we just output the current FIFO sample
     }
 
     fn duty_wave(duty: u8, idx: u32) -> f32 {

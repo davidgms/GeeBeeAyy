@@ -65,6 +65,34 @@ impl Gba {
                 self.bus.prefetch_tick();
             }
 
+            // DMA Sound: refill FIFO A (DMA1) and FIFO B (DMA2) when half-empty
+            if self.apu.fifo_a_half_empty() {
+                if let Some((dest, data)) = self.dma.do_sound_transfer(1, &mut self.bus) {
+                    if dest == 0x0400_00A0 {
+                        for &byte in &data {
+                            self.apu.write_fifo_a(byte as i8);
+                        }
+                    }
+                }
+            }
+            if self.apu.fifo_b_half_empty() {
+                if let Some((dest, data)) = self.dma.do_sound_transfer(2, &mut self.bus) {
+                    if dest == 0x0400_00A4 {
+                        for &byte in &data {
+                            self.apu.write_fifo_b(byte as i8);
+                        }
+                    }
+                }
+            }
+
+            // Check timer overflows for APU sound DMA
+            let overflows = self.timer.drain_overflows();
+            for (i, &overflow) in overflows.iter().enumerate() {
+                if overflow {
+                    self.apu.on_timer_overflow(i as u8);
+                }
+            }
+
             // Process sound register writes from memory bus
             let writes = self.bus.drain_sound_writes();
             for (offset, value) in writes {
@@ -134,5 +162,13 @@ impl Gba {
 
     pub fn frame_buffer(&self) -> &[u8; 240 * 160 * 3] {
         self.ppu.frame_buffer()
+    }
+
+    pub fn apu_samples(&self) -> &[f32] {
+        self.apu.samples()
+    }
+
+    pub fn clear_audio_buffer(&mut self) {
+        self.apu.clear_buffer();
     }
 }
