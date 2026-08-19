@@ -8,15 +8,15 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 
 | Módulo | Status | Linhas |
 |--------|--------|--------|
-| `lib.rs` | Funcional (loop de frame + DMA) | 85 |
+| `lib.rs` | Funcional (loop + DMA + HBlank) | 85 |
 | `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
-| `ppu/` | Mode 0/3/4 + OBJ sprites | ~510 |
+| `ppu/` | Mode 0/1/2/3/4 + OBJ + color FX | ~620 |
 | `apu/` | Esqueleto (silêncio) | 36 |
-| `memory/` | ROM + I/O + waitcnt | 110 |
+| `memory/` | ROM + I/O + wait states | ~140 |
 | `timer/` | Prescaler + IRQ | ~80 |
-| `cart/` | ROM + save detection (SRAM/Flash/EEPROM) | 130 |
+| `cart/` | ROM + SRAM/Flash/EEPROM save | ~230 |
 | `io/` | I/O register handler | ~150 |
-| `dma/` | DMA channel transfer (basic) | ~120 |
+| `dma/` | DMA 4ch (immediate/HBlank/VBlank) | ~170 |
 
 ---
 
@@ -48,19 +48,19 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [x] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
 - [x] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
 - [x] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
-- [ ] Wait States (ciclos de acesso por região)
+- [x] Wait States (ciclos de acesso por região)
 - [ ] Prefetch Buffer (0x04000000+)
 - [ ] BIOS execute permission
 
 ### 1.3 Timer
 - [x] Prescaler (1, 64, 256, 1024)
 - [x] IRQ no overflow
-- [ ] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
+- [x] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
 
 ### 1.4 Cartridge
 - [x] Detecção de save type por game code (GBTE, GBXP, etc.)
 - [x] Detecção por conteúdo ROM (string "SRAM", "FLASH", "EEPROM")
-- [ ] Save RAM (SRAM 32KB)
+- [x] Save RAM (SRAM 32KB, Flash 64/128KB, EEPROM)
 
 ---
 
@@ -81,18 +81,18 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [ ] WIN0/WIN1/WINOUT (janelas)
 
 ### 2.2 PPU — Intermediário
-- [ ] **Mode 1** — BG0+BG1 tiled, BG2 affine
-- [ ] **Mode 2** — BG2+BG3 affine
+- [x] **Mode 1** — BG0+BG1 tiled, BG2 affine
+- [x] **Mode 2** — BG2+BG3 affine
 - [ ] **Mode 5** — Bitmap 16bpp (2 framebuffers)
-- [ ] Affine backgrounds (scaling, rotation)
+- [x] Affine backgrounds (scaling, rotation)
 - [ ] Affine sprites
 - [ ] Mosaic
 
 ### 2.3 PPU — Avançado
-- [ ] HBlank / VBlank DMA
+- [x] HBlank / VBlank DMA
 - [ ] OAM DMA
-- [ ] BLDCNT/BLDALPHA (efeitos de blending)
-- [ ] BLDY (brightness)
+- [x] BLDCNT/BLDALPHA (efeitos de blending)
+- [x] BLDY (brightness)
 
 ---
 

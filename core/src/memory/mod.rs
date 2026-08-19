@@ -101,4 +101,54 @@ impl MemoryBus {
     pub fn load_rom(&mut self, data: &[u8]) {
         self.rom = data.to_vec();
     }
+
+    /// Returns the number of CPU cycles for a read at the given address.
+    /// GBA memory timing depends on region and access type.
+    pub fn read_cycles(&self, address: u32, is_32bit: bool) -> u32 {
+        match address {
+            0x0000_0000..=0x0000_3FFF => 1,                      // BIOS: 1 cycle (cached)
+            0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },  // EWRAM
+            0x0300_0000..=0x0300_7FFF => if is_32bit { 2 } else { 1 },  // IWRAM
+            0x0400_0000..=0x0400_03FE => 1,                       // I/O
+            0x0500_0000..=0x0500_03FF => 1,                       // Palette
+            0x0600_0000..=0x0601_7FFF => 1,                       // VRAM
+            0x0700_0000..=0x0700_03FF => 1,                       // OAM
+            0x0800_0000..=0x09FF_FFFF => {                         // ROM Wait State 0
+                let ws = (self.waitcnt >> 2) & 3;
+                if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
+            }
+            0x0A00_0000..=0x0BFF_FFFF => {                         // ROM Wait State 1
+                let ws = (self.waitcnt >> 5) & 3;
+                if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
+            }
+            0x0C00_0000..=0x0DFF_FFFF => {                         // ROM Wait State 2
+                let ws = (self.waitcnt >> 8) & 3;
+                if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
+            }
+            _ => 1,
+        }
+    }
+
+    /// Returns the number of CPU cycles for a write at the given address.
+    pub fn write_cycles(&self, address: u32, is_32bit: bool) -> u32 {
+        match address {
+            0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },
+            0x0300_0000..=0x0300_7FFF => 1,
+            0x0400_0000..=0x0400_03FE => 1,
+            0x0500_0000..=0x0500_03FF => 1,
+            0x0600_0000..=0x0601_7FFF => 2,
+            0x0700_0000..=0x0700_03FF => 1,
+            _ => 1,
+        }
+    }
+
+    /// Update WAITCNT register
+    pub fn set_waitcnt(&mut self, value: u16) {
+        self.waitcnt = value;
+    }
+
+    /// Get WAITCNT register
+    pub fn get_waitcnt(&self) -> u16 {
+        self.waitcnt
+    }
 }

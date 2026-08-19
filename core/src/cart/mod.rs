@@ -26,6 +26,11 @@ pub struct Cartridge {
     rom: Vec<u8>,
     save_type: SaveType,
     title: String,
+    sram: Vec<u8>,       // SRAM 32KB
+    flash: Vec<u8>,      // Flash 64KB/128KB
+    eeprom: Vec<u8>,     // EEPROM 512B/8KB
+    flash_state: u8,     // Flash command state machine
+    flash_bank: usize,   // Flash bank select (for 128KB)
 }
 
 impl Cartridge {
@@ -34,6 +39,11 @@ impl Cartridge {
             rom: Vec::new(),
             save_type: SaveType::None,
             title: String::new(),
+            sram: vec![0; 32 * 1024],
+            flash: vec![0; 128 * 1024],
+            eeprom: vec![0; 8 * 1024],
+            flash_state: 0,
+            flash_bank: 0,
         }
     }
 
@@ -52,19 +62,34 @@ impl Cartridge {
             return Err(CartError::BadChecksum);
         }
 
-        // Extract title (12 bytes at 0xA0)
         let title_bytes = &data[0xA0..0xAC];
         let title = String::from_utf8_lossy(title_bytes)
             .trim_end_matches('\0')
             .to_string();
 
-        // Detect save type from game code or ROM content
         let save_type = detect_save_type(data, &title);
+
+        let sram_size = 32 * 1024;
+        let flash_size = match save_type {
+            SaveType::Flash128 => 128 * 1024,
+            SaveType::Flash64 => 64 * 1024,
+            _ => 0,
+        };
+        let eeprom_size = match save_type {
+            SaveType::Eeprom8k => 8 * 1024,
+            SaveType::Eeprom512 => 512,
+            _ => 0,
+        };
 
         Ok(Self {
             rom: data.to_vec(),
             save_type,
             title,
+            sram: vec![0; sram_size],
+            flash: vec![0; flash_size],
+            eeprom: vec![0; eeprom_size],
+            flash_state: 0,
+            flash_bank: 0,
         })
     }
 
@@ -101,6 +126,123 @@ impl Cartridge {
 
     pub fn len(&self) -> usize {
         self.rom.len()
+    }
+
+    /// Read a byte from save memory
+    pub fn save_read(&self, address: u32) -> u8 {
+        match self.save_type {
+            SaveType::Sram => {
+                let addr = (address as usize) & 0x7FFF;
+                if addr < self.sram.len() { self.sram[addr] } else { 0 }
+            }
+            SaveType::Flash64 | SaveType::Flash128 => {
+                let addr = (address as usize) & 0xFFFF;
+                if addr < self.flash.len() { self.flash[addr] } else { 0 }
+            }
+            SaveType::Eeprom512 | SaveType::Eeprom8k => {
+                let addr = (address as usize) & (self.eeprom.len() - 1);
+                self.eeprom[addr]
+            }
+            SaveType::None => 0,
+        }
+    }
+
+    /// Write a byte to save memory
+    pub fn save_write(&mut self, address: u32, value: u8) {
+        match self.save_type {
+            SaveType::Sram => {
+                let addr = (address as usize) & 0x7FFF;
+                if addr < self.sram.len() {
+                    self.sram[addr] = value;
+                }
+            }
+            SaveType::Flash64 | SaveType::Flash128 => {
+                // Flash command state machine
+                match self.flash_state {
+                    0 => {
+                        // Command unlock sequence
+                        if value == 0xAA { self.flash_state = 1; }
+                    }
+                    1 => {
+                        if value == 0x55 { self.flash_state = 2; }
+                        else { self.flash_state = 0; }
+                    }
+                    2 => {
+                        match value {
+                            0x90 => self.flash_state = 3, // Chip ID mode
+                            0xA0 => self.flash_state = 4, // Byte program
+                            0xB0 => self.flash_state = 5, // Bank select
+                            0x80 => self.flash_state = 6, // Erase
+                            _ => self.flash_state = 0,
+                        }
+                    }
+                    3 => { // Chip ID mode
+                        self.flash_state = 0;
+                    }
+                    4 => { // Byte program
+                        let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF)) & (self.flash.len() - 1);
+                        if addr < self.flash.len() {
+                            self.flash[addr] = value;
+                        }
+                        self.flash_state = 0;
+                    }
+                    5 => { // Bank select
+                        self.flash_bank = (value as usize) & 1;
+                        self.flash_state = 0;
+                    }
+                    6 => { // Erase
+                        if value == 0x30 {
+                            // Erase sector
+                            let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF)) & (self.flash.len() - 1);
+                            let sector = addr & 0xFFFFF000;
+                            if sector + 0x1000 <= self.flash.len() {
+                                for i in sector..sector + 0x1000 {
+                                    self.flash[i] = 0xFF;
+                                }
+                            }
+                        }
+                        self.flash_state = 0;
+                    }
+                    _ => self.flash_state = 0,
+                }
+            }
+            SaveType::Eeprom512 | SaveType::Eeprom8k => {
+                let addr = (address as usize) & (self.eeprom.len() - 1);
+                self.eeprom[addr] = value;
+            }
+            SaveType::None => {}
+        }
+    }
+
+    /// Get save data for saving to file
+    pub fn save_data(&self) -> Option<Vec<u8>> {
+        match self.save_type {
+            SaveType::Sram => Some(self.sram.clone()),
+            SaveType::Flash64 => Some(self.flash[..64 * 1024].to_vec()),
+            SaveType::Flash128 => Some(self.flash.clone()),
+            SaveType::Eeprom512 => Some(self.eeprom[..512].to_vec()),
+            SaveType::Eeprom8k => Some(self.eeprom.clone()),
+            SaveType::None => None,
+        }
+    }
+
+    /// Load save data from file
+    pub fn load_save(&mut self, data: &[u8]) {
+        match self.save_type {
+            SaveType::Sram => {
+                let len = data.len().min(self.sram.len());
+                self.sram[..len].copy_from_slice(&data[..len]);
+            }
+            SaveType::Flash64 | SaveType::Flash128 => {
+                let len = data.len().min(self.flash.len());
+                self.flash[..len].copy_from_slice(&data[..len]);
+            }
+            SaveType::Eeprom512 | SaveType::Eeprom8k => {
+                let len = data.len().min(self.eeprom.len());
+                self.eeprom[..len].copy_from_slice(&data[..len]);
+            }
+            SaveType::None => {}
+        }
     }
 }
 

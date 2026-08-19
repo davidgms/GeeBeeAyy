@@ -57,16 +57,17 @@ impl Gba {
             let cycles = self.cpu.step(&mut self.bus);
             self.cycles += cycles as u64;
             self.timer.tick(cycles as u32, &mut self.bus);
-            self.ppu.tick(cycles as u32, &mut self.bus);
+            self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
             self.apu.tick(cycles as u32);
-            self.dma.tick(&mut self.bus);
 
-            // Check for VBlank IRQ
+            // Check for interrupts
             if self.ppu.vblank_pending() {
                 self.io.request_interrupt(0x0001); // VBlank IRQ
             }
+            if self.ppu.hblank_pending() {
+                self.io.request_interrupt(0x0002); // HBlank IRQ
+            }
 
-            // Handle interrupts
             if self.io.interrupt_pending() {
                 self.cpu.handle_irq();
             }
