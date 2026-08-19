@@ -177,9 +177,13 @@ impl Ppu {
         // Sort by priority (lower number = higher priority)
         bg_list.sort_by_key(|&(p, _)| p);
 
-        for x in 0..SCREEN_WIDTH {
-            let mut pixel_set = false;
+        // Render OBJ sprites if enabled
+        if self.obj_enable {
+            self.render_obj_scanline(y, bus);
+        }
 
+        // Render BGs with priority
+        for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_base, is_8bpp) =
                     self.get_bg_pixel(bg, x, y, bus);
@@ -196,8 +200,7 @@ impl Ppu {
                     };
 
                     if color_index == 0 {
-                        // Transparent
-                        continue;
+                        continue; // Transparent
                     }
 
                     // Read color from palette (BG palette at 0x05000000)
@@ -211,7 +214,6 @@ impl Ppu {
                     self.frame_buffer[idx] = r;
                     self.frame_buffer[idx + 1] = g;
                     self.frame_buffer[idx + 2] = b;
-                    pixel_set = true;
                     break;
                 } else {
                     // 8bpp: 256 colors, 64 bytes per tile
@@ -220,7 +222,7 @@ impl Ppu {
                     let color_index = bus.read8((tile_data_addr + byte_offset) as u32);
 
                     if color_index == 0 {
-                        continue;
+                        continue; // Transparent
                     }
 
                     // Read color from palette (BG palette at 0x05000000)
@@ -234,13 +236,155 @@ impl Ppu {
                     self.frame_buffer[idx] = r;
                     self.frame_buffer[idx + 1] = g;
                     self.frame_buffer[idx + 2] = b;
-                    pixel_set = true;
                     break;
                 }
             }
+        }
+    }
 
-            // If no pixel was set, it remains white (already cleared)
-            let _ = pixel_set;
+    /// Render OBJ sprites for the current scanline.
+    fn render_obj_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
+        // OAM is at 0x07000000, 128 sprites, 8 bytes each = 1024 bytes
+        // Each sprite has 3 attribute words (Attr0, Attr1, Attr2)
+
+        // Iterate through all 128 sprites
+        for sprite in 0..128u16 {
+            let oam_addr = 0x0700_0000 + (sprite as u32) * 8;
+
+            // Read Attr0 (16-bit)
+            let attr0 = bus.read16(oam_addr);
+            // Read Attr1 (16-bit)
+            let attr1 = bus.read16(oam_addr + 2);
+            // Read Attr2 (16-bit)
+            let attr2 = bus.read16(oam_addr + 4);
+
+            // Check if sprite is disabled (Attr0 bit 9 = 1 means disabled)
+            if attr0 & 0x0200 != 0 {
+                continue;
+            }
+
+            // Y coordinate (Attr0 bits 0-7)
+            let sy = (attr0 & 0x00FF) as i16;
+            let sy = if sy > 127 { sy - 256 } else { sy };
+
+            // Shape (Attr0 bits 14-15)
+            let shape = (attr0 >> 14) & 3;
+
+            // X coordinate (Attr1 bits 0-8)
+            let sx = (attr1 & 0x01FF) as i16;
+            let sx = if sx > 255 { sx - 512 } else { sx };
+
+            // Size (Attr1 bits 14-15)
+            let size = (attr1 >> 14) & 3;
+
+            // Tile number (Attr2 bits 0-9)
+            let tile_num = attr2 & 0x03FF;
+
+            // Palette number (Attr2 bits 12-15) - only for 4bpp
+            let palette = ((attr2 >> 12) & 0xF) as u8;
+
+            // Determine sprite dimensions based on shape and size
+            let (sprite_width, sprite_height) = match shape {
+                0b00 => { // Square
+                    match size {
+                        0b00 => (8, 8),
+                        0b01 => (16, 16),
+                        0b10 => (32, 32),
+                        0b11 => (64, 64),
+                        _ => (8, 8),
+                    }
+                }
+                0b01 => { // Horizontal rectangle
+                    match size {
+                        0b00 => (16, 8),
+                        0b01 => (32, 8),
+                        0b10 => (32, 16),
+                        0b11 => (64, 32),
+                        _ => (16, 8),
+                    }
+                }
+                0b10 => { // Vertical rectangle
+                    match size {
+                        0b00 => (8, 16),
+                        0b01 => (8, 32),
+                        0b10 => (16, 32),
+                        0b11 => (32, 64),
+                        _ => (8, 16),
+                    }
+                }
+                _ => continue, // Prohibited
+            };
+
+            // Check if sprite intersects current scanline
+            if y as i16 >= sy && (y as i16) < sy + sprite_height as i16 {
+                // Check 1D/2D mapping (DISPCNT bit 6)
+                let mapping_1d = self.dispcnt & 0x0040 != 0;
+                let is_8bpp = attr0 & 0x0080 != 0;
+
+                for sx_off in 0..sprite_width {
+                    let px = sx + sx_off as i16;
+                    if px < 0 || px >= 240 {
+                        continue;
+                    }
+
+                    let py = y as i16 - sy;
+                    let tile_x = sx_off % 8;
+                    let tile_y = (py % 8) as usize;
+
+                    // Calculate tile offset
+                    let tiles_per_row = if mapping_1d {
+                        sprite_width as u16 / 8
+                    } else {
+                        32 // 2D mapping: 32 tiles per row in VRAM
+                    };
+
+                    let tile_offset = (py as u16 / 8) * tiles_per_row + (sx_off as u16 / 8);
+                    let tile_number = tile_num + tile_offset;
+
+                    // Calculate tile data address in VRAM
+                    let tile_data_addr = if is_8bpp {
+                        0x0600_0000 + (tile_number as usize) * 64
+                    } else {
+                        0x0600_0000 + (tile_number as usize) * 32
+                    };
+
+                    let color_index = if is_8bpp {
+                        // 8bpp: 256 colors
+                        let byte_offset = tile_y * 8 + tile_x;
+                        bus.read8((tile_data_addr + byte_offset) as u32)
+                    } else {
+                        // 4bpp: 16 colors
+                        let byte_offset = tile_y * 4 + tile_x / 2;
+                        let byte = bus.read8((tile_data_addr + byte_offset) as u32);
+                        if tile_x % 2 == 0 {
+                            byte & 0x0F
+                        } else {
+                            (byte >> 4) & 0x0F
+                        }
+                    };
+
+                    if color_index == 0 {
+                        continue; // Transparent
+                    }
+
+                    // Read color from OBJ palette (0x05000200)
+                    let palette_addr = if is_8bpp {
+                        0x0500_0200 + (color_index as usize) * 2
+                    } else {
+                        0x0500_0200 + (palette as usize) * 32 + (color_index as usize) * 2
+                    };
+
+                    let color = bus.read16(palette_addr as u32);
+                    let r = ((color & 0x001F) as u8) << 3;
+                    let g = (((color >> 5) & 0x001F) as u8) << 3;
+                    let b = (((color >> 10) & 0x001F) as u8) << 3;
+
+                    let idx = (y * SCREEN_WIDTH + px as usize) * 3;
+                    self.frame_buffer[idx] = r;
+                    self.frame_buffer[idx + 1] = g;
+                    self.frame_buffer[idx + 2] = b;
+                }
+            }
         }
     }
 

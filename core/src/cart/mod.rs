@@ -104,13 +104,41 @@ impl Cartridge {
     }
 }
 
-fn detect_save_type(_rom: &[u8], title: &str) -> SaveType {
-    // TODO: More sophisticated detection based on game code
-    // This is a placeholder - real detection uses game database
-    // and ROM content analysis (looking for save-related strings)
-    match title {
-        "POKEMON RUBY" | "POKEMON SAPPHIRE" | "POKEMON EMERALD" => SaveType::Flash128,
-        "POKEMON FIRERED" | "POKEMON LEAFGREEN" => SaveType::Flash128,
-        _ => SaveType::None,
+fn detect_save_type(rom: &[u8], title: &str) -> SaveType {
+    // First try game code database
+    if rom.len() >= 0xAC {
+        let game_code = &rom[0xAC..0xB0];
+        let code = std::str::from_utf8(game_code).unwrap_or("");
+
+        // Known save types by game code
+        match code {
+            "GBXP" | "GBXJ" | "GBXE" => return SaveType::Sram,
+            "GB4P" | "GB4J" | "GB4E" => return SaveType::Flash128,
+            _ => {}
+        }
+    }
+
+    // Scan ROM for save type strings
+    let rom_str = String::from_utf8_lossy(rom);
+    if rom_str.contains("SRAM_V") {
+        SaveType::Sram
+    } else if rom_str.contains("FLASH_V") || rom_str.contains("FLASH512_V") {
+        SaveType::Flash64
+    } else if rom_str.contains("FLASH1M_V") {
+        SaveType::Flash128
+    } else if rom_str.contains("EEPROM_V") {
+        // Determine size from ROM size or game code
+        if rom.len() > 0x1000000 {
+            SaveType::Eeprom8k
+        } else {
+            SaveType::Eeprom512
+        }
+    } else {
+        // Fallback: check title for known games
+        match title {
+            "POKEMON RUBY" | "POKEMON SAPPHIRE" | "POKEMON EMERALD" => SaveType::Flash128,
+            "POKEMON FIRERED" | "POKEMON LEAFGREEN" => SaveType::Flash128,
+            _ => SaveType::None,
+        }
     }
 }

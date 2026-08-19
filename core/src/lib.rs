@@ -5,6 +5,7 @@ pub mod memory;
 pub mod timer;
 pub mod cart;
 pub mod io;
+pub mod dma;
 
 use cpu::Cpu;
 use ppu::Ppu;
@@ -13,6 +14,7 @@ use memory::MemoryBus;
 use timer::Timer;
 use cart::Cartridge;
 use io::IoHandler;
+use dma::Dma;
 
 const CYCLES_PER_FRAME: u64 = 280896; // ~59.73 Hz
 
@@ -24,6 +26,7 @@ pub struct Gba {
     pub timer: Timer,
     pub cartridge: Cartridge,
     pub io: IoHandler,
+    pub dma: Dma,
     pub cycles: u64,
 }
 
@@ -37,6 +40,7 @@ impl Gba {
             timer: Timer::new(),
             cartridge: Cartridge::empty(),
             io: IoHandler::new(),
+            dma: Dma::new(),
             cycles: 0,
         }
     }
@@ -55,6 +59,7 @@ impl Gba {
             self.timer.tick(cycles as u32, &mut self.bus);
             self.ppu.tick(cycles as u32, &mut self.bus);
             self.apu.tick(cycles as u32);
+            self.dma.tick(&mut self.bus);
 
             // Check for VBlank IRQ
             if self.ppu.vblank_pending() {

@@ -8,14 +8,15 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 
 | Módulo | Status | Linhas |
 |--------|--------|--------|
-| `lib.rs` | Funcional (loop de frame) | 75 |
+| `lib.rs` | Funcional (loop de frame + DMA) | 85 |
 | `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
-| `ppu/` | Mode 0/3/4 render, I/O sync | ~370 |
+| `ppu/` | Mode 0/3/4 + OBJ sprites | ~510 |
 | `apu/` | Esqueleto (silêncio) | 36 |
-| `memory/` | ROM + I/O parcial | 102 |
+| `memory/` | ROM + I/O + waitcnt | 110 |
 | `timer/` | Prescaler + IRQ | ~80 |
-| `cart/` | ROM funcional, save placeholder | 116 |
+| `cart/` | ROM + save detection (SRAM/Flash/EEPROM) | 130 |
 | `io/` | I/O register handler | ~150 |
+| `dma/` | DMA channel transfer (basic) | ~120 |
 
 ---
 
@@ -57,8 +58,8 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [ ] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
 
 ### 1.4 Cartridge
-- [ ] Detecção de save type por game code (GBTE, GBXP, etc.)
-- [ ] Detecção por conteúdo ROM (string "SRAM", "FLASH", "EEPROM")
+- [x] Detecção de save type por game code (GBTE, GBXP, etc.)
+- [x] Detecção por conteúdo ROM (string "SRAM", "FLASH", "EEPROM")
 - [ ] Save RAM (SRAM 32KB)
 
 ---
@@ -68,15 +69,15 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 > **Objetivo:** Renderizar scanlines para ver algo na tela.
 
 ### 2.1 PPU — Renderização
-- [ ] **Mode 0** — 4 backgrounds tiled (4bpp e 8bpp)
+- [x] **Mode 0** — 4 backgrounds tiled (4bpp e 8bpp)
   - [x] Tile Data (Char Base)
   - [x] Screen Entry (Screen Base)
   - [x] Scrolling (BG0HOFS/BG0VOFS)
-  - [ ] Priority
+  - [x] Priority
 - [x] **Mode 3** — Bitmap 16bpp (1 framebuffer)
 - [x] **Mode 4** — Bitmap 8bpp (2 framebuffers)
 - [ ] Paleta de cores (256 cores BG, 256 cores OBJ)
-- [ ] OAM — Sprites básicos (normal, affine)
+- [x] OAM — Sprites básicos (normal, affine)
 - [ ] WIN0/WIN1/WINOUT (janelas)
 
 ### 2.2 PPU — Intermediário

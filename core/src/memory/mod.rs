@@ -7,6 +7,7 @@ pub struct MemoryBus {
     oam: Vec<u8>,      // 1 KB OAM
     bios: Vec<u8>,     // 16 KB BIOS (HLE or real)
     rom: Vec<u8>,      // Cartridge ROM (up to 32 MB)
+    waitcnt: u16,      // Wait State Control
 }
 
 impl MemoryBus {
@@ -20,6 +21,7 @@ impl MemoryBus {
             oam: vec![0; 1024],
             bios: vec![0; 16 * 1024],
             rom: Vec::new(),
+            waitcnt: 0,
         }
     }
 
