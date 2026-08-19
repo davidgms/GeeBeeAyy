@@ -78,7 +78,7 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [x] **Mode 4** — Bitmap 8bpp (2 framebuffers)
 - [ ] Paleta de cores (256 cores BG, 256 cores OBJ)
 - [x] OAM — Sprites básicos (normal, affine)
-- [ ] WIN0/WIN1/WINOUT (janelas)
+- [x] WIN0/WIN1/WINOUT (janelas)
 
 ### 2.2 PPU — Intermediário
 - [x] **Mode 1** — BG0+BG1 tiled, BG2 affine
@@ -86,7 +86,7 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [x] **Mode 5** — Bitmap 16bpp (2 framebuffers)
 - [x] Affine backgrounds (scaling, rotation)
 - [x] Affine sprites
-- [ ] Mosaic
+- [x] Mosaic
 
 ### 2.3 PPU — Avançado
 - [x] HBlank / VBlank DMA
@@ -105,9 +105,9 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [x] Canal 2 — PSG Quadrada
 - [x] Canal 3 — PSG Onda (wave)
 - [x] Canal 4 — PSG Ruído (noise)
-- [ ] Sweep (Canal 1)
-- [ ] Envelope (todos os canais)
-- [ ] Sound Length Counter
+- [x] Sweep (Canal 1)
+- [x] Envelope (todos os canais)
+- [x] Sound Length Counter
 
 ### 3.2 APU — FIFO
 - [ ] Canal A — Sound A (FIFO/Timer 0/1)

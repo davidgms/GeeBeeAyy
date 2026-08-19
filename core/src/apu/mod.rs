@@ -9,6 +9,7 @@ struct SoundChannel1 {
     sweep_shift: u8,
     sweep_dir: u8,
     sweep_timer: u8,
+    sweep_tick: u8,
     duty: u8,
     volume_init: u8,
     volume_cur: u8,
@@ -82,6 +83,7 @@ pub struct Apu {
     master_vol_left: u8,
     master_vol_right: u8,
     sound_out_mix: u8,
+    envelope_tick_counter: u32,
 }
 
 impl Apu {
@@ -91,7 +93,7 @@ impl Apu {
             sample_buffer: Vec::new(),
             ch1: SoundChannel1 {
                 enabled: false, sweep_enabled: false, sweep_shift: 0,
-                sweep_dir: 0, sweep_timer: 0, duty: 0,
+                sweep_dir: 0, sweep_timer: 0, sweep_tick: 0, duty: 0,
                 volume_init: 0, volume_cur: 0, envelope_dir: 0,
                 envelope_period: 0, envelope_timer: 0,
                 length_counter: 0, length_enabled: false,
@@ -122,6 +124,7 @@ impl Apu {
             sound1_vol: 0, sound2_vol: 0,
             master_vol_left: 0, master_vol_right: 0,
             sound_out_mix: 0,
+            envelope_tick_counter: 0,
         }
     }
 
@@ -263,9 +266,15 @@ impl Apu {
 
         self.cycle_counter += cycles;
 
-        // Envelope timer (every 8 scanlines = ~59.73 Hz)
-        // Simplified: tick envelope every 65536 cycles
-        // In real hardware this is every 8 frames
+        // Envelope timer: tick every ~8 scanlines (59.73 Hz)
+        // 1232 cycles/scanline * 8 = 9856 cycles
+        self.envelope_tick_counter += cycles;
+        if self.envelope_tick_counter >= 9856 {
+            self.envelope_tick_counter -= 9856;
+            self.tick_envelopes();
+            self.tick_sweep();
+            self.tick_length_counters();
+        }
 
         while self.cycle_counter >= CYCLES_PER_SAMPLE {
             self.cycle_counter -= CYCLES_PER_SAMPLE;
@@ -336,6 +345,93 @@ impl Apu {
             }
 
             self.sample_buffer.push(sample.clamp(-1.0, 1.0));
+        }
+    }
+
+    fn tick_envelopes(&mut self) {
+        // Channel 1 envelope
+        if self.ch1.enabled && self.ch1.envelope_period > 0 {
+            self.ch1.envelope_timer += 1;
+            if self.ch1.envelope_timer >= self.ch1.envelope_period {
+                self.ch1.envelope_timer = 0;
+                if self.ch1.envelope_dir == 1 && self.ch1.volume_cur < 15 {
+                    self.ch1.volume_cur += 1;
+                } else if self.ch1.envelope_dir == 0 && self.ch1.volume_cur > 0 {
+                    self.ch1.volume_cur -= 1;
+                }
+            }
+        }
+        // Channel 2 envelope
+        if self.ch2.enabled && self.ch2.envelope_period > 0 {
+            self.ch2.envelope_timer += 1;
+            if self.ch2.envelope_timer >= self.ch2.envelope_period {
+                self.ch2.envelope_timer = 0;
+                if self.ch2.envelope_dir == 1 && self.ch2.volume_cur < 15 {
+                    self.ch2.volume_cur += 1;
+                } else if self.ch2.envelope_dir == 0 && self.ch2.volume_cur > 0 {
+                    self.ch2.volume_cur -= 1;
+                }
+            }
+        }
+        // Channel 4 envelope
+        if self.ch4.enabled && self.ch4.envelope_period > 0 {
+            self.ch4.envelope_timer += 1;
+            if self.ch4.envelope_timer >= self.ch4.envelope_period {
+                self.ch4.envelope_timer = 0;
+                if self.ch4.envelope_dir == 1 && self.ch4.volume_cur < 15 {
+                    self.ch4.volume_cur += 1;
+                } else if self.ch4.envelope_dir == 0 && self.ch4.volume_cur > 0 {
+                    self.ch4.volume_cur -= 1;
+                }
+            }
+        }
+    }
+
+    fn tick_sweep(&mut self) {
+        // Channel 1 sweep
+        if self.ch1.enabled && self.ch1.sweep_enabled && self.ch1.sweep_timer > 0 {
+            self.ch1.sweep_tick += 1;
+            if self.ch1.sweep_tick >= self.ch1.sweep_timer {
+                self.ch1.sweep_tick = 0;
+                let delta = self.ch1.freq_divider >> self.ch1.sweep_shift;
+                if self.ch1.sweep_dir == 0 {
+                    // Increase frequency
+                    self.ch1.freq_divider = self.ch1.freq_divider.wrapping_add(delta);
+                    if self.ch1.freq_divider > 0x7FF {
+                        self.ch1.enabled = false;
+                    }
+                } else {
+                    // Decrease frequency
+                    self.ch1.freq_divider = self.ch1.freq_divider.wrapping_sub(delta);
+                }
+            }
+        }
+    }
+
+    fn tick_length_counters(&mut self) {
+        if self.ch1.enabled && self.ch1.length_enabled {
+            self.ch1.length_counter += 1;
+            if self.ch1.length_counter >= 64 {
+                self.ch1.enabled = false;
+            }
+        }
+        if self.ch2.enabled && self.ch2.length_enabled {
+            self.ch2.length_counter += 1;
+            if self.ch2.length_counter >= 64 {
+                self.ch2.enabled = false;
+            }
+        }
+        if self.ch3.enabled && self.ch3.length_enabled {
+            self.ch3.length_counter += 1;
+            if self.ch3.length_counter >= 256 {
+                self.ch3.enabled = false;
+            }
+        }
+        if self.ch4.enabled && self.ch4.length_enabled {
+            self.ch4.length_counter += 1;
+            if self.ch4.length_counter >= 64 {
+                self.ch4.enabled = false;
+            }
         }
     }
 

@@ -12,6 +12,9 @@ pub struct DmaChannel {
     pub timing: u8,
     pub irq_on_end: bool,
     pub enable: bool,
+    pub src_fixed: bool,
+    pub dst_fixed: bool,
+    pub dst_reload: bool,
 }
 
 pub struct Dma {
@@ -29,6 +32,7 @@ impl Dma {
                     src_adj: 0, dst_adj: 0, repeat: false,
                     transfer_type: false, timing: 0,
                     irq_on_end: false, enable: false,
+                    src_fixed: false, dst_fixed: false, dst_reload: false,
                 },
                 DmaChannel {
                     source: 0, dest: 0, count: 0, control: 0,
@@ -36,6 +40,7 @@ impl Dma {
                     src_adj: 0, dst_adj: 0, repeat: false,
                     transfer_type: false, timing: 0,
                     irq_on_end: false, enable: false,
+                    src_fixed: false, dst_fixed: false, dst_reload: false,
                 },
                 DmaChannel {
                     source: 0, dest: 0, count: 0, control: 0,
@@ -43,6 +48,7 @@ impl Dma {
                     src_adj: 0, dst_adj: 0, repeat: false,
                     transfer_type: false, timing: 0,
                     irq_on_end: false, enable: false,
+                    src_fixed: false, dst_fixed: false, dst_reload: false,
                 },
                 DmaChannel {
                     source: 0, dest: 0, count: 0, control: 0,
@@ -50,6 +56,7 @@ impl Dma {
                     src_adj: 0, dst_adj: 0, repeat: false,
                     transfer_type: false, timing: 0,
                     irq_on_end: false, enable: false,
+                    src_fixed: false, dst_fixed: false, dst_reload: false,
                 },
             ],
             hblank_fired: false,
@@ -92,6 +99,10 @@ impl Dma {
             ch.timing = ((value >> 12) & 3) as u8;
             ch.irq_on_end = value & 0x4000 != 0;
 
+            ch.src_fixed = ch.src_adj == 2;
+            ch.dst_fixed = ch.dst_adj == 2;
+            ch.dst_reload = ch.dst_adj == 3;
+
             // Only start transfer on enable edge for immediate (timing=0)
             if !was_enabled && ch.timing == 0 {
                 self.do_transfer(channel, bus);
@@ -107,6 +118,11 @@ impl Dma {
         let count = ch.count as u32;
         if count == 0 { return; }
         let word_size = ch.word_count;
+        let src_fixed = ch.src_fixed;
+        let dst_fixed = ch.dst_fixed;
+        let dst_reload = ch.dst_reload;
+        let src_save = ch.source;
+        let dst_save = ch.dest;
 
         for _ in 0..count {
             if word_size == 4 {
@@ -117,17 +133,29 @@ impl Dma {
                 bus.write16(ch.dest, val);
             }
 
-            match ch.src_adj {
-                0 => ch.source = ch.source.wrapping_add(word_size),
-                1 => ch.source = ch.source.wrapping_sub(word_size),
-                _ => {} // Fixed or invalid
+            // Source address adjustment
+            if !src_fixed {
+                ch.source = ch.source.wrapping_add(word_size);
             }
 
-            match ch.dst_adj {
-                0 => ch.dest = ch.dest.wrapping_add(word_size),
-                1 => ch.dest = ch.dest.wrapping_sub(word_size),
-                _ => {} // Fixed or invalid
+            // Destination address adjustment
+            if dst_fixed {
+                // Fixed: do nothing
+            } else if dst_reload {
+                // Increment-reload: increment but reload on repeat
+                ch.dest = ch.dest.wrapping_add(word_size);
+            } else {
+                ch.dest = ch.dest.wrapping_add(word_size);
             }
+        }
+
+        // Reload destination if not repeating
+        if !ch.repeat || dst_reload {
+            ch.dest = dst_save;
+        }
+        // Reload source if repeating
+        if ch.repeat {
+            ch.source = src_save;
         }
 
         if ch.irq_on_end {

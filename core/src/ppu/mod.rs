@@ -54,6 +54,24 @@ pub struct Ppu {
     pub bldcnt: u16,
     pub bldalpha: u16,
     pub bldy: u8,
+    // Mosaic
+    mosaic_bg_hsize: u8,
+    mosaic_bg_vsize: u8,
+    mosaic_obj_hsize: u8,
+    mosaic_obj_vsize: u8,
+    mosaic_bg_enabled: bool,
+    mosaic_obj_enabled: bool,
+    // Windows
+    win0h_left: u8,
+    win0h_right: u8,
+    win0v_top: u8,
+    win0v_bottom: u8,
+    win1h_left: u8,
+    win1h_right: u8,
+    win1v_top: u8,
+    win1v_bottom: u8,
+    winin: u16,
+    winout: u16,
     // Internal affine reference point latches (for write-then-read behavior)
     bg2x_internal: i32,
     bg2y_internal: i32,
@@ -109,6 +127,22 @@ impl Ppu {
             bldcnt: 0,
             bldalpha: 0,
             bldy: 0,
+            mosaic_bg_hsize: 0,
+            mosaic_bg_vsize: 0,
+            mosaic_obj_hsize: 0,
+            mosaic_obj_vsize: 0,
+            mosaic_bg_enabled: false,
+            mosaic_obj_enabled: false,
+            win0h_left: 0,
+            win0h_right: 0,
+            win0v_top: 0,
+            win0v_bottom: 0,
+            win1h_left: 0,
+            win1h_right: 0,
+            win1v_top: 0,
+            win1v_bottom: 0,
+            winin: 0,
+            winout: 0,
             bg2x_internal: 0,
             bg2y_internal: 0,
             bg3x_internal: 0,
@@ -233,7 +267,114 @@ impl Ppu {
         self.bldalpha = bus.read16(0x0400_0052);
         self.bldy = (bus.read8(0x0400_0054) & 0x1F) as u8;
 
+        // Mosaic
+        let mosaic = bus.read16(0x0400_004C);
+        self.mosaic_bg_hsize = (mosaic & 0x000F) as u8;
+        self.mosaic_bg_vsize = ((mosaic >> 4) & 0x000F) as u8;
+        self.mosaic_obj_hsize = ((mosaic >> 8) & 0x000F) as u8;
+        self.mosaic_obj_vsize = ((mosaic >> 12) & 0x000F) as u8;
+
+        // Mosaic enable flags (from BLDCNT/MOSAIC interaction)
+        self.mosaic_bg_enabled = self.dispcnt & 0x0040 != 0;
+        self.mosaic_obj_enabled = self.dispcnt & 0x0040 != 0;
+
+        // Window registers
+        self.win0h_left = bus.read8(0x0400_0040);
+        self.win0h_right = bus.read8(0x0400_0041);
+        self.win0v_top = bus.read8(0x0400_0044);
+        self.win0v_bottom = bus.read8(0x0400_0045);
+        self.win1h_left = bus.read8(0x0400_0042);
+        self.win1h_right = bus.read8(0x0400_0043);
+        self.win1v_top = bus.read8(0x0400_0046);
+        self.win1v_bottom = bus.read8(0x0400_0047);
+        self.winin = bus.read16(0x0400_0048);
+        self.winout = bus.read16(0x0400_004A);
+
         self.mode = self.bg_mode;
+    }
+
+    // ========================================================================
+    // Window check
+    // ========================================================================
+
+    /// Returns which window is active at (x, y).
+    /// 0 = outside all windows, 1 = WIN0, 2 = WIN1, 3 = OBJ window, 4 = inside window
+    fn get_window(&self, x: usize, y: usize) -> u8 {
+        let win0_en = self.dispcnt & 0x2000 != 0;
+        let win1_en = self.dispcnt & 0x4000 != 0;
+        let obj_win_en = self.dispcnt & 0x8000 != 0;
+
+        if win0_en
+            && x >= self.win0h_left as usize
+            && x < self.win0h_right as usize
+            && y >= self.win0v_top as usize
+            && y < self.win0v_bottom as usize
+        {
+            return 1;
+        }
+
+        if win1_en
+            && x >= self.win1h_left as usize
+            && x < self.win1h_right as usize
+            && y >= self.win1v_top as usize
+            && y < self.win1v_bottom as usize
+        {
+            return 2;
+        }
+
+        if obj_win_en {
+            // OBJ window is set per-pixel in the OBJ layer
+            return 3;
+        }
+
+        if win0_en || win1_en {
+            return 4; // Inside display area but not in any window
+        }
+
+        0
+    }
+
+    /// Check if a given BG/OBJ layer is visible in the given window.
+    fn window_layer_visible(&self, window: u8, layer: u8) -> bool {
+        let winin = self.winin;
+        let winout = self.winout;
+
+        match window {
+            0 => false, // No window active → use WINOUT
+            1 => winin & (1 << layer) != 0,
+            2 => (winin >> 8) & (1 << layer) != 0,
+            3 => false, // OBJ window - handled per-pixel
+            4 => winout & (1 << layer) != 0,
+            _ => false,
+        }
+    }
+
+    // ========================================================================
+    // Mosaic
+    // ========================================================================
+
+    /// Apply mosaic to an (x, y) coordinate for BG tiles.
+    fn mosaic_bg(&self, x: usize, y: usize) -> (usize, usize) {
+        if !self.mosaic_bg_enabled || (self.mosaic_bg_hsize == 0 && self.mosaic_bg_vsize == 0) {
+            return (x, y);
+        }
+        let h = self.mosaic_bg_hsize as usize + 1;
+        let v = self.mosaic_bg_vsize as usize + 1;
+        let mx = (x / h) * h;
+        let my = (y / v) * v;
+        (mx, my)
+    }
+
+    /// Apply mosaic to an (x, y) coordinate for OBJ sprites.
+    fn mosaic_obj(&self, x: usize, y: usize) -> (usize, usize) {
+        if !self.mosaic_obj_enabled || (self.mosaic_obj_hsize == 0 && self.mosaic_obj_vsize == 0) {
+            return (x, y);
+        }
+        let h = self.mosaic_obj_hsize as usize + 1;
+        let v = self.mosaic_obj_vsize as usize + 1;
+        let mx = (x / h) * h;
+        let my = (y / v) * v;
+        (mx, my)
     }
 
     fn render_scanline(&mut self, bus: &mut super::memory::MemoryBus) {
@@ -274,6 +415,37 @@ impl Ppu {
             _ => {}
         }
 
+        // Apply windowing (mask pixels outside active windows)
+        let win0_en = self.dispcnt & 0x2000 != 0;
+        let win1_en = self.dispcnt & 0x4000 != 0;
+        let any_window = win0_en || win1_en;
+
+        if any_window {
+            for x in 0..SCREEN_WIDTH {
+                let in_win0 = win0_en
+                    && x >= self.win0h_left as usize
+                    && x < self.win0h_right as usize
+                    && y >= self.win0v_top as usize
+                    && y < self.win0v_bottom as usize;
+                let in_win1 = win1_en
+                    && x >= self.win1h_left as usize
+                    && x < self.win1h_right as usize
+                    && y >= self.win1v_top as usize
+                    && y < self.win1v_bottom as usize;
+
+                if !in_win0 && !in_win1 {
+                    // Outside all windows - apply WINOUT
+                    let winout_bg0 = self.winout & 0x0001 != 0;
+                    let winout_bg1 = self.winout & 0x0002 != 0;
+                    let winout_bg2 = self.winout & 0x0004 != 0;
+                    let winout_bg3 = self.winout & 0x0008 != 0;
+                    let winout_obj = self.winout & 0x0010 != 0;
+                    let _ = (winout_bg0, winout_bg1, winout_bg2, winout_bg3, winout_obj);
+                    // For now, just keep the pixel visible outside windows
+                }
+            }
+        }
+
         // Apply color effects
         if self.bldcnt & 0x0020 != 0 {
             // Color special effect on 1st target
@@ -299,8 +471,9 @@ impl Ppu {
 
         for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
+                let (mx, my) = self.mosaic_bg(x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, _palette_base, is_8bpp) =
-                    self.get_bg_pixel(bg, x, y, bus);
+                    self.get_bg_pixel(bg, mx, my, bus);
 
                 let color = if !is_8bpp {
                     let tile_data_addr = char_base + screen_entry as usize * 32;
@@ -346,8 +519,9 @@ impl Ppu {
 
         for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
+                let (mx, my) = self.mosaic_bg(x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, _palette_base, is_8bpp) =
-                    self.get_bg_pixel(bg, x, y, bus);
+                    self.get_bg_pixel(bg, mx, my, bus);
 
                 let color = if !is_8bpp {
                     let tile_data_addr = char_base + screen_entry as usize * 32;
@@ -477,6 +651,7 @@ impl Ppu {
             let is_affine = attr0 & 0x0100 != 0;
             let is_double_size = attr0 & 0x0200 != 0;
             let is_disabled = attr0 & 0x0200 != 0 && !is_affine;
+            let mosaic_enabled = attr0 & 0x1000 != 0;
 
             if is_disabled { continue; }
 
