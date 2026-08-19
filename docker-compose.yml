@@ -1,0 +1,75 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geebee-dev
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - gradle-cache:/root/.gradle
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    environment:
+      - CARGO_INCREMENTAL=1
+      - CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+  build-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geebee-build-core
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+    working_dir: /workspace
+    command: >
+      bash -c "
+        echo '=== Building Rust Core ===' &&
+        cd core && cargo build --release &&
+        echo '=== Core build complete ===' &&
+        ls -la target/release/
+      "
+
+  build-android:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geebee-build-android
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - gradle-cache:/root/.gradle
+    working_dir: /workspace
+    command: >
+      bash -c "
+        echo '=== Building Rust Core for Android ===' &&
+        cd core && cargo ndk -t arm64-v8a -t armeabi-v7a build --release &&
+        echo '=== Building Android APK ===' &&
+        cd /workspace/android && ./gradlew assembleDebug &&
+        echo '=== APK Location ===' &&
+        find /workspace/android -name '*.apk' -type f
+      "
+
+  check:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: geebee-check
+    volumes:
+      - .:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+    working_dir: /workspace
+    command: >
+      bash -c "
+        echo '=== Checking Rust Core ===' &&
+        cd core && cargo check &&
+        echo '=== Running Clippy ===' &&
+        cargo clippy -- -D warnings &&
+        echo '=== All checks passed ==='
+      "
+
+volumes:
+  cargo-cache:
+  gradle-cache:

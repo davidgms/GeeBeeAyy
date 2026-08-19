@@ -1,0 +1,28 @@
+{
+  "name": "GeeBee-A! Dev",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "serayuzgur.crates",
+        "tamasfe.even-better-toml",
+        "ms-androidstudio.android-tooling"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.cargo.target": "aarch64-linux-android",
+        "files.watcherExclude": {
+          "**/target/**": true,
+          "**/build/**": true,
+          "**/.gradle/**": true
+        }
+      }
+    }
+  },
+  "postCreateCommand": "rustup target add aarch64-linux-android armv7-linux-androideabi",
+  "remoteUser": "root"
+}
