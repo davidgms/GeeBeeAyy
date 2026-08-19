@@ -10,6 +10,10 @@ authors = ["GeeBee-A! Contributors"]
 name = "geebee_core"
 path = "src/lib.rs"
 
+[[bin]]
+name = "geebee"
+path = "src/main.rs"
+
 [dependencies]
 log = "0.4"
 thiserror = "1.0"

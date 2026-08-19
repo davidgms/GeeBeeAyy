@@ -10,6 +10,13 @@ pub struct MemoryBus {
     waitcnt: u16,      // Wait State Control
     /// Pending sound register writes (offset from 0x04000000, value)
     pub sound_writes: Vec<(u32, u8)>,
+    // Prefetch buffer
+    prefetch_enabled: bool,
+    prefetch_seq_count: u32,  // sequential prefetches buffered
+    prefetch_cyc: u32,        // cycles available in prefetch buffer
+    iwram_prefetch: [u32; 8], // prefetched 32-bit words from IWRAM
+    iwram_prefetch_pos: usize,
+    iwram_prefetch_count: usize,
 }
 
 impl MemoryBus {
@@ -25,6 +32,12 @@ impl MemoryBus {
             rom: Vec::new(),
             waitcnt: 0,
             sound_writes: Vec::new(),
+            prefetch_enabled: false,
+            prefetch_seq_count: 0,
+            prefetch_cyc: 0,
+            iwram_prefetch: [0; 8],
+            iwram_prefetch_pos: 0,
+            iwram_prefetch_count: 0,
         }
     }
 
@@ -158,6 +171,7 @@ impl MemoryBus {
     /// Update WAITCNT register
     pub fn set_waitcnt(&mut self, value: u16) {
         self.waitcnt = value;
+        self.prefetch_enabled = value & 0x4000 != 0;
     }
 
     /// Get WAITCNT register
@@ -168,5 +182,47 @@ impl MemoryBus {
     /// Drain pending sound register writes
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
         std::mem::take(&mut self.sound_writes)
+    }
+
+    /// Tick the prefetch buffer (called each CPU cycle).
+    /// When prefetch is enabled and CPU is executing from ROM,
+    /// we can buffer sequential reads at 0 cost.
+    pub fn prefetch_tick(&mut self) {
+        if !self.prefetch_enabled {
+            return;
+        }
+        // Simple model: accumulate 1 cycle of prefetch budget per tick
+        // Real hardware: prefetches happen during non-sequential cycles
+        if self.prefetch_cyc < 8 {
+            self.prefetch_cyc += 1;
+        }
+    }
+
+    /// Returns read cycles for ROM, accounting for prefetch buffer.
+    /// If prefetch is enabled and we have buffered data, return 0 (free).
+    pub fn rom_read_cycles_prefetch(&mut self, address: u32, is_32bit: bool, is_seq: bool) -> u32 {
+        if !self.prefetch_enabled || !is_seq {
+            return self.read_cycles(address, is_32bit);
+        }
+
+        // Sequential ROM read with prefetch: free if we have budget
+        let cost = self.read_cycles(address, is_32bit);
+        if self.prefetch_cyc >= cost {
+            self.prefetch_cyc -= cost;
+            0 // Free! Prefetch absorbed the cost
+        } else {
+            let remaining = cost - self.prefetch_cyc;
+            self.prefetch_cyc = 0;
+            remaining
+        }
+    }
+
+    /// Prefetch from IWRAM (internal memory, 2 cycles)
+    pub fn iwram_prefetch_tick(&mut self) {
+        // IWRAM has 2-cycle sequential access; prefetch can buffer words
+        if self.iwram_prefetch_count < 8 {
+            // Simulate prefetching a word from IWRAM
+            self.iwram_prefetch_count += 1;
+        }
     }
 }

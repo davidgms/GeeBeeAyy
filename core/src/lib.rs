@@ -55,10 +55,15 @@ impl Gba {
         let target = self.cycles + CYCLES_PER_FRAME;
         while self.cycles < target {
             let cycles = self.cpu.step(&mut self.bus);
-            self.cycles += cycles as u64;
+            self.cycles += cycles as u32 as u64;
             self.timer.tick(cycles as u32, &mut self.bus);
             self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
             self.apu.tick(cycles as u32);
+
+            // Tick prefetch buffer
+            for _ in 0..cycles {
+                self.bus.prefetch_tick();
+            }
 
             // Process sound register writes from memory bus
             let writes = self.bus.drain_sound_writes();
@@ -113,6 +118,16 @@ impl Gba {
                 let lo = self.bus.read8(0x0400_0082);
                 self.apu.write_soundcnt_h(((value as u16) << 8) | lo as u16);
             }
+            // FIFO A (0x040000A0 - 0x040000A3)
+            0xA0 => self.apu.write_fifo_a(value as i8),
+            0xA1 => self.apu.write_fifo_a(value as i8),
+            0xA2 => self.apu.write_fifo_a(value as i8),
+            0xA3 => self.apu.write_fifo_a(value as i8),
+            // FIFO B (0x040000A4 - 0x040000A7)
+            0xA4 => self.apu.write_fifo_b(value as i8),
+            0xA5 => self.apu.write_fifo_b(value as i8),
+            0xA6 => self.apu.write_fifo_b(value as i8),
+            0xA7 => self.apu.write_fifo_b(value as i8),
             _ => {}
         }
     }

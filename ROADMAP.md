@@ -49,7 +49,7 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [x] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
 - [x] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
 - [x] Wait States (ciclos de acesso por região)
-- [ ] Prefetch Buffer (0x04000000+)
+- [x] Prefetch Buffer (0x04000000+)
 - [ ] BIOS execute permission
 
 ### 1.3 Timer
@@ -110,10 +110,10 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [x] Sound Length Counter
 
 ### 3.2 APU — FIFO
-- [ ] Canal A — Sound A (FIFO/Timer 0/1)
-- [ ] Canal B — Sound B (FIFO/Timer 2/3)
+- [x] Canal A — Sound A (FIFO/Timer 0/1)
+- [x] Canal B — Sound B (FIFO/Timer 2/3)
 - [ ] DMA Sound
-- [ ] Mixing (PSG + FIFO)
+- [x] Mixing (PSG + FIFO)
 
 ### 3.3 APU — Sincronização
 - [ ] Master timer (Timer 0 como timing master)

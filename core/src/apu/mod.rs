@@ -70,6 +70,57 @@ struct SoundChannel4 {
     freq_counter: u16,
 }
 
+struct FifoChannel {
+    buffer: [i8; 32],
+    read_pos: usize,
+    write_pos: usize,
+    count: usize,
+    timer: u8,
+    enabled: bool,
+    dma_refill: bool,
+}
+
+impl FifoChannel {
+    fn new() -> Self {
+        Self {
+            buffer: [0; 32],
+            read_pos: 0,
+            write_pos: 0,
+            count: 0,
+            timer: 0,
+            enabled: false,
+            dma_refill: false,
+        }
+    }
+
+    fn push(&mut self, sample: i8) {
+        if self.count < 32 {
+            self.buffer[self.write_pos] = sample;
+            self.write_pos = (self.write_pos + 1) % 32;
+            self.count += 1;
+        }
+    }
+
+    fn pop(&mut self) -> i8 {
+        if self.count > 0 {
+            let sample = self.buffer[self.read_pos];
+            self.read_pos = (self.read_pos + 1) % 32;
+            self.count -= 1;
+            sample
+        } else {
+            0
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    fn is_half_empty(&self) -> bool {
+        self.count <= 16
+    }
+}
+
 pub struct Apu {
     cycle_counter: u32,
     sample_buffer: Vec<f32>,
@@ -77,6 +128,8 @@ pub struct Apu {
     ch2: SoundChannel2,
     ch3: SoundChannel3,
     ch4: SoundChannel4,
+    fifo_a: FifoChannel,
+    fifo_b: FifoChannel,
     sound_on: bool,
     sound1_vol: u8,
     sound2_vol: u8,
@@ -120,6 +173,8 @@ impl Apu {
                 shift_freq: 0, width_mode: 0, div_ratio: 0,
                 lfsr: 0x7FFF, freq_timer: 0, freq_counter: 0,
             },
+            fifo_a: FifoChannel::new(),
+            fifo_b: FifoChannel::new(),
             sound_on: false,
             sound1_vol: 0, sound2_vol: 0,
             master_vol_left: 0, master_vol_right: 0,
@@ -243,6 +298,26 @@ impl Apu {
         }
     }
 
+    /// Push a byte to FIFO A (Direct Sound A)
+    pub fn write_fifo_a(&mut self, value: i8) {
+        self.fifo_a.push(value);
+    }
+
+    /// Push a byte to FIFO B (Direct Sound B)
+    pub fn write_fifo_b(&mut self, value: i8) {
+        self.fifo_b.push(value);
+    }
+
+    /// Check if FIFO A is half-empty (for DMA refill)
+    pub fn fifo_a_half_empty(&self) -> bool {
+        self.fifo_a.is_half_empty()
+    }
+
+    /// Check if FIFO B is half-empty (for DMA refill)
+    pub fn fifo_b_half_empty(&self) -> bool {
+        self.fifo_b.is_half_empty()
+    }
+
     fn duty_wave(duty: u8, idx: u32) -> f32 {
         let phase = idx % 8;
         match duty {
@@ -342,6 +417,20 @@ impl Apu {
                 }
                 let noise_sample = if self.ch4.lfsr & 1 == 0 { 1.0 } else { -1.0 };
                 sample += noise_sample * (self.ch4.volume_cur as f32 / 15.0) * 0.15;
+            }
+
+            // FIFO A (Direct Sound A)
+            if !self.fifo_a.is_empty() {
+                let fifo_a_sample = self.fifo_a.pop() as f32 / 128.0;
+                let vol_a = if self.sound1_vol == 1 { 2.0 } else { 1.0 };
+                sample += fifo_a_sample * vol_a * 0.5;
+            }
+
+            // FIFO B (Direct Sound B)
+            if !self.fifo_b.is_empty() {
+                let fifo_b_sample = self.fifo_b.pop() as f32 / 128.0;
+                let vol_b = if self.sound2_vol == 1 { 2.0 } else { 1.0 };
+                sample += fifo_b_sample * vol_b * 0.5;
             }
 
             self.sample_buffer.push(sample.clamp(-1.0, 1.0));
