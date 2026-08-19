@@ -8,6 +8,8 @@ pub struct MemoryBus {
     bios: Vec<u8>,     // 16 KB BIOS (HLE or real)
     rom: Vec<u8>,      // Cartridge ROM (up to 32 MB)
     waitcnt: u16,      // Wait State Control
+    /// Pending sound register writes (offset from 0x04000000, value)
+    pub sound_writes: Vec<(u32, u8)>,
 }
 
 impl MemoryBus {
@@ -22,6 +24,7 @@ impl MemoryBus {
             bios: vec![0; 16 * 1024],
             rom: Vec::new(),
             waitcnt: 0,
+            sound_writes: Vec::new(),
         }
     }
 
@@ -73,7 +76,17 @@ impl MemoryBus {
         match address {
             0x0200_0000..=0x0203_FFFF => self.ewram[(address & 0x3FFFF) as usize] = value,
             0x0300_0000..=0x0300_7FFF => self.iwram[(address & 0x7FFF) as usize] = value,
-            0x0400_0000..=0x0400_03FE => self.io_regs[(address & 0x3FF) as usize] = value,
+            0x0400_0000..=0x0400_03FE => {
+                let offset = address - 0x0400_0000;
+                self.io_regs[(address & 0x3FF) as usize] = value;
+                // Queue sound register writes for APU
+                match offset {
+                    0x60..=0x7F | 0x80..=0x88 | 0x90..=0x9F | 0xA0..=0xA7 => {
+                        self.sound_writes.push((offset, value));
+                    }
+                    _ => {}
+                }
+            }
             0x0500_0000..=0x0500_03FF => self.palette[(address & 0x3FF) as usize] = value,
             0x0600_0000..=0x0601_7FFF => self.vram[(address & 0x17FFF) as usize] = value,
             0x0700_0000..=0x0700_03FF => self.oam[(address & 0x3FF) as usize] = value,
@@ -150,5 +163,10 @@ impl MemoryBus {
     /// Get WAITCNT register
     pub fn get_waitcnt(&self) -> u16 {
         self.waitcnt
+    }
+
+    /// Drain pending sound register writes
+    pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
+        std::mem::take(&mut self.sound_writes)
     }
 }

@@ -8,11 +8,11 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 
 | Módulo | Status | Linhas |
 |--------|--------|--------|
-| `lib.rs` | Funcional (loop + DMA + HBlank) | 85 |
+| `lib.rs` | Funcional (loop + DMA + APU) | ~110 |
 | `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
-| `ppu/` | Mode 0/1/2/3/4 + OBJ + color FX | ~620 |
-| `apu/` | Esqueleto (silêncio) | 36 |
-| `memory/` | ROM + I/O + wait states | ~140 |
+| `ppu/` | Mode 0/1/2/3/4/5 + OBJ + color FX | ~700 |
+| `apu/` | 4 canais PSG (square, wave, noise) | ~350 |
+| `memory/` | ROM + I/O + wait states + sound routing | ~160 |
 | `timer/` | Prescaler + IRQ | ~80 |
 | `cart/` | ROM + SRAM/Flash/EEPROM save | ~230 |
 | `io/` | I/O register handler | ~150 |
@@ -83,9 +83,9 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 ### 2.2 PPU — Intermediário
 - [x] **Mode 1** — BG0+BG1 tiled, BG2 affine
 - [x] **Mode 2** — BG2+BG3 affine
-- [ ] **Mode 5** — Bitmap 16bpp (2 framebuffers)
+- [x] **Mode 5** — Bitmap 16bpp (2 framebuffers)
 - [x] Affine backgrounds (scaling, rotation)
-- [ ] Affine sprites
+- [x] Affine sprites
 - [ ] Mosaic
 
 ### 2.3 PPU — Avançado
@@ -101,10 +101,10 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 > **Objetivo:** Áudio funcional sem crackle.
 
 ### 3.1 APU — Canais Básicos
-- [ ] Canal 1 — PSG Quadrada (square wave)
-- [ ] Canal 2 — PSG Quadrada
-- [ ] Canal 3 — PSG Onda (wave)
-- [ ] Canal 4 — PSG Ruído (noise)
+- [x] Canal 1 — PSG Quadrada (square wave)
+- [x] Canal 2 — PSG Quadrada
+- [x] Canal 3 — PSG Onda (wave)
+- [x] Canal 4 — PSG Ruído (noise)
 - [ ] Sweep (Canal 1)
 - [ ] Envelope (todos os canais)
 - [ ] Sound Length Counter

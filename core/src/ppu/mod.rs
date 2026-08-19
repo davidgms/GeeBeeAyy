@@ -270,6 +270,7 @@ impl Ppu {
             2 => self.render_mode2_scanline(y, bus),
             3 => self.render_mode3_scanline(y, bus),
             4 => self.render_mode4_scanline(y, bus),
+            5 => self.render_mode5_scanline(y, bus),
             _ => {}
         }
 
@@ -473,7 +474,11 @@ impl Ppu {
             let attr1 = bus.read16(oam_addr + 2);
             let attr2 = bus.read16(oam_addr + 4);
 
-            if attr0 & 0x0200 != 0 { continue; }
+            let is_affine = attr0 & 0x0100 != 0;
+            let is_double_size = attr0 & 0x0200 != 0;
+            let is_disabled = attr0 & 0x0200 != 0 && !is_affine;
+
+            if is_disabled { continue; }
 
             let sy = (attr0 & 0x00FF) as i16;
             let sy = if sy > 127 { sy - 256 } else { sy };
@@ -483,62 +488,157 @@ impl Ppu {
             let size = (attr1 >> 14) & 3;
             let tile_num = attr2 & 0x03FF;
             let palette = ((attr2 >> 12) & 0xF) as u8;
+            let bitmap_mode = attr0 & 0x2000 != 0;
 
-            let (sprite_width, sprite_height) = match shape {
+            let (base_width, base_height) = match shape {
                 0b00 => match size { 0 => (8,8), 1 => (16,16), 2 => (32,32), 3 => (64,64), _ => (8,8) },
                 0b01 => match size { 0 => (16,8), 1 => (32,8), 2 => (32,16), 3 => (64,32), _ => (16,8) },
                 0b10 => match size { 0 => (8,16), 1 => (8,32), 2 => (16,32), 3 => (32,64), _ => (8,16) },
                 _ => continue,
             };
 
-            if y as i16 >= sy && (y as i16) < sy + sprite_height as i16 {
+            if is_affine {
+                // Affine sprite rendering
+                let matrix_idx = ((attr1 >> 9) & 0x1F) as usize;
+                let matrix_base = matrix_idx * 32 + 0x0700_0006;
+
+                // Read affine parameters from OAM
+                let pa = bus.read16((0x0700_0000 + matrix_base as u32) as u32) as i16 as i32;
+                let pb = bus.read16((0x0700_0000 + matrix_base as u32 + 8) as u32) as i16 as i32;
+                let pc = bus.read16((0x0700_0000 + matrix_base as u32 + 16) as u32) as i16 as i32;
+                let pd = bus.read16((0x0700_0000 + matrix_base as u32 + 24) as u32) as i16 as i32;
+
+                let sprite_height = if is_double_size { base_height * 2 } else { base_height };
+                let sprite_width = if is_double_size { base_width * 2 } else { base_width };
+
+                // Center of sprite
+                let cx = sx + base_width as i16 / 2;
+                let cy = sy + base_height as i16 / 2;
+
                 let mapping_1d = self.dispcnt & 0x0040 != 0;
                 let is_8bpp = attr0 & 0x0080 != 0;
 
-                for sx_off in 0..sprite_width {
-                    let px = sx + sx_off as i16;
-                    if px < 0 || px >= 240 { continue; }
+                for screen_y in 0..sprite_height {
+                    let draw_y = cy - sprite_height as i16 / 2 + screen_y as i16;
+                    if draw_y as usize != y as i16 as usize || draw_y < 0 || draw_y >= 160 {
+                        continue;
+                    }
 
-                    let py = y as i16 - sy;
-                    let tile_x = sx_off % 8;
-                    let tile_y = (py % 8) as usize;
+                    for screen_x in 0..sprite_width {
+                        let draw_x = cx - sprite_width as i16 / 2 + screen_x as i16;
+                        if draw_x < 0 || draw_x >= 240 {
+                            continue;
+                        }
 
-                    let tiles_per_row = if mapping_1d { sprite_width as u16 / 8 } else { 32 };
-                    let tile_offset = (py as u16 / 8) * tiles_per_row + (sx_off as u16 / 8);
-                    let tile_number = tile_num + tile_offset;
+                        // Transform texture coordinates
+                        let rel_x = screen_x as i32 - sprite_width as i32 / 2;
+                        let rel_y = screen_y as i32 - sprite_height as i32 / 2;
+                        let tex_x = (pa * rel_x + pb * rel_y) / 256 + base_width as i32 / 2;
+                        let tex_y = (pc * rel_x + pd * rel_y) / 256 + base_height as i32 / 2;
 
-                    let tile_data_addr = if is_8bpp {
-                        0x0600_0000 + (tile_number as usize) * 64
-                    } else {
-                        0x0600_0000 + (tile_number as usize) * 32
-                    };
+                        if tex_x < 0 || tex_x >= base_width as i32 || tex_y < 0 || tex_y >= base_height as i32 {
+                            continue;
+                        }
 
-                    let color_index = if is_8bpp {
-                        let byte_offset = tile_y * 8 + tile_x;
-                        bus.read8((tile_data_addr + byte_offset) as u32)
-                    } else {
-                        let byte_offset = tile_y * 4 + tile_x / 2;
-                        let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                        if tile_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
-                    };
+                        let tile_x = tex_x as usize % 8;
+                        let tile_y = tex_y as usize % 8;
 
-                    if color_index == 0 { continue; }
+                        let tiles_per_row = if mapping_1d { base_width / 8 } else { 32 };
+                        let tile_offset = (tex_y as usize / 8) * tiles_per_row + (tex_x as usize / 8);
+                        let tile_number = tile_num + tile_offset as u16;
 
-                    let palette_addr = if is_8bpp {
-                        0x0500_0200 + (color_index as usize) * 2
-                    } else {
-                        0x0500_0200 + (palette as usize) * 32 + (color_index as usize) * 2
-                    };
+                        let tile_data_addr = if is_8bpp {
+                            0x0600_0000 + (tile_number as usize) * 64
+                        } else {
+                            0x0600_0000 + (tile_number as usize) * 32
+                        };
 
-                    let color = bus.read16(palette_addr as u32);
-                    let r = ((color & 0x001F) as u8) << 3;
-                    let g = (((color >> 5) & 0x001F) as u8) << 3;
-                    let b = (((color >> 10) & 0x001F) as u8) << 3;
+                        let color_index = if is_8bpp {
+                            let byte_offset = tile_y * 8 + tile_x;
+                            bus.read8((tile_data_addr + byte_offset) as u32)
+                        } else {
+                            let byte_offset = tile_y * 4 + tile_x / 2;
+                            let byte = bus.read8((tile_data_addr + byte_offset) as u32);
+                            if tile_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
+                        };
 
-                    let idx = (y * SCREEN_WIDTH + px as usize) * 3;
-                    self.frame_buffer[idx] = r;
-                    self.frame_buffer[idx + 1] = g;
-                    self.frame_buffer[idx + 2] = b;
+                        if color_index == 0 { continue; }
+
+                        let palette_addr = if is_8bpp {
+                            0x0500_0200 + (color_index as usize) * 2
+                        } else {
+                            0x0500_0200 + (palette as usize) * 32 + (color_index as usize) * 2
+                        };
+
+                        let color = bus.read16(palette_addr as u32);
+                        let r = ((color & 0x001F) as u8) << 3;
+                        let g = (((color >> 5) & 0x001F) as u8) << 3;
+                        let b = (((color >> 10) & 0x001F) as u8) << 3;
+
+                        let idx = (y * SCREEN_WIDTH + draw_x as usize) * 3;
+                        self.frame_buffer[idx] = r;
+                        self.frame_buffer[idx + 1] = g;
+                        self.frame_buffer[idx + 2] = b;
+                    }
+                }
+            } else {
+                // Regular (non-affine) sprite rendering
+                if y as i16 >= sy && (y as i16) < sy + base_height as i16 {
+                    let mapping_1d = self.dispcnt & 0x0040 != 0;
+                    let is_8bpp = attr0 & 0x0080 != 0;
+
+                    for sx_off in 0..base_width {
+                        let px = sx + sx_off as i16;
+                        if px < 0 || px >= 240 { continue; }
+
+                        let py = y as i16 - sy;
+                        let tile_x = sx_off % 8;
+                        let tile_y = (py % 8) as usize;
+
+                        let tiles_per_row = if mapping_1d { base_width as u16 / 8 } else { 32 };
+                        let tile_offset = (py as u16 / 8) * tiles_per_row + (sx_off as u16 / 8);
+                        let tile_number = tile_num + tile_offset;
+
+                        let tile_data_addr = if bitmap_mode {
+                            // Bitmap mode: tile_num is the base, offset is linear
+                            0x0600_0000 + (tile_num as usize) * 64 + tile_offset as usize * 64
+                        } else if is_8bpp {
+                            0x0600_0000 + (tile_number as usize) * 64
+                        } else {
+                            0x0600_0000 + (tile_number as usize) * 32
+                        };
+
+                        let color_index = if bitmap_mode {
+                            // Bitmap sprites are always 8bpp
+                            let byte_offset = tile_y * 8 + tile_x;
+                            bus.read8((tile_data_addr + byte_offset) as u32)
+                        } else if is_8bpp {
+                            let byte_offset = tile_y * 8 + tile_x;
+                            bus.read8((tile_data_addr + byte_offset) as u32)
+                        } else {
+                            let byte_offset = tile_y * 4 + tile_x / 2;
+                            let byte = bus.read8((tile_data_addr + byte_offset) as u32);
+                            if tile_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
+                        };
+
+                        if color_index == 0 { continue; }
+
+                        let palette_addr = if bitmap_mode || is_8bpp {
+                            0x0500_0200 + (color_index as usize) * 2
+                        } else {
+                            0x0500_0200 + (palette as usize) * 32 + (color_index as usize) * 2
+                        };
+
+                        let color = bus.read16(palette_addr as u32);
+                        let r = ((color & 0x001F) as u8) << 3;
+                        let g = (((color >> 5) & 0x001F) as u8) << 3;
+                        let b = (((color >> 10) & 0x001F) as u8) << 3;
+
+                        let idx = (y * SCREEN_WIDTH + px as usize) * 3;
+                        self.frame_buffer[idx] = r;
+                        self.frame_buffer[idx + 1] = g;
+                        self.frame_buffer[idx + 2] = b;
+                    }
                 }
             }
         }
@@ -614,6 +714,42 @@ impl Ppu {
         for x in 0..SCREEN_WIDTH {
             let color_index = bus.read8((base + x) as u32);
             let color = bus.read16((0x0500_0000 + color_index as usize * 2) as u32);
+            let r = ((color & 0x001F) as u8) << 3;
+            let g = (((color >> 5) & 0x001F) as u8) << 3;
+            let b = (((color >> 10) & 0x001F) as u8) << 3;
+            let idx = (y * SCREEN_WIDTH + x) * 3;
+            self.frame_buffer[idx] = r;
+            self.frame_buffer[idx + 1] = g;
+            self.frame_buffer[idx + 2] = b;
+        }
+    }
+
+    // ========================================================================
+    // Mode 5: Bitmap 16bpp (2 framebuffers, 160x128 each)
+    // ========================================================================
+
+    fn render_mode5_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
+        // Mode 5: two 160x128 16bpp framebuffers
+        // Page select from DISPCNT bit 4
+        let page = if self.dispcnt & 0x0010 != 0 { 0xA000 } else { 0x0000 };
+
+        // Only 128 lines per page; lines 128-159 show garbage (use last line)
+        let fb_y = if y >= 128 { 127 } else { y };
+
+        // Each line is 160 pixels * 2 bytes = 320 bytes
+        let base = 0x0600_0000 + page + fb_y * 320;
+
+        for x in 0..SCREEN_WIDTH {
+            // Only 160 pixels wide; beyond that, show black
+            if x >= 160 {
+                let idx = (y * SCREEN_WIDTH + x) * 3;
+                self.frame_buffer[idx] = 0;
+                self.frame_buffer[idx + 1] = 0;
+                self.frame_buffer[idx + 2] = 0;
+                continue;
+            }
+
+            let color = bus.read16((base + x * 2) as u32);
             let r = ((color & 0x001F) as u8) << 3;
             let g = (((color >> 5) & 0x001F) as u8) << 3;
             let b = (((color >> 10) & 0x001F) as u8) << 3;

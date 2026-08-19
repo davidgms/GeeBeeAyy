@@ -60,6 +60,12 @@ impl Gba {
             self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
             self.apu.tick(cycles as u32);
 
+            // Process sound register writes from memory bus
+            let writes = self.bus.drain_sound_writes();
+            for (offset, value) in writes {
+                self.apu_sound_write(offset, value);
+            }
+
             // Check for interrupts
             if self.ppu.vblank_pending() {
                 self.io.request_interrupt(0x0001); // VBlank IRQ
@@ -71,6 +77,43 @@ impl Gba {
             if self.io.interrupt_pending() {
                 self.cpu.handle_irq();
             }
+        }
+    }
+
+    fn apu_sound_write(&mut self, offset: u32, value: u8) {
+        match offset {
+            0x60 => self.apu.write_sound1_reg(0x60, value),
+            0x62 => self.apu.write_sound1_reg(0x62, value),
+            0x63 => self.apu.write_sound1_reg(0x63, value),
+            0x64 => self.apu.write_sound1_reg(0x64, value),
+            0x68 => self.apu.write_sound2_reg(0x68, value),
+            0x6C => self.apu.write_sound2_reg(0x6C, value),
+            0x6D => self.apu.write_sound2_reg(0x6D, value),
+            0x6E => self.apu.write_sound2_reg(0x6E, value),
+            0x70 => self.apu.write_sound3_reg(0x70, value),
+            0x72 => self.apu.write_sound3_reg(0x72, value),
+            0x74 => self.apu.write_sound3_reg(0x74, value),
+            0x78 => self.apu.write_sound4_reg(0x78, value),
+            0x7A => self.apu.write_sound4_reg(0x7A, value),
+            0x7C => self.apu.write_sound4_reg(0x7C, value),
+            0x7E => self.apu.write_sound4_reg(0x7E, value),
+            0x80 => {
+                let hi = self.bus.read8(0x0400_0081);
+                self.apu.write_soundcnt_l(((hi as u16) << 8) | value as u16);
+            }
+            0x81 => {
+                let lo = self.bus.read8(0x0400_0080);
+                self.apu.write_soundcnt_l(((value as u16) << 8) | lo as u16);
+            }
+            0x82 => {
+                let hi = self.bus.read8(0x0400_0083);
+                self.apu.write_soundcnt_h(((hi as u16) << 8) | value as u16);
+            }
+            0x83 => {
+                let lo = self.bus.read8(0x0400_0082);
+                self.apu.write_soundcnt_h(((value as u16) << 8) | lo as u16);
+            }
+            _ => {}
         }
     }
 
