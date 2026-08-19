@@ -134,8 +134,8 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 - [ ] Menu de pausa
 
 ### 4.2 Funcionalidades Core
-- [ ] Save states (10 slots)
-- [ ] Fast forward (2x, 4x)
+- [x] Save states (10 slots)
+- [x] Fast forward (2x, 4x)
 - [ ] Controle Bluetooth/USB (Xbox, PS, Switch Pro)
 - [ ] Screen scaling (1x, 2x, 3x, fit)
 - [ ] Screen filters (2xSaI, CRT, pixel-perfect)

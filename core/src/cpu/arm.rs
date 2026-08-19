@@ -10,7 +10,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     // Software Interrupt
     if (instruction >> 24) & 0xF == 0xF {
         let comment = instruction & 0x00FF_FFFF;
-        cpu.swi(comment);
+        cpu.swi(comment, bus);
         return 3;
     }
 

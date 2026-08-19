@@ -351,7 +351,7 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 if cond == 0b1111 {
                     // Format 17: SWI
                     let comment = instruction & 0xFF;
-                    cpu.swi(comment as u32);
+                    cpu.swi(comment as u32, bus);
                     3
                 } else if cond == 0b1110 {
                     // Undefined, treat as NOP

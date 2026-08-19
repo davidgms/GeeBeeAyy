@@ -6,6 +6,8 @@ pub mod timer;
 pub mod cart;
 pub mod io;
 pub mod dma;
+pub mod savestate;
+pub mod bios;
 
 use cpu::Cpu;
 use ppu::Ppu;
@@ -170,5 +172,22 @@ impl Gba {
 
     pub fn clear_audio_buffer(&mut self) {
         self.apu.clear_buffer();
+    }
+
+    /// Create a save state snapshot.
+    pub fn save_state(&self) -> savestate::SaveState {
+        savestate::SaveState::create(self)
+    }
+
+    /// Restore from a save state snapshot.
+    pub fn load_state(&mut self, state: &savestate::SaveState) -> Result<(), savestate::SaveStateError> {
+        state.restore(self)
+    }
+
+    /// Run multiple frames (for fast forward).
+    pub fn run_frames(&mut self, count: u32) {
+        for _ in 0..count {
+            self.run_frame();
+        }
     }
 }

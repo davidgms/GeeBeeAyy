@@ -184,6 +184,18 @@ impl MemoryBus {
         std::mem::take(&mut self.sound_writes)
     }
 
+    // Accessor methods for save states
+    pub fn ewram_data(&self) -> &[u8] { &self.ewram }
+    pub fn ewram_data_mut(&mut self) -> &mut [u8] { &mut self.ewram }
+    pub fn iwram_data(&self) -> &[u8] { &self.iwram }
+    pub fn iwram_data_mut(&mut self) -> &mut [u8] { &mut self.iwram }
+    pub fn palette_data(&self) -> &[u8] { &self.palette }
+    pub fn palette_data_mut(&mut self) -> &mut [u8] { &mut self.palette }
+    pub fn vram_data(&self) -> &[u8] { &self.vram }
+    pub fn vram_data_mut(&mut self) -> &mut [u8] { &mut self.vram }
+    pub fn oam_data(&self) -> &[u8] { &self.oam }
+    pub fn oam_data_mut(&mut self) -> &mut [u8] { &mut self.oam }
+
     /// Tick the prefetch buffer (called each CPU cycle).
     /// When prefetch is enabled and CPU is executing from ROM,
     /// we can buffer sequential reads at 0 cost.

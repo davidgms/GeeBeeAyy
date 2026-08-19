@@ -290,15 +290,10 @@ impl Cpu {
         }
     }
 
-    /// SWI handler placeholder
-    pub fn swi(&mut self, _comment: u32) {
-        // Placeholder for software interrupt handling
-        // In a full implementation, this would:
-        // 1. Save CPSR to SPSR_svc
-        // 2. Set mode to Supervisor
-        // 3. Disable IRQ
-        // 4. Set LR to return address
-        // 5. Jump to SWI vector (0x00000008)
+    /// SWI handler - calls BIOS HLE
+    pub fn swi(&mut self, comment: u32, bus: &mut super::memory::MemoryBus) {
+        // Software interrupt: call BIOS HLE
+        super::bios::handle_swi(comment, self, bus);
     }
 
     /// IRQ handler placeholder

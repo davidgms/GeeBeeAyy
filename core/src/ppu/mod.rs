@@ -1011,4 +1011,8 @@ impl Ppu {
     pub fn frame_buffer(&self) -> &[u8; FRAME_SIZE] {
         &self.frame_buffer
     }
+
+    pub fn frame_buffer_mut(&mut self) -> &mut [u8; FRAME_SIZE] {
+        &mut self.frame_buffer
+    }
 }
