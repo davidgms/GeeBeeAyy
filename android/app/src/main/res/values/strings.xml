@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GeeBee-A!</string>
+    <string name="splash_tagline">Bzzt! Let\'s play!</string>
+    <string name="rom_browser_title">Your Games</string>
+    <string name="settings_title">Settings</string>
+    <string name="pause">Pause</string>
+    <string name="play">Play</string>
+    <string name="fast_forward">Fast Forward</string>
+    <string name="save_state">Save State</string>
+    <string name="load_state">Load State</string>
+    <string name="no_roms">No ROMs found</string>
+    <string name="import_rom">Import ROM</string>
+</resources>
