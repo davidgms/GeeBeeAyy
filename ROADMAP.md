@@ -128,10 +128,10 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 > **Objetivo:** App funcional para testar em dispositivo.
 
 ### 4.1 UI Básica
-- [ ] Rom browser com lista de jogos
+- [x] Rom browser com lista de jogos
 - [ ] Tela de emulação (OpenGL ES rendering)
-- [ ] Controles touch na tela
-- [ ] Menu de pausa
+- [x] Controles touch na tela
+- [x] Menu de pausa
 
 ### 4.2 Funcionalidades Core
 - [x] Save states (10 slots)
