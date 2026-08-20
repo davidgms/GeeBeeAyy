@@ -8,6 +8,7 @@ pub mod io;
 pub mod dma;
 pub mod savestate;
 pub mod bios;
+pub mod ffi;
 
 use cpu::Cpu;
 use ppu::Ppu;

@@ -152,7 +152,9 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 
 > **Objetivo:** App nativo para iOS.
 
-- [ ] SwiftUI UI
+- [x] SwiftUI UI (Splash, ROM Browser, Emulation, Settings)
+- [x] GeeBeeTheme (Color extensions, Design tokens)
+- [x] Assets: bee_logo, bee_mascot
 - [ ] MFi controller support
 - [ ] Touch controls + gesture support
 - [ ] Save states + iCloud sync

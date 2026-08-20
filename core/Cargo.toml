@@ -9,10 +9,16 @@ authors = ["GeeBee-A! Contributors"]
 [lib]
 name = "geebee_core"
 path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [[bin]]
 name = "geebee"
 path = "src/main.rs"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
+
+[target.'cfg(target_os = "ios")'.dependencies]
 
 [dependencies]
 log = "0.4"
