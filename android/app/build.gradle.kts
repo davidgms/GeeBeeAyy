@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.geebee.app"
+    namespace = "com.geebeeayyayy.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.geebee.app"
+        applicationId = "com.geebeeayyayy.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

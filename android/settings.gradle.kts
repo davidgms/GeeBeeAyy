@@ -12,5 +12,5 @@ dependencyResolution {
     }
 }
 
-rootProject.name = "GeeBee-A"
+rootProject.name = "GeeBeeAyy"
 include(":app")

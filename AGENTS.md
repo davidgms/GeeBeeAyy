@@ -1,4 +1,4 @@
-# AGENTS.md - GeeBee-A
+# AGENTS.md - GeeBeeAyy
 
 ## Permissions
 

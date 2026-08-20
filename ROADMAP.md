@@ -1,4 +1,4 @@
-# GeeBee-A — Roadmap de Desenvolvimento
+# GeeBeeAyy — Roadmap de Desenvolvimento
 
 Visão geral do plano de desenvolvimento do emulador, dividido por fases e prioridades.
 
@@ -162,7 +162,7 @@ Visão geral do plano de desenvolvimento do emulador, dividido por fases e prior
 > **Objetivo:** App nativo para iOS.
 
 - [x] SwiftUI UI (Splash, ROM Browser, Emulation, Settings)
-- [x] GeeBeeTheme (Color extensions, Design tokens)
+- [x] GeeBeeAyyTheme (Color extensions, Design tokens)
 - [x] Assets: bee_logo, bee_mascot
 - [ ] MFi controller support
 - [ ] Touch controls + gesture support

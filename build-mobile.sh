@@ -20,25 +20,25 @@ ANDROID_JNI_DIR="android/app/src/main/jniLibs"
 build_android_arm64() {
     echo "Building for Android arm64-v8a..."
     rustup target add aarch64-linux-android 2>/dev/null || true
-    cargo build --target aarch64-linux-android --release -p geebee-core
+    cargo build --target aarch64-linux-android --release -p geebeeayy-core
 
     mkdir -p "$ANDROID_JNI_DIR/arm64-v8a"
-    cp core/target/aarch64-linux-android/release/libgeebee_core.so \
+    cp core/target/aarch64-linux-android/release/libgeebeeayy_core.so \
        "$ANDROID_JNI_DIR/arm64-v8a/"
 
-    echo "Installed: $ANDROID_JNI_DIR/arm64-v8a/libgeebee_core.so"
+    echo "Installed: $ANDROID_JNI_DIR/arm64-v8a/libgeebeeayy_core.so"
 }
 
 build_android_arm() {
     echo "Building for Android armeabi-v7a..."
     rustup target add armv7-linux-androideabi 2>/dev/null || true
-    cargo build --target armv7-linux-androideabi --release -p geebee-core
+    cargo build --target armv7-linux-androideabi --release -p geebeeayy-core
 
     mkdir -p "$ANDROID_JNI_DIR/armeabi-v7a"
-    cp core/target/armv7-linux-androideabi/release/libgeebee_core.so \
+    cp core/target/armv7-linux-androideabi/release/libgeebeeayy_core.so \
        "$ANDROID_JNI_DIR/armeabi-v7a/"
 
-    echo "Installed: $ANDROID_JNI_DIR/armeabi-v7a/libgeebee_core.so"
+    echo "Installed: $ANDROID_JNI_DIR/armeabi-v7a/libgeebeeayy_core.so"
 }
 
 case "$TARGET" in
@@ -60,15 +60,15 @@ case "$TARGET" in
   ios-arm64)
     echo "Building for iOS arm64 (device)..."
     rustup target add aarch64-apple-ios 2>/dev/null || true
-    cargo build --target aarch64-apple-ios --release -p geebee-core
-    echo "Output: core/target/aarch64-apple-ios/release/libgeebee_core.a"
+    cargo build --target aarch64-apple-ios --release -p geebeeayy-core
+    echo "Output: core/target/aarch64-apple-ios/release/libgeebeeayy_core.a"
     ;;
 
   ios-sim)
     echo "Building for iOS Simulator (x86_64)..."
     rustup target add x86_64-apple-ios 2>/dev/null || true
-    cargo build --target x86_64-apple-ios --release -p geebee-core
-    echo "Output: core/target/x86_64-apple-ios/release/libgeebee_core.a"
+    cargo build --target x86_64-apple-ios --release -p geebeeayy-core
+    echo "Output: core/target/x86_64-apple-ios/release/libgeebeeayy_core.a"
     ;;
 
   help|*)

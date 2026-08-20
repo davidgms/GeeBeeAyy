@@ -1,19 +1,19 @@
-# GeeBee-A!
+# GeeBeeAyy!
 
 A cross-platform Game Boy Advance emulator with a pixel bee theme. Android (primary) + iOS.
 
 <p align="center">
-  <img src="docs/logo.png" width="200" alt="GeeBee-A! Logo">
+  <img src="docs/logo.png" width="200" alt="GeeBeeAyy! Logo">
 </p>
 
 ## What is this?
 
-GeeBee-A! is an open-source GBA emulator built for mobile devices. The goal is to provide a fast, accurate, and beautiful emulation experience with a distinctive pixel art bee aesthetic. Written primarily in Rust for the emulation core, with native Android and iOS frontends.
+GeeBeeAyy! is an open-source GBA emulator built for mobile devices. The goal is to provide a fast, accurate, and beautiful emulation experience with a distinctive pixel art bee aesthetic. Written primarily in Rust for the emulation core, with native Android and iOS frontends.
 
 ## Architecture
 
 ```
-geebee-a/
+geebeeayyayy/
 ├── core/                    # Rust emulation core
 │   ├── src/
 │   │   ├── cpu/            # ARM7TDMI interpreter (ARM + THUMB)
@@ -199,8 +199,8 @@ Docker contains everything you need - no manual tool installation required.
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/GeeBee-A.git
-cd GeeBee-A
+git clone https://github.com/your-username/GeeBeeAyy.git
+cd GeeBeeAyy
 
 # Build the Docker image (one-time, ~5.5GB)
 ./build.sh docker-build
@@ -263,8 +263,8 @@ source ~/.cargo/env
 
 ```
 core/target/release/
-├── libgeebee_core.a         # Static library (for linking)
-└── libgeebee_core.so        # Shared library (for Android)
+├── libgeebeeayyayy_core.a         # Static library (for linking)
+└── libgeebeeayyayy_core.so        # Shared library (for Android)
 
 android/app/build/outputs/apk/
 ├── debug/app-debug.apk      # Debug build
@@ -306,17 +306,17 @@ adb devices
 adb install android/app/build/outputs/apk/debug/app-debug.apk
 
 # Launch
-adb shell am start -n com.geebeea/.MainActivity
+adb shell am start -n com.geebeeayyayya/.MainActivity
 ```
 
 ### 4. View Logs
 
 ```bash
-# Filter for GeeBee-A logs
-adb logcat | grep -i "geebee"
+# Filter for GeeBeeAyy logs
+adb logcat | grep -i "geebeeayy"
 
 # Save full log
-adb logcat > geebee-debug.log
+adb logcat > geebeeayyayy-debug.log
 ```
 
 ## Configuration
@@ -343,7 +343,7 @@ The Android app configuration is in `android/app/build.gradle.kts`:
 ```kotlin
 android {
     defaultConfig {
-        applicationId = "com.geebeea"
+        applicationId = "com.geebeeayyayya"
         minSdk = 24          // Android 7.0+
         targetSdk = 34       // Android 14
         versionCode = 1

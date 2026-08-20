@@ -1,4 +1,4 @@
-use geebee_core::Gba;
+use geebeeayy_core::Gba;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -7,7 +7,7 @@ use std::path::Path;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: geebee <rom_file> [options]");
+        eprintln!("Usage: geebeeayy <rom_file> [options]");
         eprintln!();
         eprintln!("Options:");
         eprintln!("  --frames N        Run N frames (default: 10)");
@@ -67,7 +67,7 @@ fn main() {
     // Load state if requested
     if let Some(ref path) = load_state_path {
         println!("Loading state from {}...", path);
-        let state = geebee_core::savestate::SaveState::load_from_file(path)
+        let state = geebeeayy_core::savestate::SaveState::load_from_file(path)
             .expect("Failed to load save state");
         gba.load_state(&state).expect("Failed to restore state");
     }

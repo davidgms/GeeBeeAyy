@@ -10,13 +10,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log() { echo -e "${BLUE}[GeeBee-A]${NC} $1"; }
+log() { echo -e "${BLUE}[GeeBeeAyy]${NC} $1"; }
 success() { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
 usage() {
     cat <<EOF
-GeeBee-A! Local Tools Installer
+GeeBeeAyy! Local Tools Installer
 
 These tools can't run in Docker because they need hardware access
 (USB for ADB, display for GUI apps).
