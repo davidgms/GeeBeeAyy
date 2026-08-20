@@ -1,14 +1,20 @@
 package com.geebee.app
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.geebee.app.ui.screens.*
 import com.geebee.app.ui.theme.GeeBeeTheme
+import com.geebee.app.viewmodel.EmulationViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,17 +43,28 @@ fun GeeBeeNavHost() {
         }
 
         composable("rom_browser") {
-            // Placeholder ROM list
-            val sampleRoms = listOf(
-                RomEntry("Pokemon Emerald", "pokemon_emerald.gba", "16 MB", "2 hours ago", true),
-                RomEntry("Zelda: Minish Cap", "zelda_minish.gba", "16 MB", "Yesterday", true),
-                RomEntry("Mario Kart", "mario_kart.gba", "8 MB", null, false),
-                RomEntry("Metroid Fusion", "metroid_fusion.gba", "16 MB", null, false),
-                RomEntry("Fire Emblem", "fire_emblem.gba", "16 MB", "Last week", false),
-            )
+            var romList by remember { mutableStateOf(loadSavedRoms()) }
+            var showFilePicker by remember { mutableStateOf(false) }
+
+            val filePickerLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri: Uri? ->
+                uri?.let {
+                    // TODO: Copy ROM to app storage and add to list
+                    // For now, just add a placeholder entry
+                    val name = getFileNameFromUri(it) ?: "Unknown ROM"
+                    romList = romList + RomEntry(
+                        name = name,
+                        fileName = name.lowercase().replace(" ", "_") + ".gba",
+                        size = "Unknown",
+                        lastPlayed = null,
+                        isFavorite = false,
+                    )
+                }
+            }
 
             RomBrowserScreen(
-                roms = sampleRoms,
+                roms = romList,
                 onRomClick = { rom ->
                     navController.navigate("emulation/${rom.fileName}")
                 },
@@ -56,6 +73,12 @@ fun GeeBeeNavHost() {
                 },
                 onAboutClick = { },
             )
+
+            // File picker trigger
+            if (showFilePicker) {
+                filePickerLauncher.launch(arrayOf("application/*", "application/octet-stream"))
+                showFilePicker = false
+            }
         }
 
         composable(
@@ -63,14 +86,23 @@ fun GeeBeeNavHost() {
             arguments = listOf(navArgument("romName") { type = NavType.StringType })
         ) { backStackEntry ->
             val romName = backStackEntry.arguments?.getString("romName") ?: ""
+            val viewModel: EmulationViewModel = viewModel()
+
+            // Collect state from ViewModel
+            val frameBuffer by viewModel.frameBuffer.collectAsState()
+            val isRunning by viewModel.isRunning.collectAsState()
+            val isFastForward by viewModel.isFastForward.collectAsState()
 
             EmulationScreen(
-                frameBuffer = null, // Will be connected to engine
-                onBack = { navController.popBackStack() },
-                onPause = { /* Pause emulation */ },
-                onFastForward = { /* Toggle fast forward */ },
-                onSaveState = { slot -> /* Save state */ },
-                onLoadState = { slot -> /* Load state */ },
+                frameBuffer = frameBuffer,
+                onBack = {
+                    viewModel.stopEmulation()
+                    navController.popBackStack()
+                },
+                onPause = { viewModel.togglePause() },
+                onFastForward = { viewModel.toggleFastForward() },
+                onSaveState = { slot -> viewModel.saveState(slot) },
+                onLoadState = { slot -> viewModel.loadState(slot) },
             )
         }
 
@@ -80,4 +112,20 @@ fun GeeBeeNavHost() {
             )
         }
     }
+}
+
+private fun loadSavedRoms(): List<RomEntry> {
+    // TODO: Load from app's internal storage
+    return listOf(
+        RomEntry("Pokemon Emerald", "pokemon_emerald.gba", "16 MB", "2 hours ago", true),
+        RomEntry("Zelda: Minish Cap", "zelda_minish.gba", "16 MB", "Yesterday", true),
+        RomEntry("Mario Kart", "mario_kart.gba", "8 MB", null, false),
+        RomEntry("Metroid Fusion", "metroid_fusion.gba", "16 MB", null, false),
+        RomEntry("Fire Emblem", "fire_emblem.gba", "16 MB", "Last week", false),
+    )
+}
+
+private fun getFileNameFromUri(uri: Uri): String? {
+    // Simple extraction - in production, use DocumentFile
+    return uri.lastPathSegment?.split("/")?.lastOrNull()
 }
