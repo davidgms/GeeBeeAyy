@@ -1,6 +1,12 @@
-package com.geebeeayyayy.app.ui.screens
+package com.geebeeayy.app.ui.screens
 
+import android.net.Uri
+import android.os.Environment
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,15 +18,40 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.geebeeayyayy.app.ui.theme.*
+import com.geebeeayy.app.data.RomFolderManager
+import com.geebeeayy.app.ui.theme.*
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
-    var showSaveSlots by remember { mutableStateOf(false) }
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onFoldersChanged: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val folderManager = remember { RomFolderManager(context) }
+    var folders by remember { mutableStateOf(folderManager.getFolderPaths()) }
+
+    val folderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let {
+            val docId = DocumentsContract.getTreeDocumentId(it)
+            if (docId.startsWith("primary:")) {
+                val path = "/storage/emulated/0/" + docId.removePrefix("primary:")
+                val folder = File(path)
+                if (folder.isDirectory) {
+                    folderManager.addFolder(path)
+                    folders = folderManager.getFolderPaths()
+                    onFoldersChanged()
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -52,7 +83,87 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Display Settings
+            SettingsSection(title = "ROM Folders") {
+                if (folders.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "No folders added yet",
+                            fontSize = 14.sp,
+                            color = PineGlowMist.copy(alpha = 0.5f),
+                        )
+                    }
+                } else {
+                    folders.forEach { path ->
+                        val displayName = File(path).name
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = null,
+                                tint = AmberResin,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = displayName,
+                                    fontSize = 14.sp,
+                                    color = PineGlowMist,
+                                )
+                                Text(
+                                    text = path,
+                                    fontSize = 11.sp,
+                                    color = PineGlowMist.copy(alpha = 0.4f),
+                                )
+                            }
+                            IconButton(onClick = {
+                                folderManager.removeFolder(path)
+                                folders = folderManager.getFolderPaths()
+                                onFoldersChanged()
+                            }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Remove",
+                                    tint = Error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                        .clickable { folderPicker.launch(null) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = null,
+                        tint = AmberResin,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(
+                        text = "Add ROM Folder",
+                        fontSize = 16.sp,
+                        color = AmberResin,
+                    )
+                }
+            }
+
             SettingsSection(title = "Display") {
                 SettingsItem(
                     icon = Icons.Default.Star,
@@ -75,7 +186,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            // Audio Settings
             SettingsSection(title = "Audio") {
                 SettingsSwitch(
                     icon = Icons.Default.VolumeUp,
@@ -92,7 +202,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            // Control Settings
             SettingsSection(title = "Controls") {
                 SettingsItem(
                     icon = Icons.Default.Gamepad,
@@ -107,66 +216,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                     checked = false,
                     onCheckedChange = { }
                 )
-                SettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = "Vibration",
-                    subtitle = "On",
-                    onClick = { }
-                )
             }
 
-            // Save States
-            SettingsSection(title = "Save States") {
-                SettingsItem(
-                    icon = Icons.Default.Save,
-                    title = "Save State",
-                    subtitle = "Slot 1",
-                    onClick = { showSaveSlots = true }
-                )
-                SettingsItem(
-                    icon = Icons.Default.FolderOpen,
-                    title = "Load State",
-                    subtitle = "Slot 1",
-                    onClick = { showSaveSlots = true }
-                )
-                SettingsItem(
-                    icon = Icons.Default.Delete,
-                    title = "Manage Saves",
-                    subtitle = "10 slots available",
-                    onClick = { }
-                )
-            }
-
-            // Advanced
-            SettingsSection(title = "Advanced") {
-                SettingsSwitch(
-                    icon = Icons.Default.Speed,
-                    title = "Fast Forward",
-                    subtitle = "Hold button for 2x speed",
-                    checked = false,
-                    onCheckedChange = { }
-                )
-                SettingsSwitch(
-                    icon = Icons.Default.BugReport,
-                    title = "Show FPS",
-                    subtitle = "Display frame rate overlay",
-                    checked = false,
-                    onCheckedChange = { }
-                )
-            }
-
-            // About
             SettingsSection(title = "About") {
                 SettingsItem(
                     icon = Icons.Default.Info,
                     title = "GeeBeeAyy!",
-                    subtitle = "v0.1.0 — Bzzt!",
-                    onClick = { }
-                )
-                SettingsItem(
-                    icon = Icons.Default.Code,
-                    title = "Credits",
-                    subtitle = "Open Source GBA Emulator",
+                    subtitle = "v0.1.0",
                     onClick = { }
                 )
             }
@@ -210,6 +266,7 @@ fun SettingsItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

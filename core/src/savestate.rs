@@ -83,13 +83,12 @@ impl SaveState {
         }
 
         // I/O state
-        write_u16(&mut buf, gba.io.ie);
-        write_u16(&mut buf, gba.io.if_);
-        write_u16(&mut buf, gba.io.ime);
-        write_bool(&mut buf, gba.io.halt);
+        write_u16(&mut buf, gba.bus.io.ie);
+        write_u16(&mut buf, gba.bus.io.if_);
+        write_u16(&mut buf, gba.bus.io.ime);
+        write_bool(&mut buf, gba.bus.io.halt);
 
-        // Memory
-        write_u16(&mut buf, gba.bus.get_waitcnt());
+        write_u16(&mut buf, gba.bus.waitcnt);
         buf.extend_from_slice(&gba.bus.ewram_data());
         buf.extend_from_slice(&gba.bus.iwram_data());
         buf.extend_from_slice(&gba.bus.palette_data());
@@ -181,13 +180,12 @@ impl SaveState {
         }
 
         // I/O
-        gba.io.ie = read_u16(&mut cursor)?;
-        gba.io.if_ = read_u16(&mut cursor)?;
-        gba.io.ime = read_u16(&mut cursor)?;
-        gba.io.halt = read_bool(&mut cursor)?;
+        gba.bus.io.ie = read_u16(&mut cursor)?;
+        gba.bus.io.if_ = read_u16(&mut cursor)?;
+        gba.bus.io.ime = read_u16(&mut cursor)?;
+        gba.bus.io.halt = read_bool(&mut cursor)?;
 
-        // Memory
-        gba.bus.set_waitcnt(read_u16(&mut cursor)?);
+        gba.bus.waitcnt = read_u16(&mut cursor)?;
         read_exact_vec(&mut cursor, &mut gba.bus.ewram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.iwram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.palette_data_mut())?;

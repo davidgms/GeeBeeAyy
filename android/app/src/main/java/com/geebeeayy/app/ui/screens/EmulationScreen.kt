@@ -1,4 +1,4 @@
-package com.geebeeayyayy.app.ui.screens
+package com.geebeeayy.app.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -18,14 +18,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.geebeeayyayy.app.ui.theme.*
+import com.geebeeayy.app.ui.theme.*
 import kotlin.math.floor
 
 @Composable
 fun EmulationScreen(
     frameBuffer: ByteArray?,
+    isLoading: Boolean = false,
+    errorMessage: String? = null,
     onBack: () -> Unit,
     onPause: () -> Unit,
     onFastForward: () -> Unit,
@@ -80,10 +84,22 @@ fun EmulationScreen(
                 // Frame buffer rendering
                 if (frameBuffer != null) {
                     GbaScreen(frameBuffer = frameBuffer)
+                } else if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        color = Color.Red,
+                        fontSize = 14.sp,
+                    )
+                } else if (isLoading) {
+                    Text(
+                        text = "Loading ROM...",
+                        color = AmberResin,
+                        fontSize = 14.sp,
+                    )
                 } else {
                     Text(
-                        text = "Loading...",
-                        color = AmberResin,
+                        text = "No ROM loaded",
+                        color = PineGlowMist,
                         fontSize = 14.sp,
                     )
                 }
@@ -156,7 +172,6 @@ fun EmulationScreen(
 
 @Composable
 fun GbaScreen(frameBuffer: ByteArray) {
-    // Render the 240x160 RGB frame buffer to screen
     val bitmap = remember(frameBuffer) {
         try {
             val width = 240
@@ -178,7 +193,7 @@ fun GbaScreen(frameBuffer: ByteArray) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawImage(
                 image = bitmap.asImageBitmap(),
-                dstSize = size,
+                dstSize = IntSize(size.width.toInt(), size.height.toInt()),
             )
         }
     }

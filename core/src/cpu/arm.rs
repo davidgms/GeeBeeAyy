@@ -14,9 +14,13 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         return 3;
     }
 
-    // Branch and Exchange (BX) — bits [27:20]=0001_0010, bits [7:4]=0001
-    if (instruction >> 24) & 0xFF == 0x12 && (instruction & 0xF0) == 0x10 {
+    // Branch and Exchange (BX) / Branch with Link and Exchange (BLX Rm)
+    // bits [27:20]=0001_0010, bits [7:4]=0001 (BX) or 0011 (BLX)
+    if (instruction >> 20) & 0xFF == 0x12 && (instruction & 0xF0) == 0x10 {
         return branch_exchange(instruction, cpu);
+    }
+    if (instruction >> 20) & 0xFF == 0x12 && (instruction & 0xF0) == 0x30 {
+        return branch_link_exchange_rm(instruction, cpu);
     }
 
     // Software Breakpoint (BLX_imm) — bits [27:24]=1001, bits [7:4]=0011
@@ -480,6 +484,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     let pre_index = (instruction >> 24) & 1 == 1;
     let write_back = (instruction >> 21) & 1 == 1;
     let load = (instruction >> 20) & 1 == 1;
+    let s_bit = (instruction >> 22) & 1 == 1;
     let rn = ((instruction >> 16) & 0xF) as usize;
     let reg_list = instruction & 0xFFFF;
 
@@ -502,16 +507,30 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         }
     };
 
-    // Force word alignment
     addr &= !3;
 
     if load {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
                 let val = bus.read32(addr);
-                cpu.set_reg(i as usize, val);
+                if i == 15 {
+                    cpu.set_reg(15, val);
+                } else {
+                    cpu.set_reg(i as usize, val);
+                }
                 addr = addr.wrapping_add(4);
             }
+        }
+        if s_bit && reg_list & (1 << 15) != 0 {
+            let spsr = match cpu.mode() {
+                super::Mode::Fiq => cpu.spsr_fiq,
+                super::Mode::Irq => cpu.spsr_irq,
+                super::Mode::Supervisor => cpu.spsr_svc,
+                super::Mode::Abort => cpu.spsr_abt,
+                super::Mode::Undefined => cpu.spsr_und,
+                _ => cpu.cpsr,
+            };
+            cpu.cpsr = spsr;
         }
     } else {
         for i in 0..16u32 {
@@ -583,6 +602,23 @@ fn branch_exchange(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.set_reg(15, addr & !1);
     } else {
         cpu.cpsr &= !0x20; // Clear THUMB bit
+        cpu.set_reg(15, addr & !3);
+    }
+
+    3
+}
+
+fn branch_link_exchange_rm(instruction: u32, cpu: &mut Cpu) -> u32 {
+    let rm = (instruction & 0xF) as usize;
+    let addr = cpu.reg(rm);
+    let next_pc = cpu.reg(15).wrapping_sub(4);
+    cpu.registers[14] = next_pc; // LR = return address
+
+    if addr & 1 == 1 {
+        cpu.cpsr |= 0x20;
+        cpu.set_reg(15, addr & !1);
+    } else {
+        cpu.cpsr &= !0x20;
         cpu.set_reg(15, addr & !3);
     }
 

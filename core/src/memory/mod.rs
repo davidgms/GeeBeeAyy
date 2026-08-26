@@ -1,27 +1,26 @@
 pub struct MemoryBus {
-    ewram: Vec<u8>,    // 256 KB External Work RAM
-    iwram: Vec<u8>,    // 32 KB Internal Work RAM
-    io_regs: Vec<u8>,  // I/O Registers
-    palette: Vec<u8>,  // 1 KB Palette RAM
-    vram: Vec<u8>,     // 96 KB Video RAM
-    oam: Vec<u8>,      // 1 KB OAM
-    bios: Vec<u8>,     // 16 KB BIOS (HLE or real)
-    rom: Vec<u8>,      // Cartridge ROM (up to 32 MB)
-    waitcnt: u16,      // Wait State Control
-    /// Pending sound register writes (offset from 0x04000000, value)
+    ewram: Vec<u8>,
+    iwram: Vec<u8>,
+    io_regs: Vec<u8>,
+    palette: Vec<u8>,
+    vram: Vec<u8>,
+    oam: Vec<u8>,
+    bios: Vec<u8>,
+    rom: Vec<u8>,
+    pub waitcnt: u16,
     pub sound_writes: Vec<(u32, u8)>,
-    // Prefetch buffer
     prefetch_enabled: bool,
-    prefetch_seq_count: u32,  // sequential prefetches buffered
-    prefetch_cyc: u32,        // cycles available in prefetch buffer
-    iwram_prefetch: [u32; 8], // prefetched 32-bit words from IWRAM
+    prefetch_seq_count: u32,
+    prefetch_cyc: u32,
+    iwram_prefetch: [u32; 8],
     iwram_prefetch_pos: usize,
     iwram_prefetch_count: usize,
+    pub io: super::io::IoHandler,
 }
 
 impl MemoryBus {
     pub fn new() -> Self {
-        Self {
+        let mut bus = Self {
             ewram: vec![0; 256 * 1024],
             iwram: vec![0; 32 * 1024],
             io_regs: vec![0; 0x400],
@@ -38,7 +37,59 @@ impl MemoryBus {
             iwram_prefetch: [0; 8],
             iwram_prefetch_pos: 0,
             iwram_prefetch_count: 0,
+            io: super::io::IoHandler::new(),
+        };
+        bus.init_bios();
+        bus
+    }
+
+    /// Populate BIOS memory with a minimal HLE IRQ handler.
+    /// At 0x18 (IRQ vector):
+    ///   - Save r0-r3, r12, lr on IRQ stack
+    ///   - Read IE & IF, acknowledge pending interrupts
+    ///   - Load game's IRQ handler pointer from [0x03007FFC]
+    ///   - Call it via blx
+    ///   - Restore registers and return from IRQ
+    fn init_bios(&mut self) {
+        // BIOS IRQ handler at 0x18:
+        //   Save registers, acknowledge IE&IF, call game handler at [0x03007FFC], return
+        //
+        // Layout:
+        //   0x18: stmdb sp!, {r0-r3, r12, lr}
+        //   0x1C: mov r12, #0x04000000
+        //   0x20: add r12, r12, #0x200
+        //   0x24: ldrh r1, [r12]          ; IE
+        //   0x28: ldrh r2, [r12, #2]      ; IF
+        //   0x2C: and r1, r1, r2          ; IE & IF
+        //   0x30: strh r1, [r12, #2]      ; acknowledge IF
+        //   0x34: ldr r0, [pc, #8]        ; load 0x03007FFC address from literal pool at 0x44
+        //   0x38: ldr r0, [r0]            ; deref -> game handler address
+        //   0x3C: blx r0                  ; call game handler
+        //   0x40: ldmia sp!, {r0-r3, r12, pc}^  ; return from IRQ, restore CPSR
+        //   0x44: .word 0x03007FFC        ; literal: pointer to game's IRQ vector
+        let bios_irq_handler: [u32; 11] = [
+            0xE92D500F, // stmdb sp!, {r0-r3, r12, lr}
+            0xE3A0C301, // mov r12, #0x04000000
+            0xE28CCC02, // add r12, r12, #0x200      ; 2 ROR 24 = 0x200
+            0xE1DC10B0, // ldrh r1, [r12]            ; r1 = IE
+            0xE1DC20B2, // ldrh r2, [r12, #2]        ; r2 = IF
+            0xE0011002, // and r1, r1, r2             ; r1 = IE & IF
+            0xE1CC10B2, // strh r1, [r12, #2]        ; acknowledge IF
+            0xE59F0008, // ldr r0, [pc, #8]          ; r0 -> literal at 0x44
+            0xE5900000, // ldr r0, [r0]              ; r0 = game handler addr
+            0xE12FFF30, // blx r0                    ; call game handler
+            0xE8FDD00F, // ldmia sp!, {r0-r3, r12, pc}^ ; return from IRQ (S bit set)
+        ];
+        let literal: u32 = 0x0300_7FFC;
+
+        let offset = 0x18usize;
+        for (i, &word) in bios_irq_handler.iter().enumerate() {
+            let addr = offset + i * 4;
+            let bytes = word.to_le_bytes();
+            self.bios[addr..addr + 4].copy_from_slice(&bytes);
         }
+        let lit_addr = offset + bios_irq_handler.len() * 4;
+        self.bios[lit_addr..lit_addr + 4].copy_from_slice(&literal.to_le_bytes());
     }
 
     pub fn read8(&self, address: u32) -> u8 {
@@ -46,26 +97,36 @@ impl MemoryBus {
             0x0000_0000..=0x0000_3FFF => self.bios[(address & 0x3FFF) as usize],
             0x0200_0000..=0x0203_FFFF => self.ewram[(address & 0x3FFFF) as usize],
             0x0300_0000..=0x0300_7FFF => self.iwram[(address & 0x7FFF) as usize],
-            0x0400_0000..=0x0400_03FE => self.io_regs[(address & 0x3FF) as usize],
+            0x0400_0000..=0x0400_03FE => {
+                let offset = (address & 0x3FF) as usize;
+                if offset == super::io::IO_IE {
+                    (self.io.ie & 0xFF) as u8
+                } else if offset == super::io::IO_IE + 1 {
+                    (self.io.ie >> 8) as u8
+                } else if offset == super::io::IO_IF {
+                    (self.io.if_ & 0xFF) as u8
+                } else if offset == super::io::IO_IF + 1 {
+                    (self.io.if_ >> 8) as u8
+                } else if offset == super::io::IO_IME {
+                    (self.io.ime & 0xFF) as u8
+                } else if offset == super::io::IO_IME + 1 {
+                    (self.io.ime >> 8) as u8
+                } else if offset == 0x301 {
+                    if self.io.halt { 0x80 } else { 0 }
+                } else {
+                    self.io_regs[offset]
+                }
+            }
             0x0500_0000..=0x0500_03FF => self.palette[(address & 0x3FF) as usize],
             0x0600_0000..=0x0601_7FFF => self.vram[(address & 0x17FFF) as usize],
             0x0700_0000..=0x0700_03FF => self.oam[(address & 0x3FF) as usize],
-            // ROM region (0x08000000 - 0x09FFFFFF) with mirroring
             0x0800_0000..=0x09FF_FFFF => {
                 let addr = (address - 0x0800_0000) as usize;
-                if addr < self.rom.len() {
-                    self.rom[addr]
-                } else {
-                    0
-                }
+                if addr < self.rom.len() { self.rom[addr] } else { 0 }
             }
             0x0A00_0000..=0x0BFF_FFFF => {
                 let addr = (address - 0x0A00_0000) as usize;
-                if addr < self.rom.len() {
-                    self.rom[addr]
-                } else {
-                    0
-                }
+                if addr < self.rom.len() { self.rom[addr] } else { 0 }
             }
             _ => 0,
         }
@@ -90,12 +151,42 @@ impl MemoryBus {
             0x0200_0000..=0x0203_FFFF => self.ewram[(address & 0x3FFFF) as usize] = value,
             0x0300_0000..=0x0300_7FFF => self.iwram[(address & 0x7FFF) as usize] = value,
             0x0400_0000..=0x0400_03FE => {
-                let offset = address - 0x0400_0000;
-                self.io_regs[(address & 0x3FF) as usize] = value;
-                // Queue sound register writes for APU
+                let offset = (address & 0x3FF) as usize;
+                if offset == super::io::IO_IE {
+                    self.io.ie = (self.io.ie & 0xFF00) | (value as u16);
+                    self.io_regs[offset] = value;
+                    return;
+                } else if offset == super::io::IO_IE + 1 {
+                    self.io.ie = (self.io.ie & 0x00FF) | ((value as u16) << 8);
+                    self.io_regs[offset] = value;
+                    return;
+                } else if offset == super::io::IO_IF {
+                    self.io.if_ &= 0xFF00 | !(value as u16);
+                    self.io_regs[offset] = value;
+                    return;
+                } else if offset == super::io::IO_IF + 1 {
+                    self.io.if_ &= 0x00FF | !((value as u16) << 8);
+                    self.io_regs[offset] = value;
+                    return;
+                } else if offset == super::io::IO_IME {
+                    self.io.ime = value as u16 & 1;
+                    self.io_regs[offset] = value;
+                    return;
+                } else if offset == super::io::IO_HALTCNT {
+                    if value & 0x80 == 0 {
+                        self.io.halt = true;
+                    }
+                } else if offset == 0x204 {
+                    self.waitcnt = (self.waitcnt & 0xFF00) | (value as u16);
+                    self.prefetch_enabled = self.waitcnt & 0x4000 != 0;
+                } else if offset == 0x205 {
+                    self.waitcnt = (self.waitcnt & 0x00FF) | ((value as u16) << 8);
+                    self.prefetch_enabled = self.waitcnt & 0x4000 != 0;
+                }
+                self.io_regs[offset] = value;
                 match offset {
                     0x60..=0x7F | 0x80..=0x88 | 0x90..=0x9F | 0xA0..=0xA7 => {
-                        self.sound_writes.push((offset, value));
+                        self.sound_writes.push((offset as u32, value));
                     }
                     _ => {}
                 }
@@ -128,26 +219,24 @@ impl MemoryBus {
         self.rom = data.to_vec();
     }
 
-    /// Returns the number of CPU cycles for a read at the given address.
-    /// GBA memory timing depends on region and access type.
     pub fn read_cycles(&self, address: u32, is_32bit: bool) -> u32 {
         match address {
-            0x0000_0000..=0x0000_3FFF => 1,                      // BIOS: 1 cycle (cached)
-            0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },  // EWRAM
-            0x0300_0000..=0x0300_7FFF => if is_32bit { 2 } else { 1 },  // IWRAM
-            0x0400_0000..=0x0400_03FE => 1,                       // I/O
-            0x0500_0000..=0x0500_03FF => 1,                       // Palette
-            0x0600_0000..=0x0601_7FFF => 1,                       // VRAM
-            0x0700_0000..=0x0700_03FF => 1,                       // OAM
-            0x0800_0000..=0x09FF_FFFF => {                         // ROM Wait State 0
+            0x0000_0000..=0x0000_3FFF => 1,
+            0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },
+            0x0300_0000..=0x0300_7FFF => if is_32bit { 2 } else { 1 },
+            0x0400_0000..=0x0400_03FE => 1,
+            0x0500_0000..=0x0500_03FF => 1,
+            0x0600_0000..=0x0601_7FFF => 1,
+            0x0700_0000..=0x0700_03FF => 1,
+            0x0800_0000..=0x09FF_FFFF => {
                 let ws = (self.waitcnt >> 2) & 3;
                 if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
             }
-            0x0A00_0000..=0x0BFF_FFFF => {                         // ROM Wait State 1
+            0x0A00_0000..=0x0BFF_FFFF => {
                 let ws = (self.waitcnt >> 5) & 3;
                 if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
             }
-            0x0C00_0000..=0x0DFF_FFFF => {                         // ROM Wait State 2
+            0x0C00_0000..=0x0DFF_FFFF => {
                 let ws = (self.waitcnt >> 8) & 3;
                 if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
             }
@@ -155,7 +244,6 @@ impl MemoryBus {
         }
     }
 
-    /// Returns the number of CPU cycles for a write at the given address.
     pub fn write_cycles(&self, address: u32, is_32bit: bool) -> u32 {
         match address {
             0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },
@@ -168,23 +256,18 @@ impl MemoryBus {
         }
     }
 
-    /// Update WAITCNT register
-    pub fn set_waitcnt(&mut self, value: u16) {
-        self.waitcnt = value;
-        self.prefetch_enabled = value & 0x4000 != 0;
-    }
-
-    /// Get WAITCNT register
-    pub fn get_waitcnt(&self) -> u16 {
-        self.waitcnt
-    }
-
-    /// Drain pending sound register writes
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
         std::mem::take(&mut self.sound_writes)
     }
 
-    // Accessor methods for save states
+    /// Advance the gamepak prefetch buffer by one cycle.
+    pub fn prefetch_tick(&mut self) {
+        if !self.prefetch_enabled { return; }
+        if self.prefetch_cyc > 0 {
+            self.prefetch_cyc -= 1;
+        }
+    }
+
     pub fn ewram_data(&self) -> &[u8] { &self.ewram }
     pub fn ewram_data_mut(&mut self) -> &mut [u8] { &mut self.ewram }
     pub fn iwram_data(&self) -> &[u8] { &self.iwram }
@@ -195,46 +278,4 @@ impl MemoryBus {
     pub fn vram_data_mut(&mut self) -> &mut [u8] { &mut self.vram }
     pub fn oam_data(&self) -> &[u8] { &self.oam }
     pub fn oam_data_mut(&mut self) -> &mut [u8] { &mut self.oam }
-
-    /// Tick the prefetch buffer (called each CPU cycle).
-    /// When prefetch is enabled and CPU is executing from ROM,
-    /// we can buffer sequential reads at 0 cost.
-    pub fn prefetch_tick(&mut self) {
-        if !self.prefetch_enabled {
-            return;
-        }
-        // Simple model: accumulate 1 cycle of prefetch budget per tick
-        // Real hardware: prefetches happen during non-sequential cycles
-        if self.prefetch_cyc < 8 {
-            self.prefetch_cyc += 1;
-        }
-    }
-
-    /// Returns read cycles for ROM, accounting for prefetch buffer.
-    /// If prefetch is enabled and we have buffered data, return 0 (free).
-    pub fn rom_read_cycles_prefetch(&mut self, address: u32, is_32bit: bool, is_seq: bool) -> u32 {
-        if !self.prefetch_enabled || !is_seq {
-            return self.read_cycles(address, is_32bit);
-        }
-
-        // Sequential ROM read with prefetch: free if we have budget
-        let cost = self.read_cycles(address, is_32bit);
-        if self.prefetch_cyc >= cost {
-            self.prefetch_cyc -= cost;
-            0 // Free! Prefetch absorbed the cost
-        } else {
-            let remaining = cost - self.prefetch_cyc;
-            self.prefetch_cyc = 0;
-            remaining
-        }
-    }
-
-    /// Prefetch from IWRAM (internal memory, 2 cycles)
-    pub fn iwram_prefetch_tick(&mut self) {
-        // IWRAM has 2-cycle sequential access; prefetch can buffer words
-        if self.iwram_prefetch_count < 8 {
-            // Simulate prefetching a word from IWRAM
-            self.iwram_prefetch_count += 1;
-        }
-    }
 }

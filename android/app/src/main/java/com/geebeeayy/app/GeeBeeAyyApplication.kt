@@ -1,4 +1,4 @@
-package com.geebeeayyayy.app
+package com.geebeeayy.app
 
 import android.app.Application
 

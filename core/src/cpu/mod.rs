@@ -46,11 +46,21 @@ impl Cpu {
         }
     }
 
+    /// Initialize CPU state as if the GBA BIOS boot has completed.
+    pub fn boot(&mut self) {
+        self.registers[13] = 0x0300_7F00; // SP (System/User mode)
+        self.registers[15] = 0x0800_0000; // PC = ROM entry point
+        self.cpsr = Mode::System as u32;  // System mode, IRQ disabled
+        self.halted = false;
+    }
+
     pub fn step(&mut self, bus: &mut super::memory::MemoryBus) -> u32 {
         if self.halted {
             return 1;
         }
 
+        static mut STEP_COUNT: u64 = 0;
+        unsafe { STEP_COUNT += 1; }
         let pc = self.registers[15];
 
         let is_thumb = self.cpsr & 0x20 != 0;
@@ -58,10 +68,16 @@ impl Cpu {
         let cycles = if is_thumb {
             let instruction = bus.read16(pc) as u16;
             self.registers[15] = pc.wrapping_add(4);
+            if unsafe { STEP_COUNT } <= 20 {
+                eprintln!("[GeeBeeAyy] THUMB step#{}: PC={:08X} instr={:04X} CPSR={:08X}", unsafe { STEP_COUNT }, pc, instruction, self.cpsr);
+            }
             self.execute_thumb(instruction, bus)
         } else {
             let instruction = bus.read32(pc);
             self.registers[15] = pc.wrapping_add(8);
+            if unsafe { STEP_COUNT } <= 20 {
+                eprintln!("[GeeBeeAyy] ARM step#{}: PC={:08X} instr={:08X} CPSR={:08X}", unsafe { STEP_COUNT }, pc, instruction, self.cpsr);
+            }
             self.execute_arm(instruction, bus)
         };
 
@@ -296,14 +312,19 @@ impl Cpu {
         super::bios::handle_swi(comment, self, bus);
     }
 
-    /// IRQ handler placeholder
+    /// Handle IRQ exception
     pub fn handle_irq(&mut self) {
-        // Placeholder for IRQ handling
-        // In a full implementation:
-        // 1. Save CPSR to SPSR_irq
-        // 2. Set mode to IRQ
-        // 3. Disable IRQ
-        // 4. Set LR_irq to PC+4
-        // 5. Jump to IRQ vector (0x00000018)
+        if self.cpsr & 0x80 != 0 {
+            return;
+        }
+        let pc = self.registers[15];
+        self.halted = false;
+        self.spsr_irq = self.cpsr;
+        self.cpsr = (self.cpsr & !0x3F) | Mode::Irq as u32;
+        self.cpsr |= 0x80;
+        self.irq_registers[1] = pc;
+        self.registers[14] = pc;
+        self.registers[15] = 0x0000_0018;
+        self.registers[15] &= !0x3;
     }
 }

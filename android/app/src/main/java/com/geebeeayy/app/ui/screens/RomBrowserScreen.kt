@@ -1,4 +1,4 @@
-package com.geebeeayyayy.app.ui.screens
+package com.geebeeayy.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,15 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.geebeeayyayy.app.ui.theme.*
-
-data class RomEntry(
-    val name: String,
-    val fileName: String,
-    val size: String,
-    val lastPlayed: String? = null,
-    val isFavorite: Boolean = false,
-)
+import com.geebeeayy.app.data.RomEntry
+import com.geebeeayy.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,15 +68,6 @@ fun RomBrowserScreen(
                 }
             )
         },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { /* Open file picker */ },
-                containerColor = AmberResin,
-                contentColor = BurntRoot,
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Add ROM") },
-            )
-        },
         containerColor = BurntRoot
     ) { padding ->
         if (roms.isEmpty()) {
@@ -98,7 +82,7 @@ fun RomBrowserScreen(
             ) {
                 item {
                     Text(
-                        text = "Your Games",
+                        text = "Your Games (${roms.size})",
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         color = GoldenSaplight,
@@ -106,7 +90,6 @@ fun RomBrowserScreen(
                     )
                 }
 
-                // Favorites section
                 val favorites = roms.filter { it.isFavorite }
                 if (favorites.isNotEmpty()) {
                     item {
@@ -123,7 +106,6 @@ fun RomBrowserScreen(
                     }
                 }
 
-                // All ROMs
                 item {
                     Text(
                         text = "All ROMs",
@@ -158,7 +140,6 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Game icon placeholder
             Box(
                 modifier = Modifier
                     .size(56.dp)
@@ -186,7 +167,7 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = rom.fileName,
+                    text = "${rom.fileName} • ${rom.size}",
                     fontSize = 12.sp,
                     color = AmberResin,
                     maxLines = 1,
@@ -246,7 +227,7 @@ fun EmptyState(modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Tap 'Add ROM' to get started.\nBzzt! Your games await!",
+            text = "Go to Settings → ROM Folders\nto add your game folders.\n\nBzzt! Your games await!",
             fontSize = 14.sp,
             color = PineGlowMist.copy(alpha = 0.7f),
             lineHeight = 20.sp,

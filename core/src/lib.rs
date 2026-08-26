@@ -16,10 +16,9 @@ use apu::Apu;
 use memory::MemoryBus;
 use timer::Timer;
 use cart::Cartridge;
-use io::IoHandler;
 use dma::Dma;
 
-const CYCLES_PER_FRAME: u64 = 280896; // ~59.73 Hz
+const CYCLES_PER_FRAME: u64 = 280896;
 
 pub struct Gba {
     pub cpu: Cpu,
@@ -28,9 +27,9 @@ pub struct Gba {
     pub bus: MemoryBus,
     pub timer: Timer,
     pub cartridge: Cartridge,
-    pub io: IoHandler,
     pub dma: Dma,
     pub cycles: u64,
+    pub run_frame_counter: u64,
 }
 
 impl Gba {
@@ -42,75 +41,83 @@ impl Gba {
             bus: MemoryBus::new(),
             timer: Timer::new(),
             cartridge: Cartridge::empty(),
-            io: IoHandler::new(),
             dma: Dma::new(),
             cycles: 0,
+            run_frame_counter: 0,
         }
     }
 
     pub fn load_rom(&mut self, data: &[u8]) -> Result<(), cart::CartError> {
         self.cartridge = Cartridge::from_bytes(data)?;
         self.bus.load_rom(data);
+        self.cpu.boot();
         Ok(())
     }
 
     pub fn run_frame(&mut self) {
         let target = self.cycles + CYCLES_PER_FRAME;
         while self.cycles < target {
+            // If halted, just advance PPU until an interrupt wakes us
+            if self.cpu.halted || self.bus.io.halt {
+                let remaining = (target - self.cycles) as u32;
+                self.ppu.tick(remaining.min(1232), &mut self.bus, &mut self.dma);
+                self.cycles += remaining.min(1232) as u64;
+
+                // Check if any pending interrupt can wake the CPU
+                if self.bus.io.interrupt_pending() {
+                    self.cpu.halted = false;
+                    self.bus.io.halt = false;
+                    self.cpu.handle_irq();
+                }
+                continue;
+            }
+
             let cycles = self.cpu.step(&mut self.bus);
             self.cycles += cycles as u32 as u64;
             self.timer.tick(cycles as u32, &mut self.bus);
             self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
             self.apu.tick(cycles as u32);
 
-            // Tick prefetch buffer
             for _ in 0..cycles {
                 self.bus.prefetch_tick();
             }
 
-            // DMA Sound: refill FIFO A (DMA1) and FIFO B (DMA2) when half-empty
+            // DMA Sound
             if self.apu.fifo_a_half_empty() {
                 if let Some((dest, data)) = self.dma.do_sound_transfer(1, &mut self.bus) {
                     if dest == 0x0400_00A0 {
-                        for &byte in &data {
-                            self.apu.write_fifo_a(byte as i8);
-                        }
+                        for &byte in &data { self.apu.write_fifo_a(byte as i8); }
                     }
                 }
             }
             if self.apu.fifo_b_half_empty() {
                 if let Some((dest, data)) = self.dma.do_sound_transfer(2, &mut self.bus) {
                     if dest == 0x0400_00A4 {
-                        for &byte in &data {
-                            self.apu.write_fifo_b(byte as i8);
-                        }
+                        for &byte in &data { self.apu.write_fifo_b(byte as i8); }
                     }
                 }
             }
 
-            // Check timer overflows for APU sound DMA
             let overflows = self.timer.drain_overflows();
             for (i, &overflow) in overflows.iter().enumerate() {
-                if overflow {
-                    self.apu.on_timer_overflow(i as u8);
-                }
+                if overflow { self.apu.on_timer_overflow(i as u8); }
             }
 
-            // Process sound register writes from memory bus
             let writes = self.bus.drain_sound_writes();
             for (offset, value) in writes {
                 self.apu_sound_write(offset, value);
             }
 
-            // Check for interrupts
+            // Route interrupts from PPU -> bus.io
             if self.ppu.vblank_pending() {
-                self.io.request_interrupt(0x0001); // VBlank IRQ
+                self.bus.io.request_interrupt(0x0001);
             }
             if self.ppu.hblank_pending() {
-                self.io.request_interrupt(0x0002); // HBlank IRQ
+                self.bus.io.request_interrupt(0x0002);
             }
 
-            if self.io.interrupt_pending() {
+            // Deliver IRQs to CPU
+            if self.bus.io.interrupt_pending() {
                 self.cpu.handle_irq();
             }
         }
@@ -149,12 +156,10 @@ impl Gba {
                 let lo = self.bus.read8(0x0400_0082);
                 self.apu.write_soundcnt_h(((value as u16) << 8) | lo as u16);
             }
-            // FIFO A (0x040000A0 - 0x040000A3)
             0xA0 => self.apu.write_fifo_a(value as i8),
             0xA1 => self.apu.write_fifo_a(value as i8),
             0xA2 => self.apu.write_fifo_a(value as i8),
             0xA3 => self.apu.write_fifo_a(value as i8),
-            // FIFO B (0x040000A4 - 0x040000A7)
             0xA4 => self.apu.write_fifo_b(value as i8),
             0xA5 => self.apu.write_fifo_b(value as i8),
             0xA6 => self.apu.write_fifo_b(value as i8),
@@ -175,17 +180,14 @@ impl Gba {
         self.apu.clear_buffer();
     }
 
-    /// Create a save state snapshot.
     pub fn save_state(&self) -> savestate::SaveState {
         savestate::SaveState::create(self)
     }
 
-    /// Restore from a save state snapshot.
     pub fn load_state(&mut self, state: &savestate::SaveState) -> Result<(), savestate::SaveStateError> {
         state.restore(self)
     }
 
-    /// Run multiple frames (for fast forward).
     pub fn run_frames(&mut self, count: u32) {
         for _ in 0..count {
             self.run_frame();

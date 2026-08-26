@@ -8,9 +8,9 @@ pub struct Ppu {
     pub mode: u8,
     pub vblank: bool,
     pub hblank: bool,
-    vblank_irq: bool,
-    hblank_irq: bool,
-    vcount_irq: bool,
+    vblank_irq_pending: bool,
+    hblank_irq_pending: bool,
+    vcount_irq_pending: bool,
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
@@ -22,6 +22,10 @@ pub struct Ppu {
     bg2_enable: bool,
     bg3_enable: bool,
     obj_enable: bool,
+    // DISPSTAT IRQ enable bits (read from game writes to DISPSTAT)
+    dispstat_vblank_ie: bool,
+    dispstat_hblank_ie: bool,
+    dispstat_vcount_ie: bool,
     // BG control registers
     pub bg0cnt: u16,
     pub bg1cnt: u16,
@@ -72,7 +76,7 @@ pub struct Ppu {
     win1v_bottom: u8,
     winin: u16,
     winout: u16,
-    // Internal affine reference point latches (for write-then-read behavior)
+    // Internal affine reference point latches
     bg2x_internal: i32,
     bg2y_internal: i32,
     bg3x_internal: i32,
@@ -87,14 +91,17 @@ impl Ppu {
             mode: 0,
             vblank: false,
             hblank: false,
-            vblank_irq: false,
-            hblank_irq: false,
-            vcount_irq: false,
+            vblank_irq_pending: false,
+            hblank_irq_pending: false,
+            vcount_irq_pending: false,
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
             display_off: false,
             bg_mode: 0,
+            dispstat_vblank_ie: false,
+            dispstat_hblank_ie: false,
+            dispstat_vcount_ie: false,
             bg0_enable: false,
             bg1_enable: false,
             bg2_enable: false,
@@ -157,13 +164,22 @@ impl Ppu {
         if self.cycle_counter >= 1232 {
             self.cycle_counter -= 1232;
             self.sync_from_bus(bus);
+
+            // Read DISPSTAT IRQ enable bits from bus BEFORE rendering
+            let dispstat = bus.read16(0x0400_0004);
+            self.dispstat_vblank_ie = dispstat & 0x0008 != 0;
+            self.dispstat_hblank_ie = dispstat & 0x0010 != 0;
+            self.dispstat_vcount_ie = dispstat & 0x0020 != 0;
+
             self.render_scanline(bus);
             self.scanline += 1;
 
             // VBlank start
             if self.scanline == 160 && !self.vblank {
                 self.vblank = true;
-                self.vblank_irq = true;
+                if self.dispstat_vblank_ie {
+                    self.vblank_irq_pending = true;
+                }
                 dma.on_vblank(bus);
             }
 
@@ -188,19 +204,21 @@ impl Ppu {
         let new_hblank = self.cycle_counter >= 960;
         if new_hblank && !self.hblank {
             self.hblank = true;
-            self.hblank_irq = true;
+            if self.dispstat_hblank_ie {
+                self.hblank_irq_pending = true;
+            }
             dma.on_hblank(bus);
         } else if !new_hblank {
             self.hblank = false;
         }
 
-        // Write DISPSTAT
+        // Write DISPSTAT: status bits from PPU state, enable bits from game
         let dispstat = ((self.vblank as u16) << 0)
             | ((self.hblank as u16) << 1)
             | (((self.scanline >= 160 && self.scanline <= 226) as u16) << 2)
-            | ((self.vcount_irq as u16) << 5)
-            | ((self.hblank_irq as u16) << 4)
-            | ((self.vblank_irq as u16) << 3);
+            | ((self.dispstat_vcount_ie as u16) << 5)
+            | ((self.dispstat_hblank_ie as u16) << 4)
+            | ((self.dispstat_vblank_ie as u16) << 3);
         bus.write16(0x0400_0004, dispstat);
 
         // Write VCOUNT
@@ -991,8 +1009,8 @@ impl Ppu {
     // ========================================================================
 
     pub fn vblank_pending(&mut self) -> bool {
-        if self.vblank_irq {
-            self.vblank_irq = false;
+        if self.vblank_irq_pending {
+            self.vblank_irq_pending = false;
             true
         } else {
             false
@@ -1000,8 +1018,8 @@ impl Ppu {
     }
 
     pub fn hblank_pending(&mut self) -> bool {
-        if self.hblank_irq {
-            self.hblank_irq = false;
+        if self.hblank_irq_pending {
+            self.hblank_irq_pending = false;
             true
         } else {
             false

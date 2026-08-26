@@ -192,7 +192,7 @@ impl Dma {
     }
 
     /// Called on scanline 0 (start of frame). Triggers special DMA channels.
-    pub fn on_vcounter(&mut self, bus: &mut super::memory::MemoryBus) {
+    pub fn on_vcounter(&mut self, _bus: &mut super::memory::MemoryBus) {
         for i in 0..4 {
             let timing = self.channels[i].timing;
             let enabled = self.channels[i].enabled;

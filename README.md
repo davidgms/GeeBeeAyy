@@ -13,7 +13,7 @@ GeeBeeAyy! is an open-source GBA emulator built for mobile devices. The goal is 
 ## Architecture
 
 ```
-geebeeayyayy/
+geebeeayy/
 ├── core/                    # Rust emulation core
 │   ├── src/
 │   │   ├── cpu/            # ARM7TDMI interpreter (ARM + THUMB)
@@ -263,8 +263,8 @@ source ~/.cargo/env
 
 ```
 core/target/release/
-├── libgeebeeayyayy_core.a         # Static library (for linking)
-└── libgeebeeayyayy_core.so        # Shared library (for Android)
+├── libgeebeeayy_core.a         # Static library (for linking)
+└── libgeebeeayy_core.so        # Shared library (for Android)
 
 android/app/build/outputs/apk/
 ├── debug/app-debug.apk      # Debug build
@@ -306,7 +306,7 @@ adb devices
 adb install android/app/build/outputs/apk/debug/app-debug.apk
 
 # Launch
-adb shell am start -n com.geebeeayyayya/.MainActivity
+adb shell am start -n com.geebeeayya/.MainActivity
 ```
 
 ### 4. View Logs
@@ -316,7 +316,7 @@ adb shell am start -n com.geebeeayyayya/.MainActivity
 adb logcat | grep -i "geebeeayy"
 
 # Save full log
-adb logcat > geebeeayyayy-debug.log
+adb logcat > geebeeayy-debug.log
 ```
 
 ## Configuration
@@ -343,7 +343,7 @@ The Android app configuration is in `android/app/build.gradle.kts`:
 ```kotlin
 android {
     defaultConfig {
-        applicationId = "com.geebeeayyayya"
+        applicationId = "com.geebeeayya"
         minSdk = 24          // Android 7.0+
         targetSdk = 34       // Android 14
         versionCode = 1

@@ -1,4 +1,4 @@
-package com.geebeeayyayy.app.ui.theme
+package com.geebeeayy.app.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
@@ -11,10 +11,12 @@ import androidx.compose.ui.unit.sp
 private val DarkColorScheme = darkColorScheme(
     primary = AmberResin,
     onPrimary = BurntRoot,
-    primaryVariant = HoneyDark,
+    primaryContainer = HoneyDark,
+    onPrimaryContainer = PineGlowMist,
     secondary = GoldenSaplight,
     onSecondary = BurntRoot,
-    secondaryVariant = PineGlowMist,
+    secondaryContainer = PineGlowMist,
+    onSecondaryContainer = BurntRoot,
     background = BurntRoot,
     onBackground = PineGlowMist,
     surface = HoneyDark,
@@ -26,10 +28,12 @@ private val DarkColorScheme = darkColorScheme(
 private val LightColorScheme = lightColorScheme(
     primary = AmberResin,
     onPrimary = PineGlowMist,
-    primaryVariant = HoneyDark,
+    primaryContainer = HoneyDark,
+    onPrimaryContainer = PineGlowMist,
     secondary = GoldenSaplight,
     onSecondary = BurntRoot,
-    secondaryVariant = PineGlowMist,
+    secondaryContainer = PineGlowMist,
+    onSecondaryContainer = BurntRoot,
     background = PineGlowMist,
     onBackground = BurntRoot,
     surface = PineGlowMist,

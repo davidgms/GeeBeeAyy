@@ -1,9 +1,10 @@
-package com.geebeeayyayy.app.viewmodel
+package com.geebeeayy.app.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.geebeeayyayy.app.engine.GbaEngine
+import com.geebeeayy.app.engine.GbaEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -11,25 +12,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
-/**
- * ViewModel for the emulation screen.
- * Manages the GbaEngine lifecycle and frame rendering loop.
- */
 class EmulationViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val TAG = "GeeBeeAyy/VM"
+    }
 
     private val engine = GbaEngine()
 
-    // Frame buffer for rendering
     private val _frameBuffer = MutableStateFlow<ByteArray?>(null)
     val frameBuffer: StateFlow<ByteArray?> = _frameBuffer
 
-    // Emulation state
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
     private val _isFastForward = MutableStateFlow(false)
     val isFastForward: StateFlow<Boolean> = _isFastForward
+
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
 
     private var emulationJob: Job? = null
     private var romLoaded = false
@@ -38,34 +44,53 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         engine.create()
     }
 
-    /**
-     * Load a ROM from a byte array.
-     * @return true on success.
-     */
-    fun loadRom(data: ByteArray): Boolean {
-        val result = engine.loadRom(data)
-        romLoaded = result
-        return result
+    fun loadRomFromPath(filePath: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isLoading.value = true
+            _errorMessage.value = null
+            try {
+                val file = File(filePath)
+                if (!file.exists()) {
+                    Log.e(TAG, "ROM not found: $filePath")
+                    _errorMessage.value = "ROM file not found"
+                    _isLoading.value = false
+                    return@launch
+                }
+                val data = file.readBytes()
+                if (data.size < 0xC0) {
+                    _errorMessage.value = "File too small (${data.size} bytes)"
+                    _isLoading.value = false
+                    return@launch
+                }
+                val success = engine.loadRom(data)
+                if (success) {
+                    romLoaded = true
+                    _isLoading.value = false
+                    startEmulation()
+                } else {
+                    _errorMessage.value = "Bad ROM header"
+                    _isLoading.value = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading ROM", e)
+                _errorMessage.value = "Error: ${e.message}"
+                _isLoading.value = false
+            }
+        }
     }
 
-    /**
-     * Start the emulation loop.
-     * Runs frames at ~60fps and updates the frame buffer.
-     */
     fun startEmulation() {
         if (romLoaded && emulationJob == null) {
             _isRunning.value = true
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
                 while (isActive) {
                     if (!isFastForward.value) {
-                        // Normal speed: ~60fps = 16.67ms per frame
                         engine.runFrame()
-                        _frameBuffer.value = engine.getFrameBuffer()
+                        _frameBuffer.value = engine.getFrameBuffer().copyOf()
                         delay(16)
                     } else {
-                        // Fast forward: run multiple frames
                         engine.runFrames(4)
-                        _frameBuffer.value = engine.getFrameBuffer()
+                        _frameBuffer.value = engine.getFrameBuffer().copyOf()
                         delay(4)
                     }
                 }
@@ -73,55 +98,29 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    /**
-     * Stop the emulation loop.
-     */
     fun stopEmulation() {
         emulationJob?.cancel()
         emulationJob = null
         _isRunning.value = false
     }
 
-    /**
-     * Toggle pause state.
-     */
     fun togglePause() {
         if (_isRunning.value) {
             stopEmulation()
-        } else {
+        } else if (romLoaded) {
             startEmulation()
         }
     }
 
-    /**
-     * Toggle fast forward mode.
-     */
     fun toggleFastForward() {
         _isFastForward.value = !_isFastForward.value
     }
 
-    /**
-     * Save state to slot.
-     */
     fun saveState(slot: Int = 0) {
-        // TODO: Implement save state persistence
-        val stateHandle = engine.saveStateCreate()
-        // In a real app, save to file: saveStateToFile(stateHandle, slot)
+        engine.saveStateCreate()
     }
 
-    /**
-     * Load state from slot.
-     */
-    fun loadState(slot: Int = 0) {
-        // TODO: Implement load state persistence
-        // val stateHandle = loadStateFromFile(slot)
-        // if (stateHandle != null) engine.loadState(stateHandle)
-    }
-
-    /**
-     * Get the current engine instance for direct access.
-     */
-    fun getEngine(): GbaEngine = engine
+    fun loadState(slot: Int = 0) { }
 
     override fun onCleared() {
         super.onCleared()

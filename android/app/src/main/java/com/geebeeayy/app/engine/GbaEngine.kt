@@ -1,4 +1,6 @@
-package com.geebeeayyayy.app.engine
+package com.geebeeayy.app.engine
+
+import android.util.Log
 
 /**
  * JNI bridge to the GeeBeeAyy Rust core.
@@ -8,8 +10,15 @@ package com.geebeeayyayy.app.engine
 class GbaEngine {
 
     companion object {
+        private const val TAG = "GeeBeeAyy/Engine"
+
         init {
-            System.loadLibrary("geebeeayy_core")
+            try {
+                System.loadLibrary("geebeeayy_core")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to load native library", e)
+                throw e
+            }
         }
 
         /** Width of the GBA screen in pixels. */
@@ -46,7 +55,8 @@ class GbaEngine {
      */
     fun loadRom(data: ByteArray): Boolean {
         ensureHandle()
-        return nativeLoadRom(handle, data, data.size) == 0
+        val result = nativeLoadRom(handle, data, data.size)
+        return result == 0
     }
 
     /** Run a single frame of emulation. */

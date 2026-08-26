@@ -1,20 +1,34 @@
-package com.geebeeayyayy.app
+package com.geebeeayy.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.geebeeayyayy.app.ui.screens.*
-import com.geebeeayyayy.app.ui.theme.GeeBeeAyyTheme
-import com.geebeeayyayy.app.viewmodel.EmulationViewModel
+import com.geebeeayy.app.data.RomEntry
+import com.geebeeayy.app.data.RomFolderManager
+import com.geebeeayy.app.ui.screens.*
+import com.geebeeayy.app.ui.theme.GeeBeeAyyTheme
+import com.geebeeayy.app.viewmodel.EmulationViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
+
+private const val TAG = "GeeBeeAyy/Main"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,6 +44,66 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun GeeBeeAyyNavHost() {
     val navController = rememberNavController()
+    val context = LocalContext.current
+    val folderManager = remember { RomFolderManager(context) }
+    val scope = rememberCoroutineScope()
+
+    var romList by remember { mutableStateOf<List<RomEntry>>(emptyList()) }
+    var isFirstLaunch by remember { mutableStateOf(!folderManager.hasFolders()) }
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+
+    Log.i(TAG, "NavHost init: isFirstLaunch=$isFirstLaunch, hasStoragePermission=$hasStoragePermission")
+
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    fun requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                storagePermissionLauncher.launch(intent)
+            }
+        } else {
+            // For older devices, handled via standard permission request
+        }
+    }
+
+    fun rescanRoms() {
+        if (!hasStoragePermission) {
+            requestStoragePermission()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            romList = folderManager.scanAllFolders()
+        }
+    }
+
+    LaunchedEffect(hasStoragePermission) {
+        if (hasStoragePermission && folderManager.hasFolders()) {
+            rescanRoms()
+        }
+    }
 
     NavHost(navController = navController, startDestination = "splash") {
         composable("splash") {
@@ -43,58 +117,44 @@ fun GeeBeeAyyNavHost() {
         }
 
         composable("rom_browser") {
-            var romList by remember { mutableStateOf(loadSavedRoms()) }
-            var showFilePicker by remember { mutableStateOf(false) }
-
-            val filePickerLauncher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.OpenDocument()
-            ) { uri: Uri? ->
-                uri?.let {
-                    // TODO: Copy ROM to app storage and add to list
-                    // For now, just add a placeholder entry
-                    val name = getFileNameFromUri(it) ?: "Unknown ROM"
-                    romList = romList + RomEntry(
-                        name = name,
-                        fileName = name.lowercase().replace(" ", "_") + ".gba",
-                        size = "Unknown",
-                        lastPlayed = null,
-                        isFavorite = false,
-                    )
-                }
+            if (!hasStoragePermission) {
+                LaunchedEffect(Unit) { requestStoragePermission() }
+            } else if (isFirstLaunch) {
+                // Show hint to add folder
             }
 
             RomBrowserScreen(
                 roms = romList,
                 onRomClick = { rom ->
-                    navController.navigate("emulation/${rom.fileName}")
+                    navController.navigate("emulation/${java.net.URLEncoder.encode(rom.filePath, "UTF-8")}")
                 },
                 onSettingsClick = {
                     navController.navigate("settings")
                 },
                 onAboutClick = { },
             )
-
-            // File picker trigger
-            if (showFilePicker) {
-                filePickerLauncher.launch(arrayOf("application/*", "application/octet-stream"))
-                showFilePicker = false
-            }
         }
 
         composable(
-            "emulation/{romName}",
-            arguments = listOf(navArgument("romName") { type = NavType.StringType })
+            "emulation/{filePath}",
+            arguments = listOf(navArgument("filePath") { type = NavType.StringType })
         ) { backStackEntry ->
-            val romName = backStackEntry.arguments?.getString("romName") ?: ""
-            val viewModel: EmulationViewModel = viewModel()
+            val encodedPath = backStackEntry.arguments?.getString("filePath") ?: ""
+            val filePath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
+            val viewModel: EmulationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 
-            // Collect state from ViewModel
             val frameBuffer by viewModel.frameBuffer.collectAsState()
-            val isRunning by viewModel.isRunning.collectAsState()
-            val isFastForward by viewModel.isFastForward.collectAsState()
+            val isLoading by viewModel.isLoading.collectAsState()
+            val errorMessage by viewModel.errorMessage.collectAsState()
+
+            LaunchedEffect(filePath) {
+                viewModel.loadRomFromPath(filePath)
+            }
 
             EmulationScreen(
                 frameBuffer = frameBuffer,
+                isLoading = isLoading,
+                errorMessage = errorMessage,
                 onBack = {
                     viewModel.stopEmulation()
                     navController.popBackStack()
@@ -108,24 +168,9 @@ fun GeeBeeAyyNavHost() {
 
         composable("settings") {
             SettingsScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onFoldersChanged = { rescanRoms() }
             )
         }
     }
-}
-
-private fun loadSavedRoms(): List<RomEntry> {
-    // TODO: Load from app's internal storage
-    return listOf(
-        RomEntry("Pokemon Emerald", "pokemon_emerald.gba", "16 MB", "2 hours ago", true),
-        RomEntry("Zelda: Minish Cap", "zelda_minish.gba", "16 MB", "Yesterday", true),
-        RomEntry("Mario Kart", "mario_kart.gba", "8 MB", null, false),
-        RomEntry("Metroid Fusion", "metroid_fusion.gba", "16 MB", null, false),
-        RomEntry("Fire Emblem", "fire_emblem.gba", "16 MB", "Last week", false),
-    )
-}
-
-private fun getFileNameFromUri(uri: Uri): String? {
-    // Simple extraction - in production, use DocumentFile
-    return uri.lastPathSegment?.split("/")?.lastOrNull()
 }

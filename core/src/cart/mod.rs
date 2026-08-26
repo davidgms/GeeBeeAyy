@@ -59,7 +59,7 @@ impl Cartridge {
         }
         checksum = checksum.wrapping_sub(0x19);
         if checksum != data[0xBD] {
-            return Err(CartError::BadChecksum);
+            eprintln!("Warning: bad header checksum (got 0x{:02X}, expected 0x{:02X})", checksum, data[0xBD]);
         }
 
         let title_bytes = &data[0xA0..0xAC];
