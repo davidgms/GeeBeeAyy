@@ -3,14 +3,12 @@ use crate::memory::MemoryBus;
 
 /// Execute a single THUMB instruction.
 pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
-    let bits15_13 = (instruction >> 13) & 0x7;
     let bits15_12 = (instruction >> 12) & 0xF;
-    let bits15_11 = (instruction >> 11) & 0x1F;
     let bits15_10 = (instruction >> 10) & 0x3F;
 
-    match bits15_13 {
-        // Format 1: LSL, LSR, ASR (shift by immediate)
-        0b000 => {
+    match bits15_12 {
+        // Format 1/2: shift by immediate, ADD/SUB
+        0b0000 | 0b0001 => {
             let shift_op = (instruction >> 11) & 3;
             let offset5 = (instruction >> 6) & 0x1F;
             let rs = ((instruction >> 3) & 7) as usize;
@@ -59,7 +57,7 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
 
         // Format 2/3: ADD, SUB (various forms)
-        0b001 => {
+        0b0010 | 0b0011 => {
             let op_type = (instruction >> 11) & 3;
             match op_type {
                 // Format 2: ADD, SUB (3-register or immediate 3-bit)
@@ -130,89 +128,99 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             }
         }
 
-        // Format 4-6 and Format 9 (immediate): all start with 0b011
-        0b011 => {
+        // Format 4/5/6: ALU, hi-register + BX, PC-relative load
+        0b0100 => {
             if bits15_10 == 0b0100_00 {
-                // Format 4: ALU operations
                 format4_alu(instruction, cpu);
                 1
             } else if bits15_10 == 0b0100_01 {
-                // Format 5: Hi register operations / BX
                 format5_hireg(instruction, cpu);
                 3
-            } else if bits15_11 == 0b0100_1 {
-                // Format 6: LDR (PC-relative)
+            } else {
+                // bits [15:11] = 01001 -> Format 6: LDR Rd, [PC, #imm]
                 format6_ldr_pc(instruction, cpu, bus);
                 3
-            } else {
-                // Format 9: LDR/STR (immediate offset) — bits [15:13] = 011, bit [12] = varies
-                let load = (instruction >> 11) & 1 == 1;
-                let offset5 = ((instruction >> 6) & 0x1F) * 4;
-                let rn = ((instruction >> 3) & 7) as usize;
-                let rd = (instruction & 7) as usize;
-                let addr = cpu.reg(rn).wrapping_add(offset5 as u32);
+            }
+        }
 
-                if load {
+        // Format 7/8: load/store with register offset
+        0b0101 => {
+            let load = (instruction >> 11) & 1 == 1;
+            let flag = (instruction >> 10) & 1 == 1;
+            if (instruction >> 9) & 1 == 0 {
+                // Format 7: word / byte. bit11 = L, bit10 = B
+                match (load, flag) {
+                    (false, false) => format7_str(instruction, cpu, bus),
+                    (false, true) => {
+                        let addr = format7_addr(instruction, cpu);
+                        bus.write8(addr, cpu.reg((instruction & 7) as usize) as u8);
+                    }
+                    (true, false) => format7_ldr(instruction, cpu, bus),
+                    (true, true) => {
+                        let addr = format7_addr(instruction, cpu);
+                        let val = bus.read8(addr) as u32;
+                        cpu.set_reg((instruction & 7) as usize, val);
+                    }
+                }
+            } else {
+                // Format 8: halfword / sign-extended. bit11 = H, bit10 = S
+                match (flag, load) {
+                    (false, false) => format8_strh(instruction, cpu, bus),
+                    (false, true) => format8_ldrh(instruction, cpu, bus),
+                    (true, false) => format9_ldrsb(instruction, cpu, bus),
+                    (true, true) => format9_ldrsh(instruction, cpu, bus),
+                }
+            }
+            3
+        }
+
+        // Format 9: LDR/STR with immediate offset
+        0b0110 | 0b0111 => {
+            let load = (instruction >> 11) & 1 == 1;
+            let byte = (instruction >> 12) & 1 == 1;
+            let rn = ((instruction >> 3) & 7) as usize;
+            let rd = (instruction & 7) as usize;
+            let offset5 = ((instruction >> 6) & 0x1F) as u32;
+            let addr = cpu
+                .reg(rn)
+                .wrapping_add(if byte { offset5 } else { offset5 * 4 });
+
+            match (load, byte) {
+                (true, false) => {
                     let val = bus.read32(addr);
-                    let rotate = (addr & 3) * 8;
-                    let val = val.rotate_right(rotate);
-                    cpu.set_reg(rd, val);
+                    cpu.set_reg(rd, val.rotate_right((addr & 3) * 8));
                     3
-                } else {
+                }
+                (true, true) => {
+                    cpu.set_reg(rd, bus.read8(addr) as u32);
+                    3
+                }
+                (false, false) => {
                     bus.write32(addr, cpu.reg(rd));
+                    2
+                }
+                (false, true) => {
+                    bus.write8(addr, cpu.reg(rd) as u8);
                     2
                 }
             }
         }
 
-        // Format 7-9: Load/Store register offset
-        0b100 => {
-            if bits15_12 == 0b0101 {
-                // Format 7/8/9 register offset
-                let bit9 = (instruction >> 9) & 1;
-                let bit5 = (instruction >> 5) & 1;
-                let bit10 = (instruction >> 10) & 1;
+        // Format 10: LDRH/STRH with immediate offset
+        0b1000 => {
+            let load = (instruction >> 11) & 1 == 1;
+            let offset5 = ((instruction >> 6) & 0x1F) * 2;
+            let rn = ((instruction >> 3) & 7) as usize;
+            let rd = (instruction & 7) as usize;
+            let addr = cpu.reg(rn).wrapping_add(offset5 as u32);
 
-                if bit9 == 0 {
-                    // Format 7: STR or LDR (register offset)
-                    if bit5 == 0 {
-                        format7_str(instruction, cpu, bus);
-                    } else {
-                        format7_ldr(instruction, cpu, bus);
-                    }
-                } else {
-                    // Format 8/9: signed/unsigned halfword
-                    if bit5 == 0 {
-                        if bit10 == 0 {
-                            format8_strh(instruction, cpu, bus);
-                        } else {
-                            format9_ldrsb(instruction, cpu, bus);
-                        }
-                    } else {
-                        if bit10 == 0 {
-                            format8_ldrh(instruction, cpu, bus);
-                        } else {
-                            format9_ldrsh(instruction, cpu, bus);
-                        }
-                    }
-                }
+            if load {
+                let val = bus.read16(addr);
+                cpu.set_reg(rd, val as u32);
                 3
             } else {
-                // Format 10: LDRH/STRH (immediate offset) — bits [15:11] = 10000 or 10001
-                let load = (instruction >> 11) & 1 == 1;
-                let offset5 = ((instruction >> 6) & 0x1F) * 2;
-                let rn = ((instruction >> 3) & 7) as usize;
-                let rd = (instruction & 7) as usize;
-                let addr = cpu.reg(rn).wrapping_add(offset5 as u32);
-
-                if load {
-                    let val = bus.read16(addr);
-                    cpu.set_reg(rd, val as u32);
-                    3
-                } else {
-                    bus.write16(addr, cpu.reg(rd) as u16);
-                    2
-                }
+                bus.write16(addr, cpu.reg(rd) as u16);
+                2
             }
         }
 
@@ -388,7 +396,7 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
 
         // Format 18: Unconditional branch
-        0b11100 => {
+        0b1110 => {
             let offset11 = (instruction & 0x7FF) as i16 as i32;
             let pc = cpu.registers[15];
             let target = pc.wrapping_add((offset11 << 1) as u32);
@@ -396,22 +404,21 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             3
         }
 
-        // Format 19: Long branch with link (second part)
-        0b11110 | 0b11101 => {
-            let h = (instruction >> 11) & 1;
-            if h == 0 {
-                let offset11 = (instruction & 0x7FF) as u32;
-                let pc = cpu.registers[15];
-                let offset = (offset11 << 12) as i32;
-                let lr = pc.wrapping_add(offset as u32);
+        // Format 19: Long branch with link (both halves; bit 11 picks which)
+        0b1111 => {
+            let offset11 = (instruction & 0x7FF) as u32;
+            if (instruction >> 11) & 1 == 0 {
+                // First half: LR = PC + (sign-extended offset << 12)
+                let offset = (((offset11 << 12) as i32) << 9) >> 9;
+                let lr = cpu.registers[15].wrapping_add(offset as u32);
                 cpu.set_reg(14, lr);
             } else {
-                let offset11 = (instruction & 0x7FF) as u32;
-                let lr = cpu.registers[14];
-                let old_pc = cpu.registers[15];
-                let pc = lr.wrapping_add(offset11 << 1);
-                cpu.set_reg(14, old_pc | 1);
-                cpu.set_reg(15, pc);
+                // Second half: branch to LR + (offset << 1), LR = address of the
+                // instruction after this half, with the THUMB bit set.
+                let target = cpu.registers[14].wrapping_add(offset11 << 1);
+                let return_addr = cpu.registers[15].wrapping_sub(2) | 1;
+                cpu.set_reg(14, return_addr);
+                cpu.set_reg(15, target);
             }
             3
         }
@@ -636,6 +643,12 @@ fn format6_ldr_pc(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) {
 // ---------------------------------------------------------------------------
 // Format 7: STR, LDR (register offset)
 // ---------------------------------------------------------------------------
+
+fn format7_addr(instruction: u16, cpu: &Cpu) -> u32 {
+    let offset = ((instruction >> 6) & 7) as usize;
+    let rb = ((instruction >> 3) & 7) as usize;
+    cpu.reg(rb).wrapping_add(cpu.reg(offset))
+}
 
 fn format7_str(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) {
     let offset = ((instruction >> 6) & 7) as usize;

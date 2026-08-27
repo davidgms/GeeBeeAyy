@@ -1,0 +1,344 @@
+//! ARM7TDMI regression tests. Instructions are placed in IWRAM and stepped
+//! directly, so no ROM or BIOS image is needed.
+
+use geebeeayy_core::cpu::Cpu;
+use geebeeayy_core::memory::MemoryBus;
+
+const BASE: u32 = 0x0300_0000;
+
+/// Load ARM words at BASE and point the CPU at them.
+fn setup_arm(instrs: &[u32]) -> (Cpu, MemoryBus) {
+    let mut bus = MemoryBus::new();
+    for (i, &word) in instrs.iter().enumerate() {
+        bus.write32(BASE + (i as u32) * 4, word);
+    }
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[13] = 0x0300_7F00;
+    (cpu, bus)
+}
+
+/// Load THUMB halfwords at BASE and point the CPU at them in THUMB state.
+fn setup_thumb(instrs: &[u16]) -> (Cpu, MemoryBus) {
+    let mut bus = MemoryBus::new();
+    for (i, &half) in instrs.iter().enumerate() {
+        bus.write16(BASE + (i as u32) * 2, half);
+    }
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[13] = 0x0300_7F00;
+    cpu.cpsr |= 0x20; // T bit
+    (cpu, bus)
+}
+
+fn steps(cpu: &mut Cpu, bus: &mut MemoryBus, n: usize) {
+    for _ in 0..n {
+        cpu.step(bus);
+    }
+}
+
+#[test]
+fn arm_executes_consecutive_instructions() {
+    // mov r0, #1 ; mov r1, #2 ; mov r2, #3
+    let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0001, 0xE3A0_1002, 0xE3A0_2003]);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[0], 1);
+    assert_eq!(cpu.registers[1], 2, "second instruction was skipped");
+    assert_eq!(cpu.registers[2], 3, "third instruction was skipped");
+}
+
+#[test]
+fn thumb_executes_consecutive_instructions() {
+    // mov r0, #1 ; mov r1, #2 ; mov r2, #3
+    let (mut cpu, mut bus) = setup_thumb(&[0x2001, 0x2102, 0x2203]);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[0], 1);
+    assert_eq!(cpu.registers[1], 2, "second instruction was skipped");
+    assert_eq!(cpu.registers[2], 3, "third instruction was skipped");
+}
+
+#[test]
+fn arm_r15_reads_as_pc_plus_8() {
+    // mov r0, pc  -> r0 must be BASE + 8
+    let (mut cpu, mut bus) = setup_arm(&[0xE1A0_000F]);
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], BASE + 8);
+}
+
+#[test]
+fn arm_branch_and_link() {
+    // b +2 instructions ; (skipped) ; mov r0, #7
+    // B offset is relative to PC (instr + 8), so offset 0 lands on instr+8.
+    let (mut cpu, mut bus) = setup_arm(&[0xEA00_0000, 0xE3A0_00FF, 0xE3A0_0007]);
+    steps(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[0], 7, "branch did not land on instruction at +8");
+}
+
+#[test]
+fn arm_adds_sets_carry_and_overflow() {
+    // mov r0, #0x80000000 (0x2 ror 2) ; adds r0, r0, r0
+    let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0102, 0xE090_0000]);
+    steps(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[0], 0);
+    assert!(cpu.flag_z(), "Z must be set");
+    assert!(cpu.flag_c(), "C must be set on unsigned overflow");
+    assert!(cpu.flag_v(), "V must be set on signed overflow");
+}
+
+#[test]
+fn arm_subs_borrow_clears_carry() {
+    // mov r0, #1 ; subs r0, r0, #2
+    let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0001, 0xE250_0002]);
+    steps(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[0], 0xFFFF_FFFF);
+    assert!(cpu.flag_n());
+    assert!(!cpu.flag_c(), "C is clear when a subtraction borrows");
+}
+
+#[test]
+fn arm_condition_codes_gate_execution() {
+    // mov r0, #0 ; cmp r0, #0 ; movne r1, #1 ; moveq r2, #1
+    let (mut cpu, mut bus) =
+        setup_arm(&[0xE3A0_0000, 0xE350_0000, 0x13A0_1001, 0x03A0_2001]);
+    steps(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers[1], 0, "NE must not execute when Z is set");
+    assert_eq!(cpu.registers[2], 1, "EQ must execute when Z is set");
+}
+
+#[test]
+fn arm_stm_ldm_round_trip() {
+    // mov r0, #0x02000000 ; mov r1, #0x11 ; mov r2, #0x22
+    // stmia r0, {r1, r2} ; mov r1, #0 ; mov r2, #0 ; ldmia r0, {r1, r2}
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0402, // mov r0, #0x02000000
+        0xE3A0_1011, // mov r1, #0x11
+        0xE3A0_2022, // mov r2, #0x22
+        0xE880_0006, // stmia r0, {r1, r2}
+        0xE3A0_1000, // mov r1, #0
+        0xE3A0_2000, // mov r2, #0
+        0xE890_0006, // ldmia r0, {r1, r2}
+    ]);
+    steps(&mut cpu, &mut bus, 7);
+    assert_eq!(cpu.registers[1], 0x11);
+    assert_eq!(cpu.registers[2], 0x22);
+}
+
+#[test]
+fn arm_ldr_str_word() {
+    // mov r0, #0x02000000 ; mov r1, #0xAB ; str r1, [r0] ; ldr r2, [r0]
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0402, 0xE3A0_10AB, 0xE580_1000, 0xE590_2000,
+    ]);
+    steps(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers[2], 0xAB);
+}
+
+#[test]
+fn thumb_bl_returns_to_next_instruction() {
+    // bl +4 ; mov r0, #1 ; (target) mov r1, #1 ; bx lr
+    let (mut cpu, mut bus) = setup_thumb(&[0xF000, 0xF802, 0x2001, 0x2101, 0x4770]);
+    steps(&mut cpu, &mut bus, 2); // BL is two halfwords, one logical call
+    assert_eq!(cpu.registers[14] & !1, BASE + 4, "LR must point past the BL pair");
+}
+
+#[test]
+fn barrel_shifter_edge_cases() {
+    let mut cpu = Cpu::new();
+    cpu.set_flags(false, false, false, false);
+
+    let r = cpu.lsl(0x8000_0000, 1);
+    assert_eq!(r.value, 0);
+    assert!(r.carry_out, "LSL #1 of 0x80000000 carries out the top bit");
+
+    let r = cpu.lsr(1, 1);
+    assert_eq!(r.value, 0);
+    assert!(r.carry_out);
+
+    let r = cpu.asr(0x8000_0000, 31);
+    assert_eq!(r.value, 0xFFFF_FFFF, "ASR keeps the sign bit");
+
+    let r = cpu.asr(0x8000_0000, 32);
+    assert_eq!(r.value, 0xFFFF_FFFF);
+    assert!(r.carry_out);
+
+    let r = cpu.ror(1, 1);
+    assert_eq!(r.value, 0x8000_0000);
+    assert!(r.carry_out);
+
+    cpu.set_flags(false, false, true, false); // C = 1
+    let r = cpu.rrx(0);
+    assert_eq!(r.value, 0x8000_0000, "RRX shifts the old carry into bit 31");
+    assert!(!r.carry_out);
+}
+
+#[test]
+fn irq_entry_switches_to_arm_state() {
+    let mut cpu = Cpu::new();
+    cpu.cpsr |= 0x20; // running in THUMB
+    cpu.registers[15] = 0x0800_1234;
+    cpu.handle_irq();
+    assert_eq!(cpu.registers[15], 0x0000_0018, "IRQ vector");
+    assert_eq!(cpu.cpsr & 0x20, 0, "the IRQ vector is ARM code, T must be cleared");
+    assert_ne!(cpu.cpsr & 0x80, 0, "IRQs must be masked on entry");
+}
+
+// --- THUMB formats that the 3-bit dispatch used to drop on the floor --------
+
+#[test]
+fn thumb_alu_and() {
+    // mov r0, #0xF ; mov r1, #3 ; and r0, r1
+    let (mut cpu, mut bus) = setup_thumb(&[0x200F, 0x2103, 0x4008]);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[0], 3);
+}
+
+#[test]
+fn thumb_bx_switches_to_arm() {
+    // mov r1, #0x40 ; bx r1   (bit 0 clear -> ARM state)
+    let (mut cpu, mut bus) = setup_thumb(&[0x2140, 0x4708]);
+    steps(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[15], 0x40);
+    assert_eq!(cpu.cpsr & 0x20, 0, "BX to an even address must clear the T bit");
+}
+
+#[test]
+fn thumb_pc_relative_load() {
+    // ldr r0, [pc, #0] ; <pad> ; .word 0xCAFEBABE
+    let (mut cpu, mut bus) = setup_thumb(&[0x4800, 0x0000]);
+    bus.write32(BASE + 4, 0xCAFE_BABE);
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], 0xCAFE_BABE);
+}
+
+#[test]
+fn thumb_register_offset_load_store() {
+    // r0 = 0x02000000 base, r1 = 0 offset
+    let (mut cpu, mut bus) = setup_thumb(&[
+        0x2002, // mov r0, #2
+        0x0600, // lsl r0, r0, #24 -> 0x02000000
+        0x2100, // mov r1, #0
+        0x22AB, // mov r2, #0xAB
+        0x5042, // str  r2, [r0, r1]
+        0x5843, // ldr  r3, [r0, r1]
+        0x5442, // strb r2, [r0, r1]
+        0x5C44, // ldrb r4, [r0, r1]
+        0x5242, // strh r2, [r0, r1]
+        0x5A45, // ldrh r5, [r0, r1]
+    ]);
+    steps(&mut cpu, &mut bus, 10);
+    assert_eq!(cpu.registers[3], 0xAB, "LDR register offset");
+    assert_eq!(cpu.registers[4], 0xAB, "LDRB register offset");
+    assert_eq!(cpu.registers[5], 0xAB, "LDRH register offset");
+}
+
+#[test]
+fn thumb_halfword_immediate_is_not_sp_relative() {
+    // The two used to share a dispatch arm, so SP-relative accesses were
+    // decoded as halfword accesses against r0.
+    let (mut cpu, mut bus) = setup_thumb(&[
+        0x2002, // mov r0, #2
+        0x0600, // lsl r0, r0, #24 -> 0x02000000
+        0x21FF, // mov r1, #0xFF
+        0x8001, // strh r1, [r0, #0]
+        0x8802, // ldrh r2, [r0, #0]
+        0x9100, // str  r1, [sp, #0]
+        0x9B00, // ldr  r3, [sp, #0]
+    ]);
+    steps(&mut cpu, &mut bus, 7);
+    assert_eq!(cpu.registers[2], 0xFF, "halfword immediate load");
+    assert_eq!(cpu.registers[3], 0xFF, "SP-relative load");
+    assert_eq!(bus.read32(cpu.registers[13]), 0xFF, "SP-relative store hit the stack");
+}
+
+#[test]
+fn thumb_push_pop() {
+    // mov r0, #0x11 ; mov r1, #0x22 ; push {r0,r1} ; mov r0,#0 ; mov r1,#0 ; pop {r0,r1}
+    let (mut cpu, mut bus) =
+        setup_thumb(&[0x2011, 0x2122, 0xB403, 0x2000, 0x2100, 0xBC03]);
+    let sp_before = cpu.registers[13];
+    steps(&mut cpu, &mut bus, 6);
+    assert_eq!(cpu.registers[0], 0x11);
+    assert_eq!(cpu.registers[1], 0x22);
+    assert_eq!(cpu.registers[13], sp_before, "PUSH/POP must balance the stack");
+}
+
+#[test]
+fn thumb_stmia_ldmia() {
+    let (mut cpu, mut bus) = setup_thumb(&[
+        0x2002, // mov r0, #2
+        0x0600, // lsl r0, r0, #24 -> 0x02000000
+        0x2111, // mov r1, #0x11
+        0x2222, // mov r2, #0x22
+        0xC006, // stmia r0!, {r1, r2}
+        0x2002, // mov r0, #2
+        0x0600, // lsl r0, r0, #24 (reset base)
+        0xC818, // ldmia r0!, {r3, r4}
+    ]);
+    steps(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers[3], 0x11);
+    assert_eq!(cpu.registers[4], 0x22);
+}
+
+#[test]
+fn thumb_conditional_branch() {
+    // mov r0, #0 ; cmp r0, #0 ; beq +0 ; mov r1, #1 (skipped) ; mov r2, #1
+    let (mut cpu, mut bus) =
+        setup_thumb(&[0x2000, 0x2800, 0xD000, 0x2101, 0x2201]);
+    steps(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers[1], 0, "BEQ should have skipped this");
+    assert_eq!(cpu.registers[2], 1, "BEQ landed on the wrong instruction");
+}
+
+#[test]
+fn thumb_add_sp_and_load_address() {
+    // add r0, sp, #0 ; add sp, #4
+    let (mut cpu, mut bus) = setup_thumb(&[0xA800, 0xB001]);
+    let sp = cpu.registers[13];
+    steps(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[0], sp, "ADD Rd, SP, #imm");
+    assert_eq!(cpu.registers[13], sp + 4, "ADD SP, #imm");
+}
+
+#[test]
+fn thumb_backward_bl_reaches_a_lower_address() {
+    // The first half of BL sign-extends its offset; without that, backward
+    // calls land far above the caller instead of below it.
+    let (mut cpu, mut bus) = setup_thumb(&[0xF7FF, 0xFFFC]); // bl -8
+    steps(&mut cpu, &mut bus, 2);
+    assert_eq!(cpu.registers[15], BASE.wrapping_sub(4));
+}
+
+#[test]
+fn arm_halfword_and_signed_transfers() {
+    // Build 0x02000000 in r0, store 0xFF80, then read it back four ways.
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0402, // mov   r0, #0x02000000
+        0xE3A0_1CFF, // mov   r1, #0xFF00
+        0xE281_1080, // add   r1, r1, #0x80      -> 0xFF80
+        0xE1C0_10B0, // strh  r1, [r0]
+        0xE1D0_20B0, // ldrh  r2, [r0]
+        0xE1D0_30D0, // ldrsb r3, [r0]
+        0xE1D0_40F0, // ldrsh r4, [r0]
+    ]);
+    steps(&mut cpu, &mut bus, 7);
+    assert_eq!(cpu.registers[2], 0xFF80, "LDRH is zero-extended");
+    assert_eq!(cpu.registers[3], 0xFFFF_FF80, "LDRSB sign-extends the low byte");
+    assert_eq!(cpu.registers[4], 0xFFFF_FF80, "LDRSH sign-extends the halfword");
+}
+
+#[test]
+fn arm_halfword_post_index_writes_back() {
+    // mov r0, #0x02000000 ; mov r1, #1 ; strh r1, [r0], #2
+    let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0402, 0xE3A0_1001, 0xE0C0_10B2]);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(bus.read16(0x0200_0000), 1);
+    assert_eq!(cpu.registers[0], 0x0200_0002, "post-indexed transfer must write back");
+}
+
+#[test]
+fn arm_msr_still_decodes_after_the_halfword_arm() {
+    // msr cpsr_f, #0xF0000000 must not be swallowed by the halfword decoder.
+    let (mut cpu, mut bus) = setup_arm(&[0xE328_F20F]);
+    cpu.step(&mut bus);
+    assert!(cpu.flag_n() && cpu.flag_z() && cpu.flag_c() && cpu.flag_v());
+}

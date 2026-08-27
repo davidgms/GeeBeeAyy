@@ -23,6 +23,8 @@ pub struct Cpu {
     pub spsr_abt: u32,
     pub spsr_und: u32,
     pub halted: bool,
+    /// Set when an instruction writes R15, so `step` knows not to advance PC itself.
+    branched: bool,
 }
 
 pub struct BarrelShiftResult {
@@ -43,6 +45,7 @@ impl Cpu {
             spsr_abt: 0,
             spsr_und: 0,
             halted: false,
+            branched: false,
         }
     }
 
@@ -59,32 +62,43 @@ impl Cpu {
             return 1;
         }
 
-        static mut STEP_COUNT: u64 = 0;
-        unsafe { STEP_COUNT += 1; }
         let pc = self.registers[15];
-
         let is_thumb = self.cpsr & 0x20 != 0;
+        self.branched = false;
 
+        // R15 reads as the address of the instruction plus two fetches while it
+        // executes: +8 in ARM, +4 in THUMB.
         let cycles = if is_thumb {
             let instruction = bus.read16(pc) as u16;
             self.registers[15] = pc.wrapping_add(4);
-            if unsafe { STEP_COUNT } <= 20 {
-                eprintln!("[GeeBeeAyy] THUMB step#{}: PC={:08X} instr={:04X} CPSR={:08X}", unsafe { STEP_COUNT }, pc, instruction, self.cpsr);
-            }
             self.execute_thumb(instruction, bus)
         } else {
             let instruction = bus.read32(pc);
             self.registers[15] = pc.wrapping_add(8);
-            if unsafe { STEP_COUNT } <= 20 {
-                eprintln!("[GeeBeeAyy] ARM step#{}: PC={:08X} instr={:08X} CPSR={:08X}", unsafe { STEP_COUNT }, pc, instruction, self.cpsr);
-            }
             self.execute_arm(instruction, bus)
         };
 
-        // Ensure PC bit 0 and bit 1 are always zero (ARM/THUMB alignment)
-        self.registers[15] &= !0x3;
+        // Only advance to the next instruction when the instruction itself did
+        // not write PC; a branch has already put the target there.
+        if !self.branched {
+            self.registers[15] = pc.wrapping_add(if is_thumb { 2 } else { 4 });
+        }
+
+        // Align against the state we are in *now*: a BX or an `ldm ^` may have
+        // flipped the T bit as part of this instruction.
+        self.align_pc();
 
         cycles
+    }
+
+    /// Force PC alignment for the current instruction set: halfword in THUMB,
+    /// word in ARM.
+    fn align_pc(&mut self) {
+        if self.cpsr & 0x20 != 0 {
+            self.registers[15] &= !1;
+        } else {
+            self.registers[15] &= !3;
+        }
     }
 
     pub fn execute_arm(&mut self, instruction: u32, bus: &mut super::memory::MemoryBus) -> u32 {
@@ -302,7 +316,7 @@ impl Cpu {
     pub fn set_reg(&mut self, reg: usize, value: u32) {
         self.registers[reg] = value;
         if reg == 15 {
-            self.registers[15] &= !0x3;
+            self.branched = true;
         }
     }
 
@@ -321,10 +335,10 @@ impl Cpu {
         self.halted = false;
         self.spsr_irq = self.cpsr;
         self.cpsr = (self.cpsr & !0x3F) | Mode::Irq as u32;
-        self.cpsr |= 0x80;
+        self.cpsr |= 0x80;  // mask further IRQs
+        self.cpsr &= !0x20; // the vector at 0x18 is ARM code
         self.irq_registers[1] = pc;
         self.registers[14] = pc;
         self.registers[15] = 0x0000_0018;
-        self.registers[15] &= !0x3;
     }
 }

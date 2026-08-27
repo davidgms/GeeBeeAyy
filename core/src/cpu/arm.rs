@@ -37,13 +37,25 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
     }
 
+    // Halfword / signed Data Transfer — bits [27:25]=000, bit [7]=1, bit [4]=1,
+    // SH != 00 (SH == 00 is SWP, handled above).
+    // Must be tested before PSR Transfer: a pre-indexed, down-counting STRH has
+    // the same bits [24:23]=10 / bit [20]=0 pattern that MSR matches on.
+    if (instruction >> 25) & 0x7 == 0b000
+        && (instruction >> 7) & 1 == 1
+        && (instruction >> 4) & 1 == 1
+        && (instruction >> 5) & 0x3 != 0
+    {
+        return halfword_data_transfer(instruction, cpu, bus);
+    }
+
     // PSR Transfer — bits [27:26]=00, bits [24:23]=10, bit [20]=0
     if (instruction >> 26) & 0x3 == 0b00
         && (instruction >> 23) & 0x3 == 0b10
         && (instruction >> 20) & 1 == 0
     {
-        let bit4 = (instruction >> 4) & 1;
-        if bit4 == 0 {
+        // Bit 21 selects the direction: 0 = MRS (read PSR), 1 = MSR (write PSR).
+        if (instruction >> 21) & 1 == 0 {
             return mrs(instruction, cpu);
         } else {
             return msr(instruction, cpu);
@@ -471,6 +483,56 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
 
     if write_back {
         cpu.set_reg(rn, addr);
+    }
+
+    if load { 3 } else { 2 }
+}
+
+// ---------------------------------------------------------------------------
+// Halfword and Signed Data Transfer (LDRH, STRH, LDRSB, LDRSH)
+// ---------------------------------------------------------------------------
+
+fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
+    let pre_index = (instruction >> 24) & 1 == 1;
+    let up = (instruction >> 23) & 1 == 1;
+    let imm_offset = (instruction >> 22) & 1 == 1;
+    let write_back = (instruction >> 21) & 1 == 1;
+    let load = (instruction >> 20) & 1 == 1;
+    let rn = ((instruction >> 16) & 0xF) as usize;
+    let rd = ((instruction >> 12) & 0xF) as usize;
+    let sh = (instruction >> 5) & 0x3;
+
+    // Immediate offset is split across bits [11:8] and [3:0].
+    let offset = if imm_offset {
+        ((instruction >> 4) & 0xF0) | (instruction & 0xF)
+    } else {
+        cpu.reg((instruction & 0xF) as usize)
+    };
+
+    let base = cpu.reg(rn);
+    let offset_addr = if up {
+        base.wrapping_add(offset)
+    } else {
+        base.wrapping_sub(offset)
+    };
+    let addr = if pre_index { offset_addr } else { base };
+
+    if load {
+        // Unaligned halfword accesses are forced to alignment rather than
+        // rotated; ARM7TDMI also degrades a misaligned LDRSH to LDRSB.
+        let val = match sh {
+            0b01 => bus.read16(addr & !1) as u32,
+            0b10 => bus.read8(addr) as i8 as i32 as u32,
+            _ => bus.read16(addr & !1) as i16 as i32 as u32,
+        };
+        cpu.set_reg(rd, val);
+    } else {
+        bus.write16(addr & !1, cpu.reg(rd) as u16);
+    }
+
+    // Post-indexed transfers always write back.
+    if !pre_index || write_back {
+        cpu.set_reg(rn, offset_addr);
     }
 
     if load { 3 } else { 2 }
