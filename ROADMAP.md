@@ -1,220 +1,220 @@
-# GeeBeeAyy — Roadmap de Desenvolvimento
+# GeeBeeAyy! - Development Roadmap
 
-Visão geral do plano de desenvolvimento do emulador, dividido por fases e prioridades.
+The plan, ordered by what actually blocks the next milestone.
 
----
-
-## Estado Atual
-
-| Módulo | Status | Linhas |
-|--------|--------|--------|
-| `lib.rs` | Funcional (loop + DMA + APU) | ~110 |
-| `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
-| `ppu/` | Mode 0/1/2/3/4/5 + OBJ + color FX | ~700 |
-| `apu/` | 4 canais PSG (square, wave, noise) | ~350 |
-| `memory/` | ROM + I/O + wait states + sound routing | ~160 |
-| `timer/` | Prescaler + IRQ | ~80 |
-| `cart/` | ROM + SRAM/Flash/EEPROM save | ~230 |
-| `io/` | I/O register handler | ~150 |
-| `dma/` | DMA 4ch (immediate/HBlank/VBlank) | ~170 |
+**How to read this file.** A box is ticked only when something verifies it - a
+test in `core/tests/`, or a measurement on a device. Code existing is not the
+same as code working: on 2026-08-27 the ARM and THUMB decoders were marked
+"all instructions" complete while every second instruction was being skipped
+and most of the THUMB instruction set was decoding to a NOP. The first test
+suite ever written found four fatal bugs in minutes. Unverified work is listed
+as unverified.
 
 ---
 
-## Fase 1 — Core Funcional (MVP)
+## Current state
 
-> **Objetivo:** Emular o hardware suficiente para rodar pelo menos um ROM simples.
+| Module | Lines | Status |
+|--------|-------|--------|
+| `cpu/` | ~1650 | ARM + THUMB decoders. 25 regression tests. Not yet run against a hardware test ROM. |
+| `ppu/` | ~1030 | Modes 0-5, sprites, affine, windows, mosaic, blending. Renders a mode 3 pixel end to end. Otherwise unverified. |
+| `apu/` | ~560 | 4 PSG channels + FIFO A/B. Mono f32 at 17403 Hz. Reaches an Android `AudioTrack`. Never verified against a game. |
+| `memory/` + `io.rs` | ~485 | Bus, mirrors, wait states, prefetch. `KEYINPUT` is declared and unused. |
+| `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. **Never raises its IRQ.** |
+| `timer/` | ~110 | Prescaler and cascade. **Never raises its IRQ.** |
+| `cart/` | ~285 | ROM load, save type detection, SRAM/Flash/EEPROM. |
+| `savestate.rs` | ~265 | Round-trips in a test. Not wired to any UI. |
+| `bios.rs` | ~275 | HLE SWIs. `CpuFastSet` (0x0C), `ArcTan` (0x09), `ArcTan2` (0x0A) and the diff unfilters are missing. |
+| `ffi.rs` | ~390 | C ABI + JNI. **No input entry point exists.** |
+| `android/` | ~2100 | Compose UI, JNI bridge, audio output, touch overlay drawn but not connected. |
+| `ios/` | ~750 | SwiftUI views and an engine wrapper. **No Xcode project - has never been compiled.** |
 
-### 1.1 CPU — Decodificador de Instruções
-- [x] Decodificador ARM (32-bit) — TODAS as instruções
-  - [x] ALU (ADD, SUB, AND, ORR, EOR, MOV, MVN, CMP, TST)
-  - [x] Multiply (MUL, MLA, UMULL, UMLAL, SMULL, SMLAL)
-  - [x] Load/Store (LDR, STR, LDM, STM)
-  - [x] Branch (B, BL, BX, BLX)
-  - [x] PSR Transfer (MRS, MSR)
-  - [x] Multiply Long
-  - [x] Swap (SWP, SWPB)
-  - [x] Barrel Shifter (LSL, LSR, ASR, ROR)
-  - [ ] Coprocessor (暂未 necessário)
-- [x] Decodificador THUMB (16-bit) — TODAS as instruções
-  - [x] Format 1-19 (todas as categorias)
-  - [x] Operações de stack (PUSH, POP)
-  - [x] Load/Store de múltiplos
-  - [x] Branch condicional e incondicional
-- [x] Barrel Shifter completo ( Carry Out )
-- [x] Pipeline de 3 estágios correto (PC+8 ARM, PC+4 THUMB)
-- [x] Tratamento de interrupções (IRQ/FIQ) — handler básico
-
-### 1.2 Memory Bus
-- [x] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
-- [x] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
-- [x] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
-- [x] Wait States (ciclos de acesso por região)
-- [x] Prefetch Buffer (0x04000000+)
-- [ ] BIOS execute permission
-
-### 1.3 Timer
-- [x] Prescaler (1, 64, 256, 1024)
-- [x] IRQ no overflow
-- [x] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
-
-### 1.4 Cartridge
-- [x] Detecção de save type por game code (GBTE, GBXP, etc.)
-- [x] Detecção por conteúdo ROM (string "SRAM", "FLASH", "EEPROM")
-- [x] Save RAM (SRAM 32KB, Flash 64/128KB, EEPROM)
+**No game has booted yet.** That is the honest headline, and Phase 0 exists to
+change it.
 
 ---
 
-## Fase 2 — Graphics Básico
+## Phase 0 - Make a game boot
 
-> **Objetivo:** Renderizar scanlines para ver algo na tela.
+Everything here is a hard blocker. None of it is optional, and the order is
+roughly the order to do it in.
 
-### 2.1 PPU — Renderização
-- [x] **Mode 0** — 4 backgrounds tiled (4bpp e 8bpp)
-  - [x] Tile Data (Char Base)
-  - [x] Screen Entry (Screen Base)
-  - [x] Scrolling (BG0HOFS/BG0VOFS)
-  - [x] Priority
-- [x] **Mode 3** — Bitmap 16bpp (1 framebuffer)
-- [x] **Mode 4** — Bitmap 8bpp (2 framebuffers)
-- [ ] Paleta de cores (256 cores BG, 256 cores OBJ)
-- [x] OAM — Sprites básicos (normal, affine)
-- [x] WIN0/WIN1/WINOUT (janelas)
+### 0.1 Input - `rust-engineer`, then `kotlin-specialist`
 
-### 2.2 PPU — Intermediário
-- [x] **Mode 1** — BG0+BG1 tiled, BG2 affine
-- [x] **Mode 2** — BG2+BG3 affine
-- [x] **Mode 5** — Bitmap 16bpp (2 framebuffers)
-- [x] Affine backgrounds (scaling, rotation)
-- [x] Affine sprites
-- [x] Mosaic
+- [ ] Initialise `0x04000130` (`KEYINPUT`) to `0x03FF` in `MemoryBus::new`.
+      The register is active-low and `io_regs` is zero-filled, so today every
+      read reports all ten buttons held down, forever.
+- [ ] Add `geebeeayy_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
+      export.
+- [ ] Call it from the touch overlay in `EmulationScreen.kt`. The on-screen
+      controls are currently decorative.
+- [ ] Test: a ROM that polls `KEYINPUT` sees released buttons by default and
+      pressed ones after `set_keys`.
 
-### 2.3 PPU — Avançado
-- [x] HBlank / VBlank DMA
-- [ ] OAM DMA
-- [x] BLDCNT/BLDALPHA (efeitos de blending)
-- [x] BLDY (brightness)
+### 0.2 Interrupts - `rust-engineer`
 
----
+- [ ] Raise the timer IRQ. `core/src/timer/mod.rs:59` is a `TODO` with a
+      `let _ = bus;` standing in, so a timer interrupt never fires. Games that
+      wait on one hang, and DMA-sound refill is timer-driven.
+- [ ] Raise the DMA IRQ. Same shape at `core/src/dma.rs:161`.
+- [ ] Test: enabling a timer with IRQ set eventually sets the matching `IF`
+      bit and enters the handler.
 
-## Fase 3 — Áudio
+### 0.3 Banked registers - `rust-engineer`
 
-> **Objetivo:** Áudio funcional sem crackle.
+- [ ] Swap `SP` and `LR` on mode change, and `R8-R12` for FIQ.
+      `fiq_registers` and `irq_registers` (`core/src/cpu/mod.rs:17`) exist and
+      are serialised into save states, but nothing ever swaps them. IRQ mode
+      therefore runs on the game's own stack, and the HLE BIOS handler pushes
+      six registers onto it. Any game that sets up a separate IRQ stack
+      corrupts memory on its first interrupt.
+- [ ] Test: entering IRQ mode uses the IRQ stack pointer; returning restores
+      the caller's.
 
-### 3.1 APU — Canais Básicos
-- [x] Canal 1 — PSG Quadrada (square wave)
-- [x] Canal 2 — PSG Quadrada
-- [x] Canal 3 — PSG Onda (wave)
-- [x] Canal 4 — PSG Ruído (noise)
-- [x] Sweep (Canal 1)
-- [x] Envelope (todos os canais)
-- [x] Sound Length Counter
+### 0.4 The accuracy gate - `rust-engineer` with `search-specialist`
 
-### 3.2 APU — FIFO
-- [x] Canal A — Sound A (FIFO/Timer 0/1)
-- [x] Canal B — Sound B (FIFO/Timer 2/3)
-- [x] DMA Sound
-- [x] Mixing (PSG + FIFO)
+- [ ] Run jsmolka's `gba-suite` (`arm.gba`, `thumb.gba`, `memory.gba`). Each
+      writes the failing test number to `r12` and spins, so the harness is
+      small: run frames until PC stops moving, assert `r12 == 0`.
+- [ ] Point it at `temp/roms/` and skip when the file is absent. **No ROM is
+      committed to this repository**, homebrew test suites included.
+- [ ] Fix what it finds.
 
-### 3.3 APU — Sincronização
-- [ ] Master timer (Timer 0 como timing master)
-- [ ] Double buffering
-- [ ] Buffer de áudio com back-pressure
-- [ ] Cross-platform audio API (AAudio Android, CoreAudio iOS)
+This is the highest-value task in Phase 0. The 25 tests written so far cover
+the bugs that were found; they say nothing about the ones that were not.
 
----
+### 0.5 Rebuild the native library - `mobile-app-developer`
 
-## Fase 4 — Android Frontend
+- [ ] Rebuild `android/app/src/main/jniLibs/*/libgeebeeayy_core.so`. Both
+      committed copies predate the decoder fixes, so a device test against
+      them tests the old bugs.
+- [ ] Decide what `android/app/src/main/cpp/` is for. Nothing references it,
+      `build.gradle.kts` declares no `externalNativeBuild`, and its
+      CMakeLists points at `libgeebeeayyayy_core.so` - a filename that does
+      not exist. Delete it or wire it up.
 
-> **Objetivo:** App funcional para testar em dispositivo.
-
-### 4.1 UI Básica
-- [x] Rom browser com lista de jogos
-- [ ] Tela de emulação (OpenGL ES rendering)
-- [x] Controles touch na tela
-- [x] Menu de pausa
-
-### 4.2 Funcionalidades Core
-- [x] Save states (10 slots)
-- [x] Fast forward (2x, 4x)
-- [x] FFI bridge (C ABI + Android JNI)
-- [x] GbaEngine Kotlin wrapper
-- [x] GbaEngine Swift wrapper
-- [x] Bridging header (iOS)
-- [x] build-mobile.sh (Android/iOS targets)
-- [x] Android build files (Manifest, Gradle)
-- [x] NDK build (CMake + JNI bridge)
-- [x] EmulationViewModel (lifecycle management)
-- [x] ROM file picker (ActivityResultContracts)
-- [ ] Controle Bluetooth/USB (Xbox, PS, Switch Pro)
-- [ ] Screen scaling (1x, 2x, 3x, fit)
-- [ ] Screen filters (2xSaI, CRT, pixel-perfect)
-
-### 4.3 UX
-- [ ] Customização de controles (tamanho, posição, opacidade)
-- [ ] ROM com capas e metadata
-- [ ] Swipe gestures (rewind, save state)
-- [ ] Landscape/Portrait auto-detect
+**Exit criterion:** a commercial ROM reaches its title screen with correct
+graphics, and `gba-suite`'s ARM and THUMB suites pass.
 
 ---
 
-## Fase 5 — iOS Frontend
+## Phase 1 - Make it playable
 
-> **Objetivo:** App nativo para iOS.
+- [ ] **Missing SWIs** - `rust-engineer`. `core/src/bios.rs` jumps from `0x0B`
+      to `0x0E`: `CpuFastSet` (0x0C) is absent and common in decompression
+      paths. Also `ArcTan`/`ArcTan2` (0x09/0x0A) and the diff unfilters
+      (0x16/0x17).
+- [ ] **Save states, actually wired** - `kotlin-specialist`.
+      `EmulationViewModel.saveState` ignores its `slot` argument and drops the
+      handle it gets back; `loadState` is an empty body. Ten slots per game,
+      written atomically (temp file, then rename), with a versioned magic
+      header so a format change cannot silently corrupt a save.
+- [ ] **Battery saves persisted** - `rust-engineer` + `kotlin-specialist`.
+      SRAM/Flash/EEPROM are emulated but never written to disk, so in-game
+      saves die with the process.
+- [ ] **Render path** - `kotlin-specialist`. `EmulationScreen.kt:186` builds a
+      fresh ~150 KB `Bitmap` 60 times a second. Reuse one bitmap with
+      `setPixels` first; the OpenGL ES path can wait until it is measured to
+      be needed.
+- [ ] **Audio verified against a game** - `kotlin-specialist`. The
+      `AudioTrack` path is wired and the core is the timing master, but no
+      game has ever driven it. Measure underruns and drift over ten minutes.
+- [ ] **Frame pacing** - `kotlin-specialist`. Detect the display refresh rate
+      rather than assuming 60 Hz, and pause emulation when backgrounded.
+- [ ] **Controller support** - `kotlin-specialist`. Bluetooth and USB HID via
+      Android's gamepad abstraction. Test on Xbox, PS4/PS5, Switch Pro and
+      8BitDo; vendor quirks are the usual failure.
+- [ ] **PPU verification** - `rust-engineer` with `search-specialist`. Palette
+      handling is the one PPU item never checked, and mode 0 tiled output
+      depends on it. Verify against a test ROM per mode.
+- [ ] **Accessibility pass** - `accessibility-tester`. Touch target sizes at
+      every overlay scale, and contrast in the pixel bee theme.
 
-- [x] SwiftUI UI (Splash, ROM Browser, Emulation, Settings)
-- [x] GeeBeeAyyTheme (Color extensions, Design tokens)
-- [x] Assets: bee_logo, bee_mascot
-- [ ] MFi controller support
-- [ ] Touch controls + gesture support
-- [ ] Save states + iCloud sync
-- [ ] Widget para retomada rápida
-- [ ] App Store distribution
-
----
-
-## Fase 6 — Avançado
-
-> **Objetivo:** Features que diferenciam de outros emuladores.
-
-- [ ] JIT recompilation (ARM host only)
-- [ ] Link cable emulation (local WiFi)
-- [ ] Cheat codes (GameShark / CodeBreaker)
-- [ ] Rewind support
-- [ ] Screen recording / screenshots
-- [ ] Lua scripting interface
-- [ ] Debug tools (breakpoints, memory viewer, register inspector)
-- [ ] RetroAchievements support
-
----
-
-## Ordem de Prioridade Recomendada
-
-```
-1. CPU (ARM + THUMB)  ─────┐
-2. Memory Bus (ROM, I/O)   ├──→  Fase 1 (Core funcional)
-3. Timer completo          │
-4. Cart save               ─┘
-                             │
-5. PPU Mode 0 + Mode 3  ────┤  Fase 2 (Graphics)
-6. OAM (sprites básicos)    │
-7. Palette + blending       ─┘
-                             │
-8. APU (PSG channels)    ────┤  Fase 3 (Áudio)
-9. FIFO + sync             ─┘
-                             │
-10. Android frontend     ────┤  Fase 4 (App)
-11. Save states, FF       ─┘
-```
+**Exit criterion:** a full game is playable start to finish, with sound, on a
+physical device, without losing progress.
 
 ---
 
-## Referências
+## Phase 2 - Quality
 
-| Recurso | Link |
-|---------|------|
+- [ ] Customisable touch overlay: size, position, opacity, per-game layouts.
+- [ ] Screen scaling (1x, 2x, 3x, fit) and integer-scaling option.
+- [ ] Screen filters (pixel-perfect, 2xSaI, CRT).
+- [ ] ROM library with cover art and metadata.
+- [ ] Landscape/portrait handling.
+- [ ] Input latency measured and driven under 45 ms; consider runahead.
+- [ ] Icon and store asset set - `visual-asset-generator`.
+
+---
+
+## Phase 3 - iOS
+
+The iOS target has never been compiled. Owned by `swift-expert`, with
+`mobile-app-developer` on the build.
+
+- [ ] Create the Xcode project (or `Package.swift`) - there is currently
+      neither.
+- [ ] Build the core as a static library for `aarch64-apple-ios` and the
+      simulator target.
+- [ ] Verify the bridging header against the real C ABI in `core/src/ffi.rs`.
+- [ ] Audio via `AVAudioEngine`, mirroring Android's blocking-write approach
+      so the audio device is the timing master.
+- [ ] Touch controls, MFi controllers, save states, iCloud sync.
+- [ ] TestFlight, then App Store.
+
+---
+
+## Phase 4 - Advanced
+
+- [ ] Rewind.
+- [ ] Cheat codes (GameShark / CodeBreaker).
+- [ ] Link cable over local WiFi.
+- [ ] JIT recompilation, ARM host only. Only after the interpreter is correct -
+      a JIT built on a wrong interpreter inherits every bug and makes it harder
+      to find.
+- [ ] Screen recording and screenshots.
+- [ ] Debug tools: breakpoints, memory viewer, register inspector.
+- [ ] RetroAchievements.
+
+---
+
+## Known accuracy gaps
+
+Deliberate simplifications, recorded so they are not rediscovered as bugs:
+
+- `halfword_data_transfer` (`core/src/cpu/arm.rs`) forces alignment. Real
+  ARM7TDMI rotates an unaligned `LDRH` and degrades a misaligned `LDRSH` to
+  `LDRSB`.
+- No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
+- No BIOS execute permission checks.
+- The HLE BIOS IRQ handler uses non-standard `LR` semantics that happen to be
+  self-consistent with `Cpu::handle_irq`. A game installing its own handler at
+  `0x03007FFC` and expecting `subs pc, lr, #4` needs this revisited.
+
+---
+
+## Who owns what
+
+| Area | Agent |
+|------|-------|
+| `core/` - emulation, decoders, FFI | `rust-engineer` |
+| Android frontend | `kotlin-specialist` |
+| iOS frontend | `swift-expert` |
+| Build, release, device testing, platform parity | `mobile-app-developer` |
+| GBA hardware questions, GBATEK, reference emulators | `search-specialist` |
+| Touch targets, contrast, screen readers | `accessibility-tester` |
+| Icons, theme art, store assets | `visual-asset-generator` |
+
+---
+
+## References
+
+| Resource | Link |
+|----------|------|
 | GBATEK (hardware reference) | https://problemkaputt.de/gbatek.htm |
-| TONC (programação GBA) | https://www.coranac.com/tonc/text/toc.htm |
+| TONC (GBA programming) | https://www.coranac.com/tonc/text/toc.htm |
 | ARM7TDMI TRM | https://developer.arm.com/documentation/ddi0029/ |
-| mGBA (código de referência) | https://github.com/mgba-emu/mgba |
+| gba-suite (test ROMs) | https://github.com/jsmolka/gba-suite |
+| mGBA (reference implementation) | https://github.com/mgba-emu/mgba |
 | SkyEmu (per-pixel PPU) | https://github.com/skylersaleh/SkyEmu |
-| rustboyadvance-ng (Rust reference) | https://github.com/rustboyadvance-ng |
+| NanoBoyAdvance (cycle accuracy) | https://github.com/nba-emu/NanoBoyAdvance |
