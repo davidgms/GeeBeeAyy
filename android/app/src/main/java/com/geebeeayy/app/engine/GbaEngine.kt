@@ -84,15 +84,16 @@ class GbaEngine {
     fun getFrameBuffer(): ByteArray = frameBuffer
 
     /**
-     * Get audio samples (f32 mono).
-     * @param maxSamples Maximum number of samples to retrieve.
-     * @return Array of f32 samples, or empty if none available.
+     * Drain the core's audio buffer into [out] (f32 mono).
+     *
+     * The caller owns the array so the emulation loop does not allocate once
+     * per frame.
+     *
+     * @return the number of samples written.
      */
-    fun getAudioSamples(maxSamples: Int = 4096): FloatArray {
+    fun readAudio(out: FloatArray): Int {
         ensureHandle()
-        val samples = FloatArray(maxSamples)
-        val count = nativeAudioCopy(handle, samples, maxSamples)
-        return samples.copyOf(count)
+        return nativeAudioCopy(handle, out, out.size)
     }
 
     /**

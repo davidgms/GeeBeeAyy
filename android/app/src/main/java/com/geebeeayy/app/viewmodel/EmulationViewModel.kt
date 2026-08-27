@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +22,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private val engine = GbaEngine()
+    private val audio = AudioOutput()
+
+    /** Reused across frames; four frames of headroom covers a fast-forward burst. */
+    private val audioSamples = FloatArray(AudioOutput.SAMPLES_PER_FRAME * 8)
 
     private val _frameBuffer = MutableStateFlow<ByteArray?>(null)
     val frameBuffer: StateFlow<ByteArray?> = _frameBuffer
@@ -82,16 +87,24 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     fun startEmulation() {
         if (romLoaded && emulationJob == null) {
             _isRunning.value = true
+            audio.start()
+            audio.resume()
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
                 while (isActive) {
-                    if (!isFastForward.value) {
-                        engine.runFrame()
-                        _frameBuffer.value = engine.getFrameBuffer().copyOf()
-                        delay(16)
-                    } else {
+                    val fastForward = isFastForward.value
+                    if (fastForward) {
                         engine.runFrames(4)
-                        _frameBuffer.value = engine.getFrameBuffer().copyOf()
-                        delay(4)
+                    } else {
+                        engine.runFrame()
+                    }
+                    _frameBuffer.value = engine.getFrameBuffer().copyOf()
+
+                    val count = engine.readAudio(audioSamples)
+                    // Fast forward would be held back to real time by a blocking
+                    // audio write, so drop the samples and pace off the timer.
+                    val paced = !fastForward && audio.write(audioSamples, count)
+                    if (!paced) {
+                        delay(if (fastForward) 4 else 16)
                     }
                 }
             }
@@ -101,6 +114,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     fun stopEmulation() {
         emulationJob?.cancel()
         emulationJob = null
+        audio.stop()
         _isRunning.value = false
     }
 
@@ -125,6 +139,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     override fun onCleared() {
         super.onCleared()
         stopEmulation()
+        audio.release()
         engine.destroy()
     }
 }
