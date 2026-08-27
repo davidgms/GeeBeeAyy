@@ -200,10 +200,12 @@ Deliberate simplifications, recorded so they are not rediscovered as bugs:
 | `core/` - emulation, decoders, FFI | `rust-engineer` |
 | Android frontend | `kotlin-specialist` |
 | iOS frontend | `swift-expert` |
+| Storage, lifecycle, battery, permissions across both platforms | `mobile-developer` |
 | Build, release, device testing, platform parity | `mobile-app-developer` |
 | GBA hardware questions, GBATEK, reference emulators | `search-specialist` |
 | Touch targets, contrast, screen readers | `accessibility-tester` |
 | Icons, theme art, store assets | `visual-asset-generator` |
+| Multi-lane decomposition and cross-specialist consultation | `agent-organizer` (second in command; its plans are reviewed before they run) |
 
 ---
 

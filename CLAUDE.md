@@ -154,13 +154,12 @@ repository context, the working rules, and the persona body ending in
   could apply to any repository will be selected for tasks it cannot help
   with.
 - **Registering an agent for a stack this project does not have is worse than
-  useless: it competes.** `mobile-developer` is parked in
-  [`.claude/agents-inactive/`](.claude/agents-inactive/README.md) for exactly
-  that reason - it is a React Native and Flutter persona, and this project
-  rejects both by design. Moving a file out of `.claude/agents/` is the only
-  reliable off switch: Claude Code scans that directory *and its
-  subdirectories*, and offers no frontmatter field that disables an agent in
-  place.
+  useless: it competes.** Claude picks an agent from the task plus its
+  `description`, so a persona that cannot help still bids against one that
+  can. `.claude/agents-inactive/` is the parking bay for those, and moving a
+  file out of `.claude/agents/` is the only reliable off switch: Claude Code
+  scans that directory *and its subdirectories*, and offers no frontmatter
+  field that disables an agent in place. Nothing is parked at the moment.
 - Agents record what they learn in the `## Discoveries` section of their own
   `.claude/agents/<name>.md`. That is the path the `SubagentStop` hook
   (`.claude/hooks/agent-memory.py`) checks, so the convention and the
@@ -170,6 +169,47 @@ repository context, the working rules, and the persona body ending in
 - **A new agent needs only the `.claude/agents/` file, but Claude Code builds
   its agent list when the session opens.** A file created mid-session only
   becomes selectable in the next one.
+
+### Subagents are consultants, not only workers
+
+An agent's most valuable output is often an opinion, not a diff. Each
+specialist reads the same problem from a different angle - `rust-engineer` on
+what the core can guarantee, `search-specialist` on what the hardware
+actually does, `mobile-developer` on what a device will allow - and two or
+three angles gathered before a line is written is routinely cheaper than one
+angle plus a rewrite.
+
+So consult before commissioning. When the approach is not yet settled - a
+design decision, a "which way should we do this", a plan worth stress-testing,
+a first theory that might be wrong - ask two or three specialists in parallel
+for a read from their own lane. They return evidence: file paths,
+measurements, a citation. Not a plan of action, and not code.
+
+Then **synthesise rather than average**, and say plainly where they disagreed
+and which view was taken. A disagreement between two specialists is the most
+useful thing the roster produces; burying it wastes the whole exercise.
+
+### The main thread orchestrates, always
+
+**Claude in the main thread is the orchestrator and never delegates that
+role.** It sets the goal, the constraints and what "done" means, it decides
+which agents run and in what order, and it reviews everything that comes back.
+Subagents execute and advise inside that frame; they do not own it.
+
+Reviewing means reading the artefacts, not the report. A claim of work done is
+not work done - agents have reported writes that never landed. Check the diff,
+run `cargo test` from `core/`, look at the file.
+
+`agent-organizer` is second in command and the exception that proves the rule:
+it is the agent to call when a task genuinely spans several lanes, and it
+proposes the team, the split and the sequence. **That proposal is reviewed
+before it runs**, and its results are reviewed the same way as any other
+agent's. Correcting its plan is the point of running it rather than routing
+around it. It never commits, never merges, and never does a specialist's work
+itself.
+
+Single-lane tasks do not need an orchestrator at all: one specialist, one
+call. Orchestration on a two-file change costs more than the change.
 
 ## Formatting
 

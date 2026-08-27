@@ -14,9 +14,14 @@ persona that cannot help still competes for selection against one that can.
 
 ## Parked
 
-| Agent | Why it is parked |
-|-------|------------------|
-| `mobile-developer` | A React Native and Flutter persona - its own description names React Native 0.82+ and an 80% code-sharing target. This project rejects both **by design**: see "Why not Flutter/React Native" in `README.md`, since emulation needs raw audio buffers, direct GPU access and no interpreter between input and frame. The native lanes are covered by `kotlin-specialist`, `swift-expert` and `mobile-app-developer`. |
+_Nothing is parked right now._
+
+`mobile-developer` used to sit here as a React Native and Flutter persona.
+It was rewritten for this project's native stack on 2026-08-27 and moved into
+`.claude/agents/`, where it owns device-level behaviour across both frontends:
+storage and file access, lifecycle, battery and thermal, permissions. The
+rejection of React Native and Flutter still stands - it is written into its
+persona, not enforced by keeping the agent switched off.
 
 ## Reactivating one
 
