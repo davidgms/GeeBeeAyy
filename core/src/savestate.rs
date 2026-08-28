@@ -9,7 +9,9 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// registers were absent so every timer came back disabled), rebuilt DMA
 /// derived state instead of assigning the raw control word, and added the I/O
 /// register file and the cartridge's battery save.
-const SAVE_VERSION: u32 = 3;
+/// v4 added the APU, so sound continues across a load instead of restarting
+/// from silence.
+const SAVE_VERSION: u32 = 4;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -117,6 +119,12 @@ impl SaveState {
         buf.extend_from_slice(&gba.bus.palette_data());
         buf.extend_from_slice(&gba.bus.vram_data());
         buf.extend_from_slice(&gba.bus.oam_data());
+
+        // APU. Without this, every channel came back silent until the game
+        // next wrote a sound register - a sustained note simply stopped.
+        let apu = gba.apu.snapshot();
+        write_u32(&mut buf, apu.len() as u32);
+        buf.extend_from_slice(&apu);
 
         // The cartridge's battery save, so a state rolls the .sav back with it.
         match gba.save_data() {
@@ -259,6 +267,13 @@ impl SaveState {
         read_exact_vec(&mut cursor, &mut gba.bus.palette_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.vram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.oam_data_mut())?;
+
+        let apu_len = read_u32(&mut cursor)? as usize;
+        let mut apu = vec![0u8; apu_len];
+        read_exact_vec(&mut cursor, &mut apu)?;
+        if !gba.apu.restore(&apu) {
+            return Err(SaveStateError::InsufficientData);
+        }
 
         let save_len = read_u32(&mut cursor)? as usize;
         if save_len > 0 {

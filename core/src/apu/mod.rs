@@ -81,6 +81,14 @@ struct FifoChannel {
 }
 
 impl FifoChannel {
+    /// Empty the FIFO, as SOUNDCNT_H's reset bits do.
+    fn reset(&mut self) {
+        self.buffer = [0; 32];
+        self.read_pos = 0;
+        self.write_pos = 0;
+        self.count = 0;
+    }
+
     fn new() -> Self {
         Self {
             buffer: [0; 32],
@@ -203,13 +211,29 @@ impl Apu {
 
     pub fn write_soundcnt_h(&mut self, value: u16) {
         self.sound_out_mix = (value & 0xFF) as u8;
-        self.sound_on = value & 0x8000 != 0;
+        // Bit 15 here is "DMA Sound B Reset FIFO", not a master enable
+        // (GBATEK, Sound Control Registers). The master enable is SOUNDCNT_X
+        // bit 7 - see `write_soundcnt_x`.
+        if value & 0x8000 != 0 {
+            self.fifo_b.reset();
+        }
+        if value & 0x0800 != 0 {
+            self.fifo_a.reset();
+        }
         // FIFO A enable (bit 8) and volume A (bit 2)
         self.fifo_a_enabled = value & 0x0100 != 0;
         // FIFO B enable (bit 9) and volume B (bit 3)
         self.fifo_b_enabled = value & 0x0200 != 0;
         // Timer select for FIFO (bit 10): 0=Timer0, 1=Timer1
         self.fifo_timer = ((value >> 10) & 1) as u8;
+    }
+
+    /// SOUNDCNT_X (0x04000084). GBATEK: "Bit 7 R/W PSG/FIFO Master Enable
+    /// (0=Disable, 1=Enable)". This register was not routed to the APU at all,
+    /// so the master enable never took effect and `sound_on` was being derived
+    /// from the wrong bit of the wrong register.
+    pub fn write_soundcnt_x(&mut self, value: u16) {
+        self.sound_on = value & 0x0080 != 0;
     }
 
     pub fn write_sound1_reg(&mut self, reg: u32, value: u8) {
@@ -557,5 +581,251 @@ impl Apu {
 
     pub fn clear_buffer(&mut self) {
         self.sample_buffer.clear();
+    }
+}
+
+// --- Save state serialisation ----------------------------------------------
+//
+// Generated as matching pairs so the write and read orders cannot drift apart -
+// the only real risk across 78 fields of flat scalars. `sample_buffer` is
+// deliberately absent: it is drained to the frontend every frame, so
+// snapshotting it would replay stale audio on load.
+
+/// Split `n` bytes off the front of the cursor, or `None` if short.
+fn take<'a>(cur: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+    if cur.len() < n {
+        return None;
+    }
+    let (head, rest) = cur.split_at(n);
+    *cur = rest;
+    Some(head)
+}
+
+impl SoundChannel1 {
+    fn write_state(&self, buf: &mut Vec<u8>) {
+        buf.push(self.enabled as u8);
+        buf.push(self.sweep_enabled as u8);
+        buf.extend_from_slice(&self.sweep_shift.to_le_bytes());
+        buf.extend_from_slice(&self.sweep_dir.to_le_bytes());
+        buf.extend_from_slice(&self.sweep_timer.to_le_bytes());
+        buf.extend_from_slice(&self.sweep_tick.to_le_bytes());
+        buf.extend_from_slice(&self.duty.to_le_bytes());
+        buf.extend_from_slice(&self.volume_init.to_le_bytes());
+        buf.extend_from_slice(&self.volume_cur.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_dir.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_period.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_timer.to_le_bytes());
+        buf.extend_from_slice(&self.length_counter.to_le_bytes());
+        buf.push(self.length_enabled as u8);
+        buf.extend_from_slice(&self.freq_divider.to_le_bytes());
+        buf.extend_from_slice(&self.freq_timer.to_le_bytes());
+        buf.extend_from_slice(&self.freq_counter.to_le_bytes());
+        buf.extend_from_slice(&self.sample_idx.to_le_bytes());
+    }
+
+    fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
+        self.enabled = take(cur, 1)?[0] != 0;
+        self.sweep_enabled = take(cur, 1)?[0] != 0;
+        self.sweep_shift = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.sweep_dir = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.sweep_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.sweep_tick = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.duty = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.volume_init = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.volume_cur = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_dir = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_period = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.length_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.length_enabled = take(cur, 1)?[0] != 0;
+        self.freq_divider = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_timer = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.sample_idx = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        Some(())
+    }
+}
+
+impl SoundChannel2 {
+    fn write_state(&self, buf: &mut Vec<u8>) {
+        buf.push(self.enabled as u8);
+        buf.extend_from_slice(&self.duty.to_le_bytes());
+        buf.extend_from_slice(&self.volume_init.to_le_bytes());
+        buf.extend_from_slice(&self.volume_cur.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_dir.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_period.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_timer.to_le_bytes());
+        buf.extend_from_slice(&self.length_counter.to_le_bytes());
+        buf.push(self.length_enabled as u8);
+        buf.extend_from_slice(&self.freq_divider.to_le_bytes());
+        buf.extend_from_slice(&self.freq_timer.to_le_bytes());
+        buf.extend_from_slice(&self.freq_counter.to_le_bytes());
+        buf.extend_from_slice(&self.sample_idx.to_le_bytes());
+    }
+
+    fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
+        self.enabled = take(cur, 1)?[0] != 0;
+        self.duty = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.volume_init = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.volume_cur = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_dir = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_period = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.length_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.length_enabled = take(cur, 1)?[0] != 0;
+        self.freq_divider = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_timer = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.sample_idx = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        Some(())
+    }
+}
+
+impl SoundChannel3 {
+    fn write_state(&self, buf: &mut Vec<u8>) {
+        buf.push(self.enabled as u8);
+        buf.push(self.bank_select as u8);
+        buf.extend_from_slice(&self.volume_code.to_le_bytes());
+        buf.extend_from_slice(&self.length_counter.to_le_bytes());
+        buf.push(self.length_enabled as u8);
+        buf.extend_from_slice(&self.freq_divider.to_le_bytes());
+        buf.extend_from_slice(&self.freq_timer.to_le_bytes());
+        buf.extend_from_slice(&self.freq_counter.to_le_bytes());
+        buf.extend_from_slice(&self.wave_ram);
+        buf.extend_from_slice(&self.sample_idx.to_le_bytes());
+    }
+
+    fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
+        self.enabled = take(cur, 1)?[0] != 0;
+        self.bank_select = take(cur, 1)?[0] != 0;
+        self.volume_code = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.length_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.length_enabled = take(cur, 1)?[0] != 0;
+        self.freq_divider = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_timer = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.wave_ram.copy_from_slice(take(cur, 32)?);
+        self.sample_idx = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        Some(())
+    }
+}
+
+impl SoundChannel4 {
+    fn write_state(&self, buf: &mut Vec<u8>) {
+        buf.push(self.enabled as u8);
+        buf.extend_from_slice(&self.volume_init.to_le_bytes());
+        buf.extend_from_slice(&self.volume_cur.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_dir.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_period.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_timer.to_le_bytes());
+        buf.extend_from_slice(&self.length_counter.to_le_bytes());
+        buf.push(self.length_enabled as u8);
+        buf.extend_from_slice(&self.shift_freq.to_le_bytes());
+        buf.extend_from_slice(&self.width_mode.to_le_bytes());
+        buf.extend_from_slice(&self.div_ratio.to_le_bytes());
+        buf.extend_from_slice(&self.lfsr.to_le_bytes());
+        buf.extend_from_slice(&self.freq_timer.to_le_bytes());
+        buf.extend_from_slice(&self.freq_counter.to_le_bytes());
+    }
+
+    fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
+        self.enabled = take(cur, 1)?[0] != 0;
+        self.volume_init = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.volume_cur = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_dir = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_period = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.length_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.length_enabled = take(cur, 1)?[0] != 0;
+        self.shift_freq = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.width_mode = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.div_ratio = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.lfsr = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_timer = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        self.freq_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
+        Some(())
+    }
+}
+
+impl FifoChannel {
+    fn write_state(&self, buf: &mut Vec<u8>) {
+        buf.extend(self.buffer.iter().map(|&v| v as u8));
+        buf.extend_from_slice(&(self.read_pos as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.write_pos as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.count as u32).to_le_bytes());
+        buf.extend_from_slice(&self.timer.to_le_bytes());
+        buf.push(self.enabled as u8);
+        buf.push(self.dma_refill as u8);
+    }
+
+    fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
+        for (i, &b) in take(cur, 32)?.iter().enumerate() { self.buffer[i] = b as i8; }
+        self.read_pos = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
+        self.write_pos = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
+        self.count = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
+        self.timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.enabled = take(cur, 1)?[0] != 0;
+        self.dma_refill = take(cur, 1)?[0] != 0;
+        Some(())
+    }
+}
+
+impl Apu {
+    fn write_state(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&self.cycle_counter.to_le_bytes());
+        self.ch1.write_state(buf);
+        self.ch2.write_state(buf);
+        self.ch3.write_state(buf);
+        self.ch4.write_state(buf);
+        self.fifo_a.write_state(buf);
+        self.fifo_b.write_state(buf);
+        buf.push(self.sound_on as u8);
+        buf.extend_from_slice(&self.sound1_vol.to_le_bytes());
+        buf.extend_from_slice(&self.sound2_vol.to_le_bytes());
+        buf.extend_from_slice(&self.master_vol_left.to_le_bytes());
+        buf.extend_from_slice(&self.master_vol_right.to_le_bytes());
+        buf.extend_from_slice(&self.sound_out_mix.to_le_bytes());
+        buf.extend_from_slice(&self.envelope_tick_counter.to_le_bytes());
+        buf.extend_from_slice(&self.fifo_timer.to_le_bytes());
+        buf.extend_from_slice(&self.fifo_cycles.to_le_bytes());
+        buf.push(self.fifo_a_enabled as u8);
+        buf.push(self.fifo_b_enabled as u8);
+    }
+
+    fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
+        self.cycle_counter = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        self.ch1.read_state(cur)?;
+        self.ch2.read_state(cur)?;
+        self.ch3.read_state(cur)?;
+        self.ch4.read_state(cur)?;
+        self.fifo_a.read_state(cur)?;
+        self.fifo_b.read_state(cur)?;
+        self.sound_on = take(cur, 1)?[0] != 0;
+        self.sound1_vol = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.sound2_vol = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.master_vol_left = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.master_vol_right = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.sound_out_mix = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.envelope_tick_counter = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        self.fifo_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.fifo_cycles = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        self.fifo_a_enabled = take(cur, 1)?[0] != 0;
+        self.fifo_b_enabled = take(cur, 1)?[0] != 0;
+        Some(())
+    }
+}
+
+impl Apu {
+    /// Serialise the whole APU for a save state.
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.write_state(&mut buf);
+        buf
+    }
+
+    /// Restore from [`Apu::snapshot`]. Returns false if the data is short.
+    pub fn restore(&mut self, data: &[u8]) -> bool {
+        let mut cur = data;
+        self.read_state(&mut cur).is_some()
     }
 }

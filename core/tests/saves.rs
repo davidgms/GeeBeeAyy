@@ -220,3 +220,41 @@ fn flash_reports_its_chip_id() {
         assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF, "ID mode was never terminated");
     }
 }
+
+#[test]
+fn save_state_carries_the_apu() {
+    // Without the APU in the format, every channel came back silent after a
+    // load and a sustained note simply stopped.
+    //
+    // This asserts on the APU's own serialised state rather than on generated
+    // audio, because the APU register map is currently broken in a way that
+    // prevents any channel from being triggered at all - see ROADMAP.md. That
+    // makes an audio-output test unable to tell a working restore from a
+    // broken one. What this does prove is the part that was actually built:
+    // the snapshot round-trips, and a changed APU produces a different
+    // snapshot, so the two directions are symmetric.
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write16(0x0400_0084, 0x0080); // master enable
+    gba.bus.write16(0x0400_0062, 0xF780);
+    gba.run_frame();
+
+    let state = gba.save_state();
+    let expected = gba.apu.snapshot();
+
+    // Move the APU somewhere else and confirm that actually changed something.
+    gba.bus.write16(0x0400_0084, 0x0000);
+    gba.bus.write16(0x0400_0072, 0x00FF);
+    gba.run_frame();
+    assert_ne!(
+        gba.apu.snapshot(),
+        expected,
+        "the test needs the APU state to actually diverge"
+    );
+
+    gba.load_state(&state).expect("state should restore");
+    assert_eq!(
+        gba.apu.snapshot(),
+        expected,
+        "the APU did not come back from the save state"
+    );
+}

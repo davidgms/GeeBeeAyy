@@ -295,3 +295,30 @@ flip) were ignored, and bits 12-15 (the 4bpp palette bank) were computed as a
 or a bus address - the two differ by `0x06000000` and only one of them faults
 visibly. And never clear a scanline to a colour that could be mistaken for
 real output; clear to the backdrop or to something obviously wrong.
+
+### 2026-08-28 - The APU register map is off by one byte, so no channel starts
+
+Found while writing a save-state test that needed the APU to make a sound and
+could not get one out of it.
+
+`Apu::write_sound1_reg` decodes `SOUND1CNT_H` as if the whole 16-bit register
+were in the low byte: `0x62` sets duty (correct), and also envelope volume,
+direction and period, which GBATEK puts in the high byte `0x63`. `0x63` is then
+decoded as a length counter, which actually lives in `0x62` bits 5-0. `0x64` is
+treated as the high byte of `SOUND1CNT_X` and shifted left 8, when it is the
+low byte - and **`0x65` has no handler**, which is where the trigger bit sits.
+No PSG channel can be started. The other three channels follow the same shape.
+
+`Gba::apu_sound_write` compounds it by routing only a subset of the offsets the
+bus captures - roughly half the sound registers, plus all of wave RAM, never
+reach the APU.
+
+Two adjacent bugs already fixed: `SOUNDCNT_X` (0x84, the PSG/FIFO master
+enable, bit 7) was not routed at all, and `sound_on` was derived from
+SOUNDCNT_H bit 15 which GBATEK defines as "DMA Sound B Reset FIFO".
+
+**Application**: the APU has never produced sound from a game, so any audio
+work downstream of it - the `AudioTrack` path, buffer sizing, latency - is
+untested against real output. Fix the register map before trusting any audio
+measurement. Decode each register from GBATEK's byte layout, not from a
+16-bit mental model flattened into the low byte.

@@ -172,6 +172,16 @@ impl Gba {
                 let lo = self.bus.read8(0x0400_0082);
                 self.apu.write_soundcnt_h(((value as u16) << 8) | lo as u16);
             }
+            // SOUNDCNT_X, the PSG/FIFO master enable. This was not routed at
+            // all, so the APU never saw a game turn sound on.
+            0x84 => {
+                let hi = self.bus.read8(0x0400_0085);
+                self.apu.write_soundcnt_x(((hi as u16) << 8) | value as u16);
+            }
+            0x85 => {
+                let lo = self.bus.read8(0x0400_0084);
+                self.apu.write_soundcnt_x(((value as u16) << 8) | lo as u16);
+            }
             0xA0 => self.apu.write_fifo_a(value as i8),
             0xA1 => self.apu.write_fifo_a(value as i8),
             0xA2 => self.apu.write_fifo_a(value as i8),

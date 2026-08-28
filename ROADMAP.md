@@ -18,7 +18,7 @@ as unverified.
 |--------|-------|--------|
 | `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
 | `ppu/` | ~1040 | Mode 0 tiled output verified against three test ROMs. Modes 1, 2, 4, 5, sprites, windows, mosaic and blending remain unverified. |
-| `apu/` | ~560 | 4 PSG channels + FIFO A/B. Mono f32 at 17403 Hz. Reaches an Android `AudioTrack`. Never verified against a game. |
+| `apu/` | ~800 | 4 PSG channels + FIFO A/B, and full save-state serialisation. **The register map is broken - no PSG channel can be triggered.** See Phase 1. |
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
@@ -153,8 +153,27 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       instead of half-applying. Verified by a test that runs frames, snapshots,
       diverges, restores and requires the same frames back. See
       `docs/save-data.md`.
-- [ ] **APU state in the save state** - `rust-engineer`. The one thing v3 still
-      omits, so audio restarts from silence after a load.
+- [x] **APU state in the save state (v4)** - all 78 fields across the six APU
+      structs, generated as matching write/read pairs so the orders cannot
+      drift. The sample buffer is deliberately excluded: it is drained to the
+      frontend every frame, so snapshotting it would replay stale audio.
+- [ ] **The APU register map is broken and no channel can be triggered** -
+      `rust-engineer`, with GBATEK open. Found while testing the above:
+      - `SOUND1CNT_H`'s byte split is off by one. `0x62` decodes duty *and*
+        envelope volume/direction/period, but per GBATEK those live in the high
+        byte `0x63`; `0x63` is decoded as a length register, which actually
+        sits in `0x62` bits 5-0.
+      - **`0x65` is not handled at all**, and that is where the trigger bit
+        (bit 15 of `SOUND1CNT_X`) lives - so no PSG channel can ever start.
+      - `0x64` is treated as the register's high byte and shifted left 8; it is
+        the low byte.
+      - The routing table in `Gba::apu_sound_write` covers a subset of offsets:
+        `0x61`, `0x65`-`0x67`, `0x69`-`0x6B`, `0x71`, `0x73`, `0x75`-`0x77`,
+        `0x79`, `0x7B`, `0x7D`, `0x7F` and the wave RAM at `0x90`-`0x9F` are all
+        dropped, even though the bus captures them.
+      Two real fixes already landed: `SOUNDCNT_X` (the PSG/FIFO master enable)
+      was not routed to the APU at all, and `sound_on` was being derived from
+      SOUNDCNT_H bit 15, which GBATEK defines as "DMA Sound B Reset FIFO".
 - [x] **Render path** - `kotlin-specialist`. The bitmap, its pixel staging
       buffer and the `ImageBitmap` wrapper are each allocated once and reused.
       The OpenGL ES path still waits on a measurement. Unverified: not compiled.
