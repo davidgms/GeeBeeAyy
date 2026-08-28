@@ -2,65 +2,46 @@
 
 ## Language
 
-Write everything in English: code, comments, documentation, commit messages
-and chat replies. This is the default and does not need to be asked for.
-Changelogs and PR descriptions are the one carve-out - see below.
+The global rules carry the whole policy: English for everything, with
+changelogs and PR descriptions in Portuguese-BR. What is specific here is
+**what counts as quoted rather than authored**, and therefore keeps its
+original language:
 
-The exception is when David asks for another language for a specific piece of
-work. That applies to that piece only; the next thing goes back to English.
+- excerpts from GBATEK or the ARM7TDMI manual,
+- error strings from a library,
+- the user-facing strings that already ship in Portuguese in
+  `android/app/src/main/res/values/strings.xml`.
 
-**Changelogs and PR descriptions are the standing exception: they are written
-in Portuguese-BR.** They describe what is being merged to a human reader
-rather than to the codebase, so they follow that reader's language. Everything
-else stays English, commit messages included. Technical identifiers inside
-them - file paths, register names, function names, instruction mnemonics -
-keep their real names and are never translated.
+Translating any of those would be a product change, not a translation.
 
-Content that is **quoted rather than authored** keeps its original language:
-excerpts from GBATEK or the ARM7TDMI manual, error strings from a library,
-user-facing strings that already ship in Portuguese
-(`android/app/src/main/res/values/strings.xml`). Translating those would be a
-product change, not a translation.
+Technical identifiers inside a Portuguese changelog or PR description - file
+paths, register names, function names, instruction mnemonics - keep their real
+names.
 
 ## Where to put working files
 
-Never use `/tmp` or any system temp directory. `/tmp` is wiped on reboot,
-shutdown, freeze and automatic cleanup. Everything lives inside the project.
-
-- **`temp/`** (gitignored) - analyses, verification scripts, disassembly
-  dumps, quick notes, intermediate output, test ROMs. Things that need to
-  survive a reboot but do not need to be committed.
-- **`docs/`** (committed) - what needs to stay alive: consolidated analyses,
-  hardware notes, specs, architecture decisions, audit records.
-
-The deciding question: _will someone need this a month from now to understand
-why a decision was made?_ Yes -> `docs/`. No -> `temp/`.
+`temp/` for scratch, `docs/` for what must stay alive, never `/tmp` - the
+global rules cover the split. One addition specific to this repository:
 
 `.gitignore` blocks `*.gba`, `*.bin` and `*.bios` project-wide, so test ROMs
 dropped in `temp/` stay out of git twice over. That is deliberate: **no ROM or
 BIOS image is ever committed to this repository**, including homebrew test
 suites. Point the tests at a path and let each developer supply the file.
 
-## Permissions
+## Permissions and commit messages
 
-- `git commit`, `git push`, `gh pr create` - allowed.
-- `git merge` and `gh pr merge` - **blocked**. Merges are done by hand.
-
-## Commit messages
-
-**One short, title-like line. No body.** No AI co-author trailer, no
-"Generated with" line, no tool attribution - a commit is authored by the
-developer.
-
-Bundle changes of the same kind with `and`; append a different kind after
-`&&`:
+Both are global rules and are not restated here. In short, for a contributor
+reading this file on its own: `git commit`, `git push` and `gh pr create` are
+allowed; `git merge` and `gh pr merge` are **not** - merges are done by hand.
+Commits are one short title-like line with no body and no AI co-author
+trailer, bundling with `and` and `&&`:
 
 ```
 fix: ARM7TDMI instruction dispatch and PC advance && add core test suite
 ```
 
 Rationale, history and trade-offs for a merge go in the PR description
-(Portuguese-BR, per the Language section), never in the commit body.
+(Portuguese-BR), never in the commit body.
 
 ## Architecture
 
@@ -141,75 +122,32 @@ tests the old bug. Rebuild it before testing on hardware.
 
 ## Agents
 
+How agents are registered, scoped and switched off is a global rule, as is the
+orchestration model - the main thread orchestrates and reviews, `agent-organizer`
+proposes, specialists advise before they build. Only what is specific to this
+repository is below.
+
 **`.claude/agents/*.md` is the single source of truth for every persona.** The
-file holds the frontmatter (`name`, `description`, `model`, `tools`), the
-repository context, the working rules, and the persona body ending in
-`## Discoveries`.
+file holds the frontmatter, the repository context, the working rules and the
+body ending in `## Discoveries`.
 
-- The `description` is what makes Claude Code pick the agent on its own,
-  without being asked for by name. Every registered agent opens its
-  description with `Use PROACTIVELY` and lists concrete triggers drawn from
-  **this** project - real file paths, real register names, real symptoms -
-  rather than the generic text the persona shipped with. A description that
-  could apply to any repository will be selected for tasks it cannot help
-  with.
-- **Registering an agent for a stack this project does not have is worse than
-  useless: it competes.** Claude picks an agent from the task plus its
-  `description`, so a persona that cannot help still bids against one that
-  can. `.claude/agents-inactive/` is the parking bay for those, and moving a
-  file out of `.claude/agents/` is the only reliable off switch: Claude Code
-  scans that directory *and its subdirectories*, and offers no frontmatter
-  field that disables an agent in place. Nothing is parked at the moment.
-- Agents record what they learn in the `## Discoveries` section of their own
-  `.claude/agents/<name>.md`. That is the path the `SubagentStop` hook
-  (`.claude/hooks/agent-memory.py`) checks, so the convention and the
-  enforcement name the same file.
-- Durable knowledge about the project itself goes to `docs/` or to
-  `.claude/memory.md` instead, with a one-line pointer left in `## Discoveries`.
-- **A new agent needs only the `.claude/agents/` file, but Claude Code builds
-  its agent list when the session opens.** A file created mid-session only
-  becomes selectable in the next one.
-
-### Subagents are consultants, not only workers
-
-An agent's most valuable output is often an opinion, not a diff. Each
-specialist reads the same problem from a different angle - `rust-engineer` on
-what the core can guarantee, `search-specialist` on what the hardware
-actually does, `mobile-developer` on what a device will allow - and two or
-three angles gathered before a line is written is routinely cheaper than one
-angle plus a rewrite.
-
-So consult before commissioning. When the approach is not yet settled - a
-design decision, a "which way should we do this", a plan worth stress-testing,
-a first theory that might be wrong - ask two or three specialists in parallel
-for a read from their own lane. They return evidence: file paths,
-measurements, a citation. Not a plan of action, and not code.
-
-Then **synthesise rather than average**, and say plainly where they disagreed
-and which view was taken. A disagreement between two specialists is the most
-useful thing the roster produces; burying it wastes the whole exercise.
-
-### The main thread orchestrates, always
-
-**Claude in the main thread is the orchestrator and never delegates that
-role.** It sets the goal, the constraints and what "done" means, it decides
-which agents run and in what order, and it reviews everything that comes back.
-Subagents execute and advise inside that frame; they do not own it.
-
-Reviewing means reading the artefacts, not the report. A claim of work done is
-not work done - agents have reported writes that never landed. Check the diff,
-run `cargo test` from `core/`, look at the file.
-
-`agent-organizer` is second in command and the exception that proves the rule:
-it is the agent to call when a task genuinely spans several lanes, and it
-proposes the team, the split and the sequence. **That proposal is reviewed
-before it runs**, and its results are reviewed the same way as any other
-agent's. Correcting its plan is the point of running it rather than routing
-around it. It never commits, never merges, and never does a specialist's work
-itself.
-
-Single-lane tasks do not need an orchestrator at all: one specialist, one
-call. Orchestration on a two-file change costs more than the change.
+- **The roster and its lanes are in [`ROADMAP.md`](ROADMAP.md#who-owns-what).**
+  The boundary that matters most: emulation behaviour is `rust-engineer`'s and
+  lives in `core/`; a frontend agent never receives a "the game looks wrong"
+  task.
+- **Agent memory is enforced, not just requested.** Agents write to the
+  `## Discoveries` section of their own `.claude/agents/<name>.md`, and the
+  `SubagentStop` hook (`.claude/hooks/agent-memory.py`) checks that the file
+  changed before letting the agent finish. The convention and the enforcement
+  name the same path on purpose.
+- **Durable project knowledge goes to `docs/` or
+  [`.claude/memory.md`](.claude/memory.md)** instead, with a one-line pointer
+  left in `## Discoveries`. `memory.md` already records the decoder bugs that
+  shipped while the roadmap called the decoders complete - which is why an
+  unverified checkbox in this repository is treated as unverified.
+- **Nothing is parked right now.** [`.claude/agents-inactive/`](.claude/agents-inactive/README.md)
+  exists and explains itself; `mobile-developer` used to sit there as a React
+  Native persona and was rewritten for the native stack instead.
 
 ## Formatting
 
@@ -217,5 +155,5 @@ call. Orchestration on a two-file change costs more than the change.
   `core/`. `cargo clippy --all-targets` for lints.
 - **Kotlin** and **Swift** have no formatter wired yet; match the surrounding
   file.
-- ASCII hyphens only - never the em dash or en dash character, anywhere,
-  including documentation and commit messages.
+
+The ASCII-hyphen-only rule is global and applies here like everywhere else.
