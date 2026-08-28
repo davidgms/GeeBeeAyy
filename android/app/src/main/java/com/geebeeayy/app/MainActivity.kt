@@ -15,7 +15,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
@@ -146,15 +149,35 @@ fun GeeBeeAyyNavHost() {
             val frameBuffer by viewModel.frameBuffer.collectAsState()
             val isLoading by viewModel.isLoading.collectAsState()
             val errorMessage by viewModel.errorMessage.collectAsState()
+            val stateMessage by viewModel.stateMessage.collectAsState()
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
+            }
+
+            // Audio is the timing master while the app is foregrounded; this
+            // stops the loop from running (and draining the battery) behind
+            // a lock screen or another app, and resumes it on return unless
+            // the player had paused it themselves.
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner, viewModel) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
+                        Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                        else -> {}
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
             EmulationScreen(
                 frameBuffer = frameBuffer,
                 isLoading = isLoading,
                 errorMessage = errorMessage,
+                stateMessage = stateMessage,
+                onDismissStateMessage = { viewModel.clearStateMessage() },
                 onBack = {
                     viewModel.stopEmulation()
                     navController.popBackStack()

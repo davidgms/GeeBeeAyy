@@ -121,32 +121,58 @@ class GbaEngine {
     }
 
     /**
-     * Create a save state.
-     * @return Opaque handle to the save state, or 0L on failure.
+     * Has the cartridge's battery save changed since the last call?
+     *
+     * Clears the dirty flag as a side effect. Callers must call this
+     * *before* [readSave] - a write landing between the read and the clear
+     * would otherwise be lost.
      */
-    fun saveStateCreate(): Long {
+    fun saveTakeDirty(): Boolean {
         ensureHandle()
-        return nativeSaveStateCreate(handle)
+        return nativeSaveTakeDirty(handle) != 0
     }
 
     /**
-     * Restore from a save state.
-     * @param stateHandle Handle returned by [saveStateCreate].
+     * Copy the cartridge's battery save bytes out.
+     * @return the save bytes, empty if the cart has no save chip.
+     */
+    fun readSave(): ByteArray {
+        ensureHandle()
+        return nativeSaveRead(handle)
+    }
+
+    /**
+     * Restore the cartridge's battery save from [data].
      * @return true on success.
      */
-    fun loadState(stateHandle: Long): Boolean {
+    fun writeSave(data: ByteArray): Boolean {
         ensureHandle()
-        return nativeLoadState(handle, stateHandle) == 0
+        return nativeSaveWrite(handle, data) == 0
     }
 
     /**
-     * Destroy a save state created by [saveStateCreate].
-     * @param stateHandle Handle to destroy.
+     * Snapshot the whole machine as a versioned, self-describing byte blob.
+     * @return the save state bytes, empty on failure.
      */
-    fun saveStateDestroy(stateHandle: Long) {
-        if (stateHandle != 0L) {
-            nativeSaveStateDestroy(stateHandle)
-        }
+    fun readState(): ByteArray {
+        ensureHandle()
+        return nativeStateRead(handle)
+    }
+
+    /**
+     * Restore the machine from a byte blob produced by [readState].
+     *
+     * A `false` result means the load was rejected (bad version, truncated
+     * or corrupt data) - and because the core's restore writes into the live
+     * machine as it parses, a rejected load can leave a hybrid of the old
+     * and new states rather than the original untouched. Callers must treat
+     * the session as unreliable rather than let emulation continue on it.
+     *
+     * @return true on success.
+     */
+    fun writeState(data: ByteArray): Boolean {
+        ensureHandle()
+        return nativeStateWrite(handle, data) == 0
     }
 
     private fun ensureHandle() {
@@ -162,7 +188,9 @@ class GbaEngine {
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int
     private external fun nativeSetKeys(handle: Long, keys: Int)
-    private external fun nativeSaveStateCreate(handle: Long): Long
-    private external fun nativeLoadState(handle: Long, stateHandle: Long): Int
-    private external fun nativeSaveStateDestroy(stateHandle: Long)
+    private external fun nativeSaveTakeDirty(handle: Long): Int
+    private external fun nativeSaveRead(handle: Long): ByteArray
+    private external fun nativeSaveWrite(handle: Long, data: ByteArray): Int
+    private external fun nativeStateRead(handle: Long): ByteArray
+    private external fun nativeStateWrite(handle: Long, data: ByteArray): Int
 }

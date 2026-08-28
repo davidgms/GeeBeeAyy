@@ -125,17 +125,25 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       `state_read`, `state_write` replace `save_state_create`/`load_state`/
       `save_state_destroy`. States were previously not exportable to a file at
       all, which is a bigger problem than "not wired to a UI".
-- [ ] **Save states in the UI** - `kotlin-specialist`. Ten slots per game,
-      written atomically, keyed so two ROMs cannot collide.
+- [x] **Save states in the UI** - `kotlin-specialist`. Ten slots per game in
+      `filesDir/states/`, written atomically (temp file, then rename), keyed by
+      the ROM header's title (0xA0) and game code (0xAC) so two carts cannot
+      collide. Engine calls stay on the emulation thread via the same
+      command-mailbox pattern as `keyState`; a rejected load (bad version,
+      truncated file) stops emulation and surfaces a message rather than
+      running on the hybrid state `SaveState::restore` can leave behind.
+      Unverified: not compiled, no device test.
 - [x] **Battery saves: cart wired to the bus** - the cartridge now lives in
       `MemoryBus`, the 0x0E000000 region is mapped with its 8-bit databus
       semantics, Flash gained chip erase and the two-stage erase unlock, and
       the four-function FFI (`save_size`, `save_read`, `save_write`,
       `save_take_dirty`) plus JNI exports are in. **`gba_suite_save_sram`,
       `save_flash64`, `save_flash128` and `save_none` all pass.**
-- [ ] **Battery saves: persist them on the Android side** - `kotlin-specialist`
-      with `mobile-developer` on the file layout. The core exposes the bytes
-      and a dirty flag; nothing writes them to disk yet.
+- [x] **Battery saves: persist them on the Android side** - `kotlin-specialist`.
+      `<romfile>.sav` next to the ROM, loaded before the first frame runs;
+      falls back to app-private storage if that write fails. Flush is
+      debounced 2s off the core's dirty flag, plus an unconditional flush on
+      pause, stop and `onCleared`. Unverified: not compiled, no device test.
 - [ ] **Flash chip ID reads** - `rust-engineer`. Command 0x90 sets a state but
       no read behaviour, so a game probing the manufacturer/device ID gets
       flash contents instead. Not covered by the gba-suite save ROMs, which
@@ -153,8 +161,14 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
 - [ ] **Audio verified against a game** - `kotlin-specialist`. The
       `AudioTrack` path is wired and the core is the timing master, but no
       game has ever driven it. Measure underruns and drift over ten minutes.
-- [ ] **Frame pacing** - `kotlin-specialist`. Detect the display refresh rate
-      rather than assuming 60 Hz, and pause emulation when backgrounded.
+- [x] **Frame pacing** - `kotlin-specialist`. The fallback pacing delay (used
+      only when there is no audio device to block on) is now measured from
+      `DisplayManager` instead of hardcoded to 16ms; audio is still the timing
+      master when it's available. Emulation stops on `ON_STOP` and resumes on
+      `ON_START` via the emulation route's `LocalLifecycleOwner`, tracking
+      whether backgrounding (rather than the player) caused the pause so a
+      manually-paused game doesn't auto-resume. Unverified: not compiled, no
+      device test.
 - [ ] **Controller support** - `kotlin-specialist`. Bluetooth and USB HID via
       Android's gamepad abstraction. Test on Xbox, PS4/PS5, Switch Pro and
       8BitDo; vendor quirks are the usual failure.

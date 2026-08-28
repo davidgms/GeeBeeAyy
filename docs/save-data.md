@@ -151,8 +151,12 @@ The version check rejects older states outright rather than misreading them.
 
 ## Still missing
 
-- **Android persistence.** The core exposes the bytes and the dirty flag;
-  nothing writes them to disk yet.
+- ~~**Android persistence.**~~ Done: `EmulationViewModel` in `android/` reads
+  `<romfile>.sav` next to the ROM before the first frame runs, and debounces
+  the flush off the core's dirty flag (2s after the last dirty read, plus an
+  unconditional flush on pause/stop/`onCleared`). Falls back to app-private
+  storage if the ROM-adjacent write fails. Unverified on a device - no game
+  has driven this path yet.
 - **Flash chip ID reads.** Command `0x90` sets a state but no read behaviour,
   so a game probing the manufacturer/device ID gets flash contents instead.
   Some games check this before writing and will refuse to save. The gba-suite

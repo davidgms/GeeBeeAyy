@@ -344,7 +344,7 @@ The Android app configuration is in `android/app/build.gradle.kts`:
 android {
     defaultConfig {
         applicationId = "com.geebeeayya"
-        minSdk = 24          // Android 7.0+
+        minSdk = 26          // Android 8.0+
         targetSdk = 34       // Android 14
         versionCode = 1
         versionName = "0.1.0"

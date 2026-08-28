@@ -31,6 +31,8 @@ fun EmulationScreen(
     frameBuffer: ByteArray?,
     isLoading: Boolean = false,
     errorMessage: String? = null,
+    stateMessage: String? = null,
+    onDismissStateMessage: () -> Unit = {},
     onBack: () -> Unit,
     onPause: () -> Unit,
     onFastForward: () -> Unit,
@@ -70,6 +72,22 @@ fun EmulationScreen(
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = { showMenu = !showMenu }) {
                     Icon(Icons.Default.MoreVert, "Menu", tint = PineGlowMist)
+                }
+            }
+
+            if (stateMessage != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(HoneyDark)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(text = stateMessage, color = PineGlowMist, fontSize = 13.sp)
+                    IconButton(onClick = onDismissStateMessage, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Close, "Dismiss", tint = PineGlowMist)
+                    }
                 }
             }
 

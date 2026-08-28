@@ -34,7 +34,7 @@ them.
 **GeeBeeAyy!** is a Game Boy Advance emulator: a Rust core
 (`core/`, ARM7TDMI interpreter, PPU, APU, DMA, timers) behind a C ABI and JNI
 bridge in `core/src/ffi.rs`, with a Kotlin + Jetpack Compose frontend
-(`android/`, minSdk 24, targetSdk 34, ABIs `arm64-v8a` and `armeabi-v7a`) and
+(`android/`, minSdk 26, targetSdk 34, ABIs `arm64-v8a` and `armeabi-v7a`) and
 a Swift + SwiftUI frontend (`ios/`, not yet buildable - no Xcode project).
 There is **no React Native and no Flutter**, and the README rejects both by
 design: emulation needs raw audio buffers, direct GPU access and no

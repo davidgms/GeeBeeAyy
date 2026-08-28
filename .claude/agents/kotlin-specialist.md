@@ -48,7 +48,8 @@ is in `core/` and belongs to `rust-engineer`.
 - **`GbaEngine`'s `external fun` signatures must match the JNI exports** in
   `core/src/ffi.rs` exactly. A mismatch is an `UnsatisfiedLinkError` at call
   time, not at build time.
-- minSdk is 24, so anything newer needs a `Build.VERSION.SDK_INT` guard.
+- minSdk is 26 (`android/app/build.gradle.kts:13`), so anything newer needs a
+  `Build.VERSION.SDK_INT` guard.
 
 When invoked:
 1. Query context manager for existing Kotlin project structure and build configuration
@@ -399,6 +400,94 @@ _(This agent: add new discoveries, patterns and insights here during work.)_
   into the same `GbaEngine`/`GbaHandle`) - not a new risk I introduced, but
   worth flagging to `rust-engineer` if `bus.set_keys` in `core/` ever turns
   out not to be a plain word write.
+
+### 2026-08-28 - `AndroidViewModel.onCleared()` runs after `viewModelScope` is already cancelled
+
+- **Context**: wiring the battery-save flush-on-teardown requirement in
+  `EmulationViewModel.onCleared()`.
+- **Finding**: `ViewModel.clear()` (the internal method `onCleared()` is
+  called from) closes every registered `Closeable` - which includes the
+  internal one that cancels `viewModelScope`'s `Job` - **before** it calls
+  `onCleared()`. So `viewModelScope.launch { ... }` inside `onCleared()`
+  creates a `Job` that is already cancelled and never runs its body. This is
+  a well-known but easy-to-miss Android gotcha, not something specific to
+  this codebase.
+- **Application**: any final-flush-on-teardown logic needed in `onCleared()`
+  has to either (a) be plain, non-suspending code called directly (fine for
+  something bounded and small, like a single save file write under ~128KB -
+  `EmulationViewModel.flushSaveNow()` does exactly this), or (b) live on a
+  separate `CoroutineScope` the class owns and manages independently of
+  `viewModelScope`. Don't reach for `runBlocking` as a first move; check
+  whether the work is already synchronous first.
+
+### 2026-08-28 - A `Job.cancel()` called mid-iteration doesn't stop the current loop body
+
+- **Context**: `EmulationViewModel`'s save-state load path calls
+  `stopEmulation()` (which calls `emulationJob?.cancel()`) from *inside* the
+  emulation loop's own coroutine body, when a load is rejected as corrupt.
+- **Finding**: `Job.cancel()` flips `isActive` to `false` synchronously, but
+  a `while (isActive) { ... }` loop only re-reads that flag at the top of the
+  loop. Code appearing after the `cancel()` call within the same iteration
+  keeps running to the end of that iteration before the loop notices -
+  cancellation is cooperative at suspension points, not at arbitrary
+  synchronous code. Concretely: self-cancelling from inside the loop body and
+  then falling through to `engine.runFrame()` runs one more frame on a
+  machine the code had just declared unreliable, and calls `audio.write()` on
+  an `AudioTrack` that the same `stopEmulation()` call had just paused and
+  flushed.
+- **Application**: any code path that can self-cancel a loop's own job from
+  inside that loop's body needs an explicit `if (!isActive) continue` (or
+  equivalent early-exit) placed immediately after the cancelling call, not an
+  assumption that cancellation takes effect immediately.
+
+### 2026-08-28 - A `Write` tool call can silently turn `\u0000` text into a real NUL byte
+
+- **Context**: writing `EmulationViewModel.kt` from scratch with the `Write`
+  tool; the source contained the string literal `'\u0000'` (a Kotlin char
+  escape, six characters: backslash-u-0-0-0-0).
+- **Finding**: the file that landed on disk contained an actual `0x00` byte
+  at that position instead of the six-character escape sequence. The
+  `Read` tool rendered it back looking identical to what was intended (a
+  terminal/log level of NUL usually renders invisibly), so nothing looked
+  wrong on inspection - it only surfaced because `grep -n` on the file
+  returned nothing at all for patterns that were unambiguously present
+  (GNU grep treats a file containing a NUL byte as binary and silently
+  changes its matching behaviour rather than erroring). `cat -A` (or
+  `python3 -c "open(path,'rb').read().count(b'\x00')"`) is what actually
+  exposed it.
+- **Application**: after writing or editing a Kotlin/Rust/any-text file that
+  contains a `\u0000`-style escape literal, verify with `grep -c` on a known
+  substring near it, or directly check for `b'\x00'` in the file's raw bytes,
+  rather than trusting a `Read` tool round-trip. If a `grep` that should
+  obviously match returns nothing, suspect a binary/NUL contamination before
+  suspecting the pattern.
+
+### 2026-08-28 - `android/app/src/main/cpp/jni_bridge.c` is dead code describing a removed API
+
+- **Context**: mid-flight, the coordinator removed the opaque-handle
+  save-state JNI functions (`nativeSaveStateCreate`/`nativeLoadState`/
+  `nativeSaveStateDestroy`) from `core/src/ffi.rs` and replaced them with a
+  byte-based pair. Grepping the Android tree for the old names to update every
+  caller surfaced a second, independent JNI implementation.
+- **Finding**: `android/app/src/main/cpp/jni_bridge.c` is a hand-written C
+  file that `extern`-declares the C ABI (`geebeeayy_*`) and re-implements the
+  same `Java_com_geebeeayy_app_engine_GbaEngine_*` JNI exports that
+  `core/src/ffi.rs` already provides directly via the `jni` crate. It is not
+  wired into the build at all - `android/app/build.gradle.kts` has no
+  `externalNativeBuild`/CMake block referencing it, so it never compiles into
+  the APK. It is also stale: it still calls the now-removed
+  `geebeeayy_save_state_create`/`geebeeayy_load_state`/
+  `geebeeayy_save_state_destroy`, and it is missing `nativeSetKeys`,
+  `nativeSaveTakeDirty`, `nativeSaveRead`, `nativeSaveWrite`,
+  `nativeStateRead` and `nativeStateWrite` entirely - none of the FFI
+  additions from the last two save-data passes ever touched it, because
+  nothing builds it.
+- **Application**: don't update this file when the JNI surface changes - it
+  is inert. It is misleading enough (a second "source of truth" for the JNI
+  signatures that silently drifts) that it is worth `mobile-developer`
+  deciding whether to delete it outright or wire it in; left as-is here since
+  touching build files was out of scope for this task and deletion deserves
+  its own diff. Flagged in `.claude/memory.md` too.
 
 ### Format
 

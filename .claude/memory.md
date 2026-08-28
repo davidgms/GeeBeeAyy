@@ -24,7 +24,7 @@ Cross-platform Game Boy Advance emulator with a pixel bee theme.
 
 - **Core**: Rust 2021, dependencies limited to `log` and `thiserror`
   (plus `jni` and `android_logger` under `cfg(target_os = "android")`).
-- **Android**: Kotlin, Jetpack Compose, minSdk 24, targetSdk 34, NDK 27,
+- **Android**: Kotlin, Jetpack Compose, minSdk 26, targetSdk 34, NDK 27,
   ABIs `arm64-v8a` and `armeabi-v7a`.
 - **iOS**: Swift, SwiftUI.
 - **Toolchain**: Docker image with the full Android SDK/NDK, or local
@@ -218,29 +218,19 @@ comment field.
 **Application**: when a feature is listed as done, grep for a *caller* before
 believing it. `pub fn` existing proves nothing.
 
-### 2026-08-28 - Save state v2 restores a machine that never existed
+### 2026-08-28 - Save state v3 fixed the round-trip bugs v2 had
 
-Found during a consultation, not yet fixed. `core/src/savestate.rs`:
-
-- **Timers come back disabled and mistuned.** `create` writes
-  `timer.counter(i)` (`:78`) and `restore` feeds it to `set_reload(i, ...)`
-  (`:180`) - counter and reload swapped. `control`, `enabled`, `cascaded`,
-  `prescaler` and `irq_enabled` are not serialised at all.
-- **DMA derived state is stale.** `restore` assigns `channels[i].control`
-  directly (`:189`) instead of going through `Dma::write_control`, which is
-  what decodes `timing`, `word_count` and the address modes. Sound DMA is
-  `timing == 3`, so it is dead after a restore.
-- **Absent entirely**: the whole `io_regs` array, all APU state, and the cart's
-  save memory.
-- **`restore` writes into the live `Gba` as it parses** (`:126-207`), so a
-  truncated file leaves a half-restored machine and returns `Err`. The frontend
-  reports failure and keeps running a hybrid of two states, which surfaces as a
-  game bug minutes later.
-
-`integration.rs:50` passes because it asserts only on `registers[0]`; it would
-pass against a `restore` that did nothing else. A real round-trip test runs N
-frames, snapshots, runs M more, restores, runs N more, and compares the frame
-buffer.
+Superseded: the v2 bugs this entry used to describe (swapped timer
+counter/reload, stale DMA-derived state, `io_regs`/APU/cart-save missing
+entirely, destructive restore on a truncated file) are fixed in
+`core/src/savestate.rs` v3 - see `ROADMAP.md` and `docs/save-data.md`. The
+JNI/C-ABI surface also changed shape at the same time: the opaque
+create/load/destroy handle triplet is gone, replaced by a byte-based
+`state_read`/`state_write` (C ABI) and `nativeStateRead`/`nativeStateWrite`
+(JNI) pair mirroring the battery-save shape. A `false`/`-1` result from a
+write still means the session is unreliable (restore mutates the live
+machine as it parses), so callers must stop rather than continue on a
+rejected load - that part did not change.
 
 ### 2026-08-28 - `cargo check --target aarch64-linux-android` compiles the JNI block
 
@@ -254,3 +244,33 @@ build would need the linker; a check does not).
 It caught two real errors on its first use: `JNIEnv` must be taken as `mut env`
 for `new_byte_array` and `get_array_elements`. Run it after touching `ffi.rs`.
 See `docs/save-data.md` for the save FFI it was catching errors in.
+
+### 2026-08-28 - `android/app/src/main/cpp/jni_bridge.c` is dead code, not a second implementation
+
+Grepping the Android tree for JNI method names to check for callers of a
+removed FFI function turns up `android/app/src/main/cpp/jni_bridge.c`, a
+hand-written C file that redeclares the `geebeeayy_*` C ABI and re-implements
+`Java_com_geebeeayy_app_engine_GbaEngine_*`. It looks like an alternative to
+the JNI exports `core/src/ffi.rs` already provides directly (the `jni` crate
+implements the same `Java_com_geebeeayy_app_engine_GbaEngine_*` symbols
+itself). It is not built: `android/app/build.gradle.kts` has no
+`externalNativeBuild`/CMake block, so nothing ever compiles this file into
+the APK. It is also stale proof of that - it still calls the removed
+`geebeeayy_save_state_create`/`geebeeayy_load_state`/
+`geebeeayy_save_state_destroy` and has no `nativeSetKeys`, save, or
+save-state-bytes exports at all, meaning nobody has touched it through two
+rounds of FFI changes. Do not treat it as something to keep in sync; it is
+either dead weight worth deleting or an intentional dual-build path nobody
+has documented. `mobile-developer` owns the Gradle/NDK wiring decision.
+
+### 2026-08-28 - minSdk is 26, not 24
+
+`android/app/build.gradle.kts:13` sets `minSdk = 26`. `README.md` said 24, and
+that number was copied into `CLAUDE.md`, this file and two agent personas
+without anyone checking the build file - so agents were told to guard API 26+
+calls that need no guard. All corrected on 2026-08-28.
+
+Same failure shape as the "committed .so" and "cart saves are emulated"
+claims: **a number repeated from prose rather than read from the file that
+defines it.** For Android facts, `build.gradle.kts` is the source of truth,
+not the README.
