@@ -410,6 +410,32 @@ impl Cpu {
         }
     }
 
+    /// Read a register from the User bank regardless of the current mode.
+    ///
+    /// `LDM`/`STM` with the S bit set and R15 absent from the list transfer the
+    /// User registers, which is how a privileged handler saves the interrupted
+    /// task's context.
+    pub fn user_reg(&self, reg: usize) -> u32 {
+        match reg {
+            8..=12 if self.mode() == Mode::Fiq => self.usr_r8_r12[reg - 8],
+            13 | 14 if !matches!(self.mode(), Mode::User | Mode::System) => {
+                self.usr_registers[reg - 13]
+            }
+            _ => self.registers[reg],
+        }
+    }
+
+    /// Write a register in the User bank regardless of the current mode.
+    pub fn set_user_reg(&mut self, reg: usize, value: u32) {
+        match reg {
+            8..=12 if self.mode() == Mode::Fiq => self.usr_r8_r12[reg - 8] = value,
+            13 | 14 if !matches!(self.mode(), Mode::User | Mode::System) => {
+                self.usr_registers[reg - 13] = value
+            }
+            _ => self.set_reg(reg, value),
+        }
+    }
+
     /// SWI handler - calls BIOS HLE
     pub fn swi(&mut self, comment: u32, bus: &mut super::memory::MemoryBus) {
         // Software interrupt: call BIOS HLE

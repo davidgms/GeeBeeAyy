@@ -604,30 +604,53 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     let up_down = (instruction >> 23) & 1 == 1;
     let base = cpu.reg(rn);
 
-    let reg_count = reg_list.count_ones() as u32;
+    // An empty register list is not a no-op on ARMv4: R15 is transferred and
+    // the base moves by 0x40, as if all sixteen registers had been listed.
+    let empty_list = reg_list == 0;
+    let reg_count = if empty_list { 16 } else { reg_list.count_ones() };
 
-    let mut addr = if up_down {
-        if pre_index {
-            base.wrapping_add(reg_count * 4)
-        } else {
-            base
-        }
-    } else {
-        if pre_index {
-            base.wrapping_sub(reg_count * 4)
-        } else {
-            base.wrapping_sub(reg_count * 4)
-        }
+    // Registers always move in increasing address order, lowest register at the
+    // lowest address; P and U only choose where the block starts.
+    //   IA (P=0,U=1) base            IB (P=1,U=1) base + 4
+    //   DA (P=0,U=0) base - n*4 + 4  DB (P=1,U=0) base - n*4
+    // IB and DA were both off by one slot before.
+    let mut addr = match (up_down, pre_index) {
+        (true, false) => base,
+        (true, true) => base.wrapping_add(4),
+        (false, false) => base.wrapping_sub(reg_count * 4).wrapping_add(4),
+        (false, true) => base.wrapping_sub(reg_count * 4),
     };
 
     addr &= !3;
+
+    // S with R15 absent selects the User bank. An empty list transfers R15,
+    // so it does not qualify.
+    let user_bank = s_bit && reg_list & (1 << 15) == 0 && !empty_list;
+
+    if empty_list {
+        if load {
+            let val = bus.read32(addr);
+            cpu.set_reg(15, val);
+        } else {
+            bus.write32(addr, cpu.registers[15].wrapping_add(4));
+        }
+        if write_back {
+            let new_base = if up_down {
+                base.wrapping_add(0x40)
+            } else {
+                base.wrapping_sub(0x40)
+            };
+            cpu.set_reg(rn, new_base);
+        }
+        return if load { 2 + reg_count } else { 1 + reg_count };
+    }
 
     if load {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
                 let val = bus.read32(addr);
-                if i == 15 {
-                    cpu.set_reg(15, val);
+                if user_bank {
+                    cpu.set_user_reg(i as usize, val);
                 } else {
                     cpu.set_reg(i as usize, val);
                 }
@@ -652,6 +675,8 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                     base
                 } else if i == 15 {
                     cpu.registers[15].wrapping_add(4)
+                } else if user_bank {
+                    cpu.user_reg(i as usize)
                 } else {
                     cpu.reg(i as usize)
                 };
