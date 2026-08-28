@@ -137,3 +137,54 @@ _(This agent: add new discoveries, patterns and insights here during work.)_
 - **Finding**: What was discovered or learned
 - **Application**: How to use this in future work
 ```
+
+### 2026-08-28 - ROM access is not on SAF, it's on MANAGE_EXTERNAL_STORAGE
+
+- **Context**: Consultation on battery-save and save-state file layout before
+  either is implemented.
+- **Finding**: `android/app/src/main/java/com/geebeeayy/app/data/RomFolderManager.kt`
+  stores raw path strings in `SharedPreferences("rom_folders")` and walks them
+  with plain `java.io.File`. There is no `DocumentFile`, no
+  `ACTION_OPEN_DOCUMENT_TREE`, no `takePersistableUriPermission` anywhere in
+  `android/`. `AndroidManifest.xml` requests `MANAGE_EXTERNAL_STORAGE` with
+  `tools:ignore="ScopedStorage"`, and `MainActivity.kt` gates on
+  `Environment.isExternalStorageManager()`. Any design note describing this
+  app as "scoped-storage, Uri-permission based" (including this persona's own
+  frontmatter) is describing an intended future state, not the current code -
+  correct it on sight.
+- **Application**: Answers about atomicity of file writes next to the ROM
+  depend entirely on which storage model is live. Under the current
+  `MANAGE_EXTERNAL_STORAGE` code, `File.renameTo` on the same volume is a
+  real `rename(2)` and is atomic. Under a future SAF migration,
+  `DocumentFile.renameTo` goes through a content provider and is not
+  guaranteed atomic - don't assume the desktop-emulator "temp file next to
+  the target, then rename" pattern carries over unchanged if that migration
+  happens. `MANAGE_EXTERNAL_STORAGE` is also a Play Store review risk for a
+  non-file-manager app; flag it to whoever owns the manifest/store listing
+  before it becomes a launch blocker.
+
+### 2026-08-28 - Save states never touch cartridge RAM, battery saves are entirely unwired
+
+- **Context**: Same consultation, checking what `SaveState` and the FFI
+  actually persist today.
+- **Finding**: `core/src/savestate.rs` (`SaveState::create`/`restore`) has
+  zero references to `cart`/`Cartridge` - `grep -n "cart" core/src/savestate.rs`
+  returns nothing. Save state slots snapshot CPU, PPU, memory and DMA/timer
+  state but never SRAM/Flash/EEPROM. Separately, `SaveState::save_to_file`/
+  `load_from_file` (lines 213-222) already exist and already write/read a
+  versioned (`GBAS`, version 2) buffer via plain `std::fs::write`/
+  `std::fs::read` - not atomic, no temp-then-rename - but
+  `EmulationViewModel.saveState()` (`android/.../viewmodel/EmulationViewModel.kt:157-159`)
+  never calls them; it only calls `engine.saveStateCreate()` and drops the
+  handle. `Cartridge::save_data()`/`load_save()` exist in `core/src/cart/mod.rs`
+  (lines 218-243) but are not exposed through `core/src/ffi.rs` at all - no
+  Kotlin call site can reach battery RAM today.
+- **Application**: Two design decisions are outstanding and not yet made by
+  anyone: (1) whether a save-state slot should snapshot cart RAM too, since
+  right now loading an old slot can leave a battery save that doesn't match
+  what was in RAM at that state's moment - a visible bug to a player the
+  first time it happens; (2) `rust-engineer` needs new FFI exports for
+  `save_data()`/`load_save()` before any Kotlin-side flush/load logic can be
+  written at all, and ideally a dirty flag driven from `Cartridge::save_write`
+  (line 151) so the frontend isn't diffing the whole SRAM/Flash buffer every
+  frame to decide whether to flush.

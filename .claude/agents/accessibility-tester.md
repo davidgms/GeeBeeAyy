@@ -351,3 +351,25 @@ _(This agent: add new discoveries, patterns and insights here during work.)_
 - **Finding**: What was discovered or learned
 - **Application**: How to use this in future work
 ```
+
+### 2026-08-28 - Phase 1 Accessibility Audit: Android UI Chrome
+- **Context**: ROADMAP Phase 1 accessibility pass - measuring contrast ratios, touch target sizes, screen reader labels, font scaling, and reduced-motion support across EmulationScreen, RomBrowserScreen, SettingsScreen, and SplashScreen.
+- **Finding**: 
+  - RELEASE BLOCKER: Fast Forward button icon (BurntRoot) on HoneyMid background = 2.34:1 contrast ratio. Fails WCAG AA minimum of 4.5:1 for UI components. Location: android/.../EmulationScreen.kt:261-272.
+  - HIGH: Splash screen animations (scale 0.5->1.0, alpha 0->1 over 500-800ms) do not check reduced-motion system setting (Settings > Accessibility > Remove animations). Location: android/.../SplashScreen.kt:26-42.
+  - HIGH: Pause icon overlay has contentDescription = null; TalkBack users cannot identify paused state. Location: EmulationScreen.kt:120.
+  - HIGH: Add ROM folder icon has no contentDescription; primary action lacks label. Location: SettingsScreen.kt:152-163.
+  - MEDIUM: AmberResin primary action text on BurntRoot = 3.84:1 (below AA for body text; passes only for large UI components). Used throughout action labels and taglines.
+  - MEDIUM: Settings item icons (7 instances) lack contentDescription: Folder, Star, Tune, Portrait, VolumeUp, MusicNote, Gamepad, Bluetooth, Info. Location: SettingsScreen.kt:273.
+  - MEDIUM: D-Pad buttons exactly 48dp (Android minimum) with no margin; A/B buttons 56dp - inconsistent sizing affects motor muscle memory during rapid input.
+  - PASS: All touch targets >= 48dp minimum. D-Pad 48dp, A/B 56dp, Pause/FF 48dp, ROM cards ~88dp, Settings rows ~56dp.
+  - PASS: All text uses sp units (scalable); scales with system font size including 200% accessibility setting.
+  - PASS: All primary interactive controls on EmulationScreen have contentDescription: Back, Menu, Pause/Resume (dynamic), Fast Forward, D-Pad directions, A/B buttons.
+  - PASS: Error messages combine color + text; no icon-only errors.
+  - PASS: Excellent contrast for primary colors: GoldenSaplight 12.33:1 (AAA), PineGlowMist 15-17.6:1 (AAA).
+- **Application**: 
+  - iOS uses identical color palette (hex values match GeeBeeAyyTheme.swift) so FF button contrast issue exists on iOS too - report to swift-expert.
+  - kotlin-specialist must fix FF button before Phase 1 exit: options are lighten HoneyMid from 0x6B4A00 to ~0x8B6F00, change icon to PineGlowMist, or use GoldenSaplight for pressed state (like Pause button).
+  - contentDescription fixes are straightforward attribute adds; no logic changes.
+  - Reduced-motion: wrap Compose animations in androidx.compose.material3 motion preference API or check AccessibilityManager.isEnabled(FLAGGED_FOR_ACCESSIBILITY).
+  - Device testing required: TalkBack verification, 200% text scale reflow check, reduced-motion behavior validation.

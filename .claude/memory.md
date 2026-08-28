@@ -197,3 +197,47 @@ dangerous, because those rules must apply **only** to genuine byte stores.
 The fix was a private `store8` that the wider writes use, with the public
 `write8` layering the video rules on top. If you add another size-dependent
 rule to the bus, check which of the two paths it belongs on.
+
+### 2026-08-28 - The cartridge save memory is complete and completely unreachable
+
+`Cartridge::save_read`, `save_write`, `save_data` and `load_save`
+(`core/src/cart/mod.rs:132,151,218,230`) have **zero callers anywhere in the
+repository**. `MemoryBus` has no `Cartridge` field at all and keeps its own
+second copy of the ROM, filled by `Gba::load_rom` (`core/src/lib.rs:51`) - so a
+32 MB cart is resident twice. There is no bus arm for `0x0E000000`, so every
+in-game save write is silently discarded and every read returns 0. The Flash
+command state machine at `cart/mod.rs:161-207` has never executed a single
+transition.
+
+`ROADMAP.md` claimed "SRAM/Flash/EEPROM save" and "emulated but never written
+to disk". Both were wrong in the same direction. That is the fifth time a
+completion claim in this repo has turned out to describe code that exists but
+is never reached - the same shape as the THUMB dispatch and the ARM SWI
+comment field.
+
+**Application**: when a feature is listed as done, grep for a *caller* before
+believing it. `pub fn` existing proves nothing.
+
+### 2026-08-28 - Save state v2 restores a machine that never existed
+
+Found during a consultation, not yet fixed. `core/src/savestate.rs`:
+
+- **Timers come back disabled and mistuned.** `create` writes
+  `timer.counter(i)` (`:78`) and `restore` feeds it to `set_reload(i, ...)`
+  (`:180`) - counter and reload swapped. `control`, `enabled`, `cascaded`,
+  `prescaler` and `irq_enabled` are not serialised at all.
+- **DMA derived state is stale.** `restore` assigns `channels[i].control`
+  directly (`:189`) instead of going through `Dma::write_control`, which is
+  what decodes `timing`, `word_count` and the address modes. Sound DMA is
+  `timing == 3`, so it is dead after a restore.
+- **Absent entirely**: the whole `io_regs` array, all APU state, and the cart's
+  save memory.
+- **`restore` writes into the live `Gba` as it parses** (`:126-207`), so a
+  truncated file leaves a half-restored machine and returns `Err`. The frontend
+  reports failure and keeps running a hybrid of two states, which surfaces as a
+  game bug minutes later.
+
+`integration.rs:50` passes because it asserts only on `registers[0]`; it would
+pass against a `restore` that did nothing else. A real round-trip test runs N
+frames, snapshots, runs M more, restores, runs N more, and compares the frame
+buffer.

@@ -117,7 +117,7 @@ fun EmulationScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
                                 Icons.Default.Pause,
-                                contentDescription = null,
+                                contentDescription = null, // labelled by the "PAUSED" text below
                                 tint = GoldenSaplight,
                                 modifier = Modifier.size(48.dp)
                             )
@@ -267,7 +267,12 @@ fun GameControls(
                 Icon(
                     Icons.Default.FastForward,
                     contentDescription = "Fast Forward",
-                    tint = BurntRoot,
+                    // The container changes with state, so the tint has to as
+                    // well: BurntRoot on HoneyMid is 2.34:1, under the 3:1 that
+                    // WCAG 2.1 SC 1.4.11 requires of a graphical control.
+                    // PineGlowMist on HoneyMid is 7.52:1 and BurntRoot on
+                    // GoldenSaplight is 12.33:1.
+                    tint = if (isFastForward) BurntRoot else PineGlowMist,
                 )
             }
         }

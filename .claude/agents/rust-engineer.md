@@ -406,3 +406,58 @@ _(This agent: add new discoveries, patterns and insights here during work.)_
 - **Application**: a test for either SWI must stay off the diagonals - 0x1000
   and 0x2000 are inside the accurate band (within 9/65536 of `atan2`). Do not
   "fix" the divergence: games calibrate against real hardware.
+
+### 2026-08-28 - `cart/`'s save memory is dead code: the bus never reaches it
+- **Context**: consultation on persisting battery saves and save states.
+- **Finding**: `Cartridge::save_read`/`save_write`/`save_data`/`load_save`
+  (`core/src/cart/mod.rs:132,151,218,230`) have **zero callers** outside the
+  file. `MemoryBus` has no `Cartridge` field at all (`core/src/memory/mod.rs:1-19`)
+  and keeps its own second copy of the ROM (`bus.rom`, filled by
+  `Gba::load_rom` at `core/src/lib.rs:51-52` alongside `Cartridge::from_bytes`).
+  `read8` has no arm for `0x0E00_0000..=0x0EFF_FFFF`, so it falls to `_ => 0`
+  (`memory/mod.rs:165`); `store8` likewise falls to `_ => {}` (`:269`). Every
+  in-game save write is silently discarded and every read returns 0. The
+  Flash state machine has never executed a single transition.
+- **Application**: "SRAM/Flash/EEPROM emulated" in ROADMAP.md:25 is false. Any
+  battery-save FFI work must first wire the cart into the bus and land a
+  `core/tests/` case that stores to 0x0E000000 and reads it back - that test
+  fails today. Do not build the FFI on top of the existing accessors and
+  assume they work.
+
+### 2026-08-28 - Save-state restore is destructive on failure and drops derived state
+- **Context**: same consultation; auditing `core/src/savestate.rs` v2.
+- **Finding**: three separate defects, none covered by
+  `save_state_round_trip_preserves_registers` (`core/tests/integration.rs:50`),
+  which only checks `registers[0]` on a state made by the same build.
+  1. `restore` writes straight into `gba` as it parses (`savestate.rs:126-207`),
+     so a truncated file returns `Err(Io)` with the machine already half
+     overwritten. `geebeeayy_load_state` reports -1 (`ffi.rs:238-241`) and the
+     frontend keeps running a corrupted emulator.
+  2. Timers: `create` writes `counter(i)` (`:78`), `restore` feeds it to
+     `set_reload(i, ..)` (`:180`). Counter/reload swapped, and `controls`,
+     `enabled`, `prescaler`, `cascaded`, `irq_enabled` are never serialised -
+     every timer comes back disabled.
+  3. DMA: `restore` assigns `control` directly (`:189`) instead of going
+     through `Dma::write_control` (`dma.rs:84`), so `timing`, `word_count`,
+     `transfer_type` and the fixed/reload flags keep stale values. Sound DMA
+     (`timing == 3`) is dead after a restore.
+  Also absent from the format entirely: the whole `io_regs[0x400]` array, all
+  APU state, and the cart's save memory.
+- **Application**: parse a state into a staging struct and only commit on
+  success, or snapshot-and-rollback. And when adding a field to a save state,
+  restore it through the same setter the bus uses, never by assigning the raw
+  register - the derived fields are the ones that break silently.
+
+### 2026-08-28 - The save-state FFI cannot serialise anything
+- **Context**: same consultation.
+- **Finding**: `geebeeayy_save_state_create` returns an opaque `*mut c_void`
+  (`core/src/ffi.rs:212`) and there is no function returning its bytes or
+  length. `SaveState::save_to_file`/`load_from_file` (`savestate.rs:213,218`)
+  are `std::fs` and are only reachable from `core/src/main.rs`. So
+  `GbaEngine.saveStateCreate()` hands Kotlin a `Long` it can only pass back or
+  free - a state cannot survive the process. Save states are not "not wired to
+  a UI", they are not exportable.
+- **Application**: any save-state persistence task needs a bytes-out and a
+  bytes-in entry point before the Kotlin side can be written. Do not add a
+  path-taking FFI function instead: Android scoped storage hands out FDs and
+  content URIs, not paths the core can `fs::write` to.

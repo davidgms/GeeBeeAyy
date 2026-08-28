@@ -22,7 +22,7 @@ as unverified.
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
-| `cart/` | ~285 | ROM load, save type detection, SRAM/Flash/EEPROM. |
+| `cart/` | ~285 | ROM load, save type detection. SRAM/Flash code exists but **the bus never calls it** - no arm for 0x0E000000, so saves are discarded. EEPROM is byte-addressed RAM, not the serial protocol. |
 | `savestate.rs` | ~275 | Format v2 (adds the SVC/ABT/UND/User banks). Round-trips in a test. Not wired to any UI. |
 | `bios.rs` | ~275 | HLE SWIs. `CpuFastSet` (0x0C), `ArcTan` (0x09), `ArcTan2` (0x0A) and the diff unfilters are missing. |
 | `ffi.rs` | ~390 | C ABI + JNI, including `geebeeayy_set_keys`. |
@@ -126,9 +126,19 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       handle it gets back; `loadState` is an empty body. Ten slots per game,
       written atomically (temp file, then rename), with a versioned magic
       header so a format change cannot silently corrupt a save.
-- [ ] **Battery saves persisted** - `rust-engineer` + `kotlin-specialist`.
-      SRAM/Flash/EEPROM are emulated but never written to disk, so in-game
-      saves die with the process.
+- [ ] **Battery saves: wire the cart to the bus first** - `rust-engineer`.
+      Not a persistence problem. `Cartridge::save_read`/`save_write` have zero
+      callers and `MemoryBus` has no arm for 0x0E000000, so every in-game save
+      write is discarded. `gba_suite_save_*` are `#[ignore]`d against exactly
+      this. Wire the bus, then add the four-function FFI (`save_size`,
+      `save_read`, `save_write`, `save_take_dirty`), then persist on the
+      Android side. Flash chip-ID reads are also missing, which makes some
+      games refuse to save even once wired.
+- [ ] **Save state v3** - `rust-engineer`. v2 restores a machine that never
+      existed: timers come back disabled with counter and reload swapped, DMA
+      derived state is stale, and `io_regs`, the APU and the cart save are not
+      in the format at all. `restore` is also destructive on a truncated file.
+      See `.claude/memory.md`.
 - [x] **Render path** - `kotlin-specialist`. The bitmap, its pixel staging
       buffer and the `ImageBitmap` wrapper are each allocated once and reused.
       The OpenGL ES path still waits on a measurement. Unverified: not compiled.
