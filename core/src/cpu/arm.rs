@@ -671,8 +671,17 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     } else {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
+                // STM with the base in the list stores the ORIGINAL base only
+                // when it is the lowest register present; otherwise the
+                // written-back value is what lands in memory.
                 let val = if i as usize == rn {
-                    base
+                    if reg_list.trailing_zeros() == rn as u32 {
+                        base
+                    } else if up_down {
+                        base.wrapping_add(reg_count * 4)
+                    } else {
+                        base.wrapping_sub(reg_count * 4)
+                    }
                 } else if i == 15 {
                     cpu.registers[15].wrapping_add(4)
                 } else if user_bank {
