@@ -104,6 +104,11 @@ cargo check                # fast compile check
 cargo test                 # the accuracy gate
 cargo build --release      # optimised core
 cargo clippy --all-targets # lints
+
+# The JNI block is behind `cfg(target_os = "android")`, so a host build never
+# compiles it. This does, without needing the NDK, and has already caught real
+# errors that `cargo test` could not see:
+cargo check --target aarch64-linux-android
 ```
 
 Whole project, from the root:

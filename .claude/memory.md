@@ -241,3 +241,16 @@ Found during a consultation, not yet fixed. `core/src/savestate.rs`:
 pass against a `restore` that did nothing else. A real round-trip test runs N
 frames, snapshots, runs M more, restores, runs N more, and compares the frame
 buffer.
+
+### 2026-08-28 - `cargo check --target aarch64-linux-android` compiles the JNI block
+
+The JNI exports in `core/src/ffi.rs` sit behind `#[cfg(target_os = "android")]`,
+so a normal `cargo build`/`cargo test` never type-checks them - broken JNI code
+passes the whole local gate and only fails in CI or on a device. The Rust
+Android targets are already installed here, and `cargo check --target
+aarch64-linux-android` compiles that block **without needing the NDK** (a full
+build would need the linker; a check does not).
+
+It caught two real errors on its first use: `JNIEnv` must be taken as `mut env`
+for `new_byte_array` and `get_array_elements`. Run it after touching `ffi.rs`.
+See `docs/save-data.md` for the save FFI it was catching errors in.
