@@ -5,7 +5,11 @@ use super::Gba;
 /// Save state magic and version
 const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// v2 added the Supervisor, Abort, Undefined and User register banks.
-const SAVE_VERSION: u32 = 2;
+/// v3 fixed the timers (counter and reload were swapped, and the control
+/// registers were absent so every timer came back disabled), rebuilt DMA
+/// derived state instead of assigning the raw control word, and added the I/O
+/// register file and the cartridge's battery save.
+const SAVE_VERSION: u32 = 3;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -73,9 +77,18 @@ impl SaveState {
         write_u8(&mut buf, gba.ppu.bldy);
         buf.extend_from_slice(gba.ppu.frame_buffer());
 
-        // Timer state
+        // Timer state. v2 wrote only the counter and restored it *as the
+        // reload*, and carried no control registers at all, so every timer came
+        // back disabled - which kills DMA sound and every cascade.
         for i in 0..4 {
-            write_u32(&mut buf, gba.timer.counter(i) as u32);
+            write_u32(&mut buf, gba.timer.counters[i]);
+            write_u32(&mut buf, gba.timer.reloads[i]);
+            write_u16(&mut buf, gba.timer.controls[i]);
+            write_u32(&mut buf, gba.timer.prescaler[i]);
+            write_u32(&mut buf, gba.timer.tick_counters[i]);
+            write_bool(&mut buf, gba.timer.enabled[i]);
+            write_bool(&mut buf, gba.timer.cascaded[i]);
+            write_bool(&mut buf, gba.timer.irq_enabled[i]);
         }
 
         // DMA state
@@ -95,11 +108,24 @@ impl SaveState {
         write_bool(&mut buf, gba.bus.io.halt);
 
         write_u16(&mut buf, gba.bus.waitcnt);
+        // The whole I/O register file. Absent from v2, so DISPCNT, the
+        // background scroll registers and everything else came back as
+        // whatever the fresh instance happened to hold.
+        buf.extend_from_slice(gba.bus.io_regs_data());
         buf.extend_from_slice(&gba.bus.ewram_data());
         buf.extend_from_slice(&gba.bus.iwram_data());
         buf.extend_from_slice(&gba.bus.palette_data());
         buf.extend_from_slice(&gba.bus.vram_data());
         buf.extend_from_slice(&gba.bus.oam_data());
+
+        // The cartridge's battery save, so a state rolls the .sav back with it.
+        match gba.save_data() {
+            Some(save) => {
+                write_u32(&mut buf, save.len() as u32);
+                buf.extend_from_slice(&save);
+            }
+            None => write_u32(&mut buf, 0),
+        }
 
         // Global state
         write_u64(&mut buf, gba.cycles);
@@ -108,7 +134,28 @@ impl SaveState {
     }
 
     /// Restore GBA state from a save state.
+    /// Restore, rolling back if the data turns out to be bad.
+    ///
+    /// `restore_unchecked` writes into the live machine as it parses, so a
+    /// truncated or corrupt state used to leave a hybrid of two machines while
+    /// returning `Err` - the frontend reported failure and carried on running
+    /// something that was not a valid GBA, which then surfaced as a game bug
+    /// minutes later. Snapshotting first costs one allocation and makes a
+    /// failed load a no-op.
     pub fn restore(&self, gba: &mut Gba) -> Result<(), SaveStateError> {
+        let rollback = SaveState::create(gba);
+        match self.restore_unchecked(gba) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // If the rollback itself fails the machine is unrecoverable
+                // either way; report the original error, which is the useful one.
+                let _ = rollback.restore_unchecked(gba);
+                Err(e)
+            }
+        }
+    }
+
+    fn restore_unchecked(&self, gba: &mut Gba) -> Result<(), SaveStateError> {
         let mut cursor = Cursor::new(&self.data);
 
         // Header
@@ -176,18 +223,27 @@ impl SaveState {
 
         // Timer
         for i in 0..4 {
-            let val = read_u32(&mut cursor)? as u16;
-            gba.timer.set_reload(i, val);
+            gba.timer.counters[i] = read_u32(&mut cursor)?;
+            gba.timer.reloads[i] = read_u32(&mut cursor)?;
+            gba.timer.controls[i] = read_u16(&mut cursor)?;
+            gba.timer.prescaler[i] = read_u32(&mut cursor)?;
+            gba.timer.tick_counters[i] = read_u32(&mut cursor)?;
+            gba.timer.enabled[i] = read_bool(&mut cursor)?;
+            gba.timer.cascaded[i] = read_bool(&mut cursor)?;
+            gba.timer.irq_enabled[i] = read_bool(&mut cursor)?;
         }
 
-        // DMA
+        // DMA. Rebuild the derived fields through `restore_control` rather than
+        // assigning the raw control word: `timing`, `word_count` and the address
+        // modes all come from decoding it, and sound DMA is `timing == 3`, so a
+        // direct assignment left sound DMA dead after every restore.
         for i in 0..4 {
             gba.dma.channels[i].source = read_u32(&mut cursor)?;
             gba.dma.channels[i].dest = read_u32(&mut cursor)?;
             gba.dma.channels[i].count = read_u16(&mut cursor)?;
             let control = read_u16(&mut cursor)?;
-            gba.dma.channels[i].control = control;
-            gba.dma.channels[i].enabled = read_bool(&mut cursor)?;
+            let enabled = read_bool(&mut cursor)?;
+            gba.dma.restore_control(i, control, enabled);
         }
 
         // I/O
@@ -197,11 +253,19 @@ impl SaveState {
         gba.bus.io.halt = read_bool(&mut cursor)?;
 
         gba.bus.waitcnt = read_u16(&mut cursor)?;
+        read_exact_vec(&mut cursor, gba.bus.io_regs_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.ewram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.iwram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.palette_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.vram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.oam_data_mut())?;
+
+        let save_len = read_u32(&mut cursor)? as usize;
+        if save_len > 0 {
+            let mut save = vec![0u8; save_len];
+            read_exact_vec(&mut cursor, &mut save)?;
+            gba.load_save(&save);
+        }
 
         // Global
         gba.cycles = read_u64(&mut cursor)?;

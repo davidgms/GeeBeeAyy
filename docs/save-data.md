@@ -131,6 +131,24 @@ deciding whether that means "write now", "write in two seconds" or "write on
 ROMs are never committed. Fetch them into `temp/roms/`; the tests skip when
 they are absent.
 
+## Save state format v3
+
+v2 restored a machine that never existed. v3 fixes it:
+
+| Was | Now |
+|---|---|
+| Timers wrote the counter and restored it **as the reload**; control registers absent entirely, so every timer came back **disabled** - killing DMA sound and every cascade | Counter, reload, control, prescaler, tick counter and the enable/cascade/IRQ flags all round-trip |
+| DMA assigned the raw control word, leaving `timing`, `word_count` and the address modes stale. Sound DMA is `timing == 3`, so it was **dead after every restore** | Rebuilt through `Dma::restore_control`, which decodes without starting a transfer |
+| The entire `io_regs` file was absent - DISPCNT, scroll registers, everything | Serialised in full |
+| The cartridge battery save was absent, so a state did not roll the `.sav` back with it | Serialised alongside |
+| `restore` wrote into the live machine as it parsed, so a bad file left a **hybrid of two machines** while returning `Err` | Snapshots first and rolls back on failure, so a rejected load is a no-op |
+
+Splitting `Dma::decode_control` out of `write_control` also fixed a live bug:
+`word_count` was computed from `transfer_type` **before** that field was
+assigned from the new control word, so it used the previous transfer's width.
+
+The version check rejects older states outright rather than misreading them.
+
 ## Still missing
 
 - **Android persistence.** The core exposes the bytes and the dirty flag;
@@ -143,9 +161,6 @@ they are absent.
   device: the game DMAs a bit stream to `0x0D000000` and DMAs bits back. That
   is a different device, not a simplification, and the region is currently
   claimed by ROM reads. Needs a GBATEK read before anyone writes code.
-- **Save state v3.** v2 restores a machine that never existed - timers come
-  back disabled with counter and reload swapped, DMA derived state is stale so
-  sound DMA dies, and `io_regs`, the APU and the cart save are absent from the
-  format entirely. `restore` also writes into the live `Gba` as it parses, so a
-  truncated file leaves a hybrid of two states while reporting failure. See
-  `.claude/memory.md`.
+- **APU state is still absent from the save state.** Everything else v2 was
+  missing is now in v3 (see below), but the audio channels are not, so sound
+  restarts from silence after a load rather than continuing mid-note.

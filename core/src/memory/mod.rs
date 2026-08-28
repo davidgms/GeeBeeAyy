@@ -389,6 +389,8 @@ impl MemoryBus {
         }
     }
 
+    pub fn io_regs_data(&self) -> &[u8] { &self.io_regs }
+    pub fn io_regs_data_mut(&mut self) -> &mut [u8] { &mut self.io_regs }
     pub fn ewram_data(&self) -> &[u8] { &self.ewram }
     pub fn ewram_data_mut(&mut self) -> &mut [u8] { &mut self.ewram }
     pub fn iwram_data(&self) -> &[u8] { &self.iwram }

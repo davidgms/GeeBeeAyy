@@ -140,11 +140,13 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       no read behaviour, so a game probing the manufacturer/device ID gets
       flash contents instead. Not covered by the gba-suite save ROMs, which
       pass without it.
-- [ ] **Save state v3** - `rust-engineer`. v2 restores a machine that never
-      existed: timers come back disabled with counter and reload swapped, DMA
-      derived state is stale, and `io_regs`, the APU and the cart save are not
-      in the format at all. `restore` is also destructive on a truncated file.
-      See `.claude/memory.md`.
+- [x] **Save state v3** - timers, DMA derived state, the whole `io_regs` file
+      and the cartridge save now round-trip, and a rejected state rolls back
+      instead of half-applying. Verified by a test that runs frames, snapshots,
+      diverges, restores and requires the same frames back. See
+      `docs/save-data.md`.
+- [ ] **APU state in the save state** - `rust-engineer`. The one thing v3 still
+      omits, so audio restarts from silence after a load.
 - [x] **Render path** - `kotlin-specialist`. The bitmap, its pixel staging
       buffer and the `ImageBitmap` wrapper are each allocated once and reused.
       The OpenGL ES path still waits on a measurement. Unverified: not compiled.

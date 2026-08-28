@@ -138,3 +138,57 @@ fn a_truncated_save_state_is_rejected() {
         "a truncated state must be rejected, not read short"
     );
 }
+
+#[test]
+fn save_state_round_trip_reproduces_the_machine() {
+    // The old test asserted only on registers[0] and would have passed against
+    // a `restore` that did nothing else. This runs the machine, snapshots,
+    // diverges, restores, and requires the same frames to come back.
+    let mut gba = Gba::new();
+    gba.load_rom(&rom_with("SRAM_V100")).unwrap();
+    for _ in 0..3 {
+        gba.run_frame();
+    }
+
+    let state = gba.save_state();
+    for _ in 0..3 {
+        gba.run_frame();
+    }
+    let expected: Vec<u8> = gba.frame_buffer().to_vec();
+    let cycles_expected = gba.cycles;
+
+    // Diverge hard, then restore and replay the same three frames.
+    for _ in 0..10 {
+        gba.run_frame();
+    }
+    gba.load_state(&state).expect("state should restore");
+    for _ in 0..3 {
+        gba.run_frame();
+    }
+
+    assert_eq!(gba.cycles, cycles_expected, "cycle count diverged after restore");
+    assert!(
+        gba.frame_buffer().to_vec() == expected,
+        "the frames after a restore differ from the frames before it"
+    );
+}
+
+#[test]
+fn a_rejected_save_state_leaves_the_machine_untouched() {
+    // `restore` parses straight into the live machine, so a bad file used to
+    // leave a hybrid of two states behind while reporting failure.
+    let mut gba = gba_with("SRAM_V100");
+    gba.run_frame();
+    let before = gba.save_state().data;
+
+    let mut corrupt = before.clone();
+    corrupt.truncate(corrupt.len() - 64);
+    let bad = geebeeayy_core::savestate::SaveState { data: corrupt };
+    assert!(gba.load_state(&bad).is_err());
+
+    assert_eq!(
+        gba.save_state().data,
+        before,
+        "a rejected state must roll back, not half-apply"
+    );
+}

@@ -81,35 +81,48 @@ impl Dma {
         }
     }
 
-    pub fn write_control(&mut self, channel: usize, value: u16, bus: &mut super::memory::MemoryBus) {
-        if channel >= 4 { return; }
+    /// Decode DMAxCNT_H into the channel's derived fields, without starting
+    /// anything. Split out so a save-state restore can rebuild the derived
+    /// state without re-running an immediate transfer.
+    fn decode_control(&mut self, channel: usize, value: u16) {
         let ch = &mut self.channels[channel];
         ch.control = value;
         ch.enable = value & 0x8000 != 0;
+        ch.repeat = value & 0x0200 != 0;
+        // Must precede word_count: it used to be read one write stale.
+        ch.transfer_type = value & 0x0400 != 0;
+        ch.word_count = if ch.transfer_type { 4 } else { 2 };
+        ch.src_adj = ((value >> 5) & 3) as u8;
+        ch.dst_adj = ((value >> 7) & 3) as u8;
+        ch.timing = ((value >> 12) & 3) as u8;
+        ch.irq_on_end = value & 0x4000 != 0;
+        ch.src_fixed = ch.src_adj == 2;
+        ch.dst_fixed = ch.dst_adj == 2;
+        ch.dst_reload = ch.dst_adj == 3;
+    }
 
-        if ch.enable {
-            let was_enabled = ch.enabled;
-            ch.enabled = true;
-            ch.word_count = if ch.transfer_type { 4 } else { 2 };
+    pub fn write_control(&mut self, channel: usize, value: u16, bus: &mut super::memory::MemoryBus) {
+        if channel >= 4 { return; }
+        let was_enabled = self.channels[channel].enabled;
+        self.decode_control(channel, value);
 
-            ch.src_adj = ((value >> 5) & 3) as u8;
-            ch.dst_adj = ((value >> 7) & 3) as u8;
-            ch.repeat = value & 0x0200 != 0;
-            ch.transfer_type = value & 0x0400 != 0;
-            ch.timing = ((value >> 12) & 3) as u8;
-            ch.irq_on_end = value & 0x4000 != 0;
-
-            ch.src_fixed = ch.src_adj == 2;
-            ch.dst_fixed = ch.dst_adj == 2;
-            ch.dst_reload = ch.dst_adj == 3;
-
-            // Only start transfer on enable edge for immediate (timing=0)
-            if !was_enabled && ch.timing == 0 {
+        if self.channels[channel].enable {
+            self.channels[channel].enabled = true;
+            // Only start on the enable edge, and only for immediate timing.
+            if !was_enabled && self.channels[channel].timing == 0 {
                 self.do_transfer(channel, bus);
             }
         } else {
-            ch.enabled = false;
+            self.channels[channel].enabled = false;
         }
+    }
+
+    /// Rebuild a channel from a save state: decode the control word but never
+    /// start a transfer.
+    pub fn restore_control(&mut self, channel: usize, value: u16, enabled: bool) {
+        if channel >= 4 { return; }
+        self.decode_control(channel, value);
+        self.channels[channel].enabled = enabled;
     }
 
     pub fn do_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) {

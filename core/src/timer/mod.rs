@@ -1,14 +1,14 @@
 const PRESCALER_TABLE: [u32; 4] = [1, 64, 256, 1024];
 
 pub struct Timer {
-    counters: [u32; 4],
-    reloads: [u32; 4],
-    controls: [u16; 4],
-    enabled: [bool; 4],
-    cascaded: [bool; 4],
-    prescaler: [u32; 4],
-    irq_enabled: [bool; 4],
-    tick_counters: [u32; 4],
+    pub(crate) counters: [u32; 4],
+    pub(crate) reloads: [u32; 4],
+    pub(crate) controls: [u16; 4],
+    pub(crate) enabled: [bool; 4],
+    pub(crate) cascaded: [bool; 4],
+    pub(crate) prescaler: [u32; 4],
+    pub(crate) irq_enabled: [bool; 4],
+    pub(crate) tick_counters: [u32; 4],
     /// Tracks which timers overflowed this tick (for APU sound DMA)
     pub overflow_flags: [bool; 4],
 }
