@@ -109,3 +109,32 @@ fn the_save_region_has_an_eight_bit_databus() {
     gba.bus.write16(SAVE_BASE + 0x21, 0xAABB);
     assert_eq!(gba.bus.read8(SAVE_BASE + 0x21), 0xAA);
 }
+
+// --- Save states: bytes in, bytes out ---------------------------------------
+
+#[test]
+fn save_state_round_trips_through_bytes() {
+    // The FFI hands the frontend a byte array, not an opaque handle, so a
+    // state can actually reach a file. This is the shape the C ABI exposes.
+    let mut gba = gba_with("SRAM_V100");
+    gba.cpu.registers[0] = 0xDEAD;
+    gba.bus.write8(SAVE_BASE, 0x77);
+    let bytes = gba.save_state().data;
+
+    gba.cpu.registers[0] = 0;
+    let restored = geebeeayy_core::savestate::SaveState { data: bytes };
+    gba.load_state(&restored).expect("state should restore");
+    assert_eq!(gba.cpu.registers[0], 0xDEAD);
+}
+
+#[test]
+fn a_truncated_save_state_is_rejected() {
+    let mut gba = gba_with("SRAM_V100");
+    let mut bytes = gba.save_state().data;
+    bytes.truncate(bytes.len() / 2);
+    let state = geebeeayy_core::savestate::SaveState { data: bytes };
+    assert!(
+        gba.load_state(&state).is_err(),
+        "a truncated state must be rejected, not read short"
+    );
+}

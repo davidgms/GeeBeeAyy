@@ -121,11 +121,12 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       `MultiBoot` (0x25) and `HardReset`/`CustomHalt` (0x26/0x27). `BgAffineSet`
       and `ObjAffineSet` (0x0E/0x0F) are still stubs that write an identity
       matrix and ignore the requested angle.
-- [ ] **Save states, actually wired** - `kotlin-specialist`.
-      `EmulationViewModel.saveState` ignores its `slot` argument and drops the
-      handle it gets back; `loadState` is an empty body. Ten slots per game,
-      written atomically (temp file, then rename), with a versioned magic
-      header so a format change cannot silently corrupt a save.
+- [x] **Save state FFI is now bytes, not an opaque handle** - `state_size`,
+      `state_read`, `state_write` replace `save_state_create`/`load_state`/
+      `save_state_destroy`. States were previously not exportable to a file at
+      all, which is a bigger problem than "not wired to a UI".
+- [ ] **Save states in the UI** - `kotlin-specialist`. Ten slots per game,
+      written atomically, keyed so two ROMs cannot collide.
 - [x] **Battery saves: cart wired to the bus** - the cartridge now lives in
       `MemoryBus`, the 0x0E000000 region is mapped with its 8-bit databus
       semantics, Flash gained chip erase and the two-stage erase unlock, and

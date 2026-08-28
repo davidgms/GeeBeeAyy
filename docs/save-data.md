@@ -88,6 +88,24 @@ the type (512 / 32K / 64K / 8K / 128K are all distinct) and the frontend's real
 questions are "how many bytes" and "is there a save at all". Add one later if a
 UI genuinely wants to print "Flash 128K".
 
+Save states use the same shape, so the frontend has one pattern rather than
+two:
+
+| Function | Purpose |
+|---|---|
+| `geebeeayy_state_size` | Bytes a state taken now would occupy |
+| `geebeeayy_state_read` | Copy a state out; 0 if the buffer is too small |
+| `geebeeayy_state_write` | Restore a state; -1 if rejected |
+
+This **replaced** an opaque-handle API (`save_state_create` / `load_state` /
+`save_state_destroy`) that handed Kotlin a `Long` it could only give back or
+free. States were not exportable to a file at all under that design, which is
+why "save states are not wired to a UI" understated the problem.
+
+A `-1` from `state_write` means the emulator is **partially restored**, not
+untouched: `SaveState::restore` writes into the live machine as it parses.
+Treat it as "reload the ROM", not "carry on". Fixing that is part of v3.
+
 There is deliberately **no path-taking FFI**. Android hands out content URIs
 and file descriptors, not paths the core can `fs::write`. Storage policy is the
 frontend's job; bytes in, bytes out is the only honest boundary.
