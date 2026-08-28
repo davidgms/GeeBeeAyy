@@ -1,0 +1,111 @@
+//! Battery-backed cartridge saves.
+//!
+//! These start as the reproduction for a bug found by `gba_suite_save_*`:
+//! `Cartridge::save_read`/`save_write` had no callers and `MemoryBus` had no
+//! arm for 0x0E000000, so every in-game save write was silently discarded.
+
+use geebeeayy_core::Gba;
+
+const SAVE_BASE: u32 = 0x0E00_0000;
+
+/// A minimal ROM whose header carries the marker the save-type detector looks
+/// for. Padded past the 0xC0-byte header the cartridge loader requires.
+fn rom_with(marker: &str) -> Vec<u8> {
+    let mut data = vec![0u8; 0x400];
+    data[0x100..0x100 + marker.len()].copy_from_slice(marker.as_bytes());
+    data
+}
+
+fn gba_with(marker: &str) -> Gba {
+    let mut gba = Gba::new();
+    gba.load_rom(&rom_with(marker)).expect("ROM should load");
+    gba
+}
+
+#[test]
+fn sram_writes_reach_the_cartridge() {
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write8(SAVE_BASE, 0x5A);
+    assert_eq!(
+        gba.bus.read8(SAVE_BASE),
+        0x5A,
+        "a write to the save region never reached the cartridge"
+    );
+}
+
+#[test]
+fn uninitialised_save_memory_reads_ff() {
+    // gba-suite's save ROMs all begin with this check: erased SRAM/Flash is
+    // 0xFF, not 0x00.
+    let gba = gba_with("SRAM_V100");
+    assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF);
+    assert_eq!(gba.bus.read8(SAVE_BASE + 0x7FFF), 0xFF);
+}
+
+#[test]
+fn a_cartridge_with_no_save_type_reads_ff() {
+    let gba = gba_with("NOTHING");
+    assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF);
+}
+
+#[test]
+fn save_data_round_trips_through_the_cartridge() {
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write8(SAVE_BASE + 0x10, 0xAB);
+    let saved = gba.save_data().expect("an SRAM cart has save data");
+    assert_eq!(saved[0x10], 0xAB);
+
+    let mut restored = gba_with("SRAM_V100");
+    restored.load_save(&saved);
+    assert_eq!(restored.bus.read8(SAVE_BASE + 0x10), 0xAB);
+}
+
+#[test]
+fn writing_the_save_region_marks_it_dirty() {
+    let mut gba = gba_with("SRAM_V100");
+    assert!(!gba.take_save_dirty(), "a fresh cart is not dirty");
+    gba.bus.write8(SAVE_BASE, 1);
+    assert!(gba.take_save_dirty(), "a save write must set the dirty flag");
+    assert!(!gba.take_save_dirty(), "taking the flag must clear it");
+}
+
+#[test]
+fn flash_chip_erase_needs_the_second_unlock() {
+    // The full sequence is AA,55,80,AA,55,10. Consuming the command straight
+    // after 0x80 silently skips the erase, which is how a game ends up seeing
+    // its old save after formatting.
+    let mut gba = gba_with("FLASH_V123");
+    let cmd = |g: &mut Gba, v: u8| g.bus.write8(SAVE_BASE + 0x5555, v);
+
+    // Program a byte to something other than the erased value.
+    cmd(&mut gba, 0xAA);
+    cmd(&mut gba, 0x55);
+    cmd(&mut gba, 0xA0);
+    gba.bus.write8(SAVE_BASE, 0x00);
+    assert_eq!(gba.bus.read8(SAVE_BASE), 0x00);
+
+    // Erase the chip.
+    cmd(&mut gba, 0xAA);
+    cmd(&mut gba, 0x55);
+    cmd(&mut gba, 0x80);
+    cmd(&mut gba, 0xAA);
+    cmd(&mut gba, 0x55);
+    cmd(&mut gba, 0x10);
+    assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF, "chip erase did not run");
+}
+
+#[test]
+fn the_save_region_has_an_eight_bit_databus() {
+    // GBATEK, GBA Cart Backup SRAM/FRAM: "the databus is restricted to 8 bits".
+    // A halfword read returns the one byte replicated, and a halfword write
+    // delivers only the byte selected by the accessed address.
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write8(SAVE_BASE, 0x01);
+    assert_eq!(gba.bus.read16(SAVE_BASE), 0x0101);
+    assert_eq!(gba.bus.read32(SAVE_BASE), 0x0101_0101);
+
+    gba.bus.write16(SAVE_BASE + 0x20, 0xAABB);
+    assert_eq!(gba.bus.read8(SAVE_BASE + 0x20), 0xBB);
+    gba.bus.write16(SAVE_BASE + 0x21, 0xAABB);
+    assert_eq!(gba.bus.read8(SAVE_BASE + 0x21), 0xAA);
+}

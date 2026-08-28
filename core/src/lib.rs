@@ -26,7 +26,6 @@ pub struct Gba {
     pub apu: Apu,
     pub bus: MemoryBus,
     pub timer: Timer,
-    pub cartridge: Cartridge,
     pub dma: Dma,
     pub cycles: u64,
     pub run_frame_counter: u64,
@@ -40,7 +39,6 @@ impl Gba {
             apu: Apu::new(),
             bus: MemoryBus::new(),
             timer: Timer::new(),
-            cartridge: Cartridge::empty(),
             dma: Dma::new(),
             cycles: 0,
             run_frame_counter: 0,
@@ -48,7 +46,9 @@ impl Gba {
     }
 
     pub fn load_rom(&mut self, data: &[u8]) -> Result<(), cart::CartError> {
-        self.cartridge = Cartridge::from_bytes(data)?;
+        // One owner: the bus. It is the only thing reachable from `read8` and
+        // `store8`, which is where save accesses land.
+        self.bus.cart = Cartridge::from_bytes(data)?;
         self.bus.load_rom(data);
         self.cpu.boot();
         Ok(())
@@ -182,6 +182,28 @@ impl Gba {
             0xA7 => self.apu.write_fifo_b(value as i8),
             _ => {}
         }
+    }
+
+    /// The cartridge's battery-backed save, or `None` if the cart has no save
+    /// chip. Check [`Gba::take_save_dirty`] **before** calling this: reversed,
+    /// a write landing between the two is lost.
+    pub fn save_data(&self) -> Option<Vec<u8>> {
+        self.bus.cart.save_data()
+    }
+
+    /// Restore a battery save previously produced by [`Gba::save_data`].
+    pub fn load_save(&mut self, data: &[u8]) {
+        self.bus.cart.load_save(data);
+    }
+
+    /// Whether save memory changed since this was last called, clearing the flag.
+    pub fn take_save_dirty(&mut self) -> bool {
+        self.bus.cart.take_save_dirty()
+    }
+
+    /// The cartridge, for save type and title.
+    pub fn cartridge(&self) -> &Cartridge {
+        &self.bus.cart
     }
 
     pub fn frame_buffer(&self) -> &[u8; 240 * 160 * 3] {

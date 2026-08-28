@@ -93,25 +93,21 @@ fn gba_suite_memory() {
 // in and out. Drop the `#[ignore]` as each lands.
 
 #[test]
-#[ignore = "save memory is not mapped to the bus yet"]
 fn gba_suite_save_sram() {
     run_suite("sram");
 }
 
 #[test]
-#[ignore = "save memory is not mapped to the bus yet"]
 fn gba_suite_save_flash64() {
     run_suite("flash64");
 }
 
 #[test]
-#[ignore = "save memory is not mapped to the bus yet"]
 fn gba_suite_save_flash128() {
     run_suite("flash128");
 }
 
 #[test]
-#[ignore = "save memory is not mapped to the bus yet"]
 fn gba_suite_save_none() {
     run_suite("none");
 }

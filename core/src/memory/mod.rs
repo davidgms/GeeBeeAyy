@@ -7,6 +7,11 @@ pub struct MemoryBus {
     oam: Vec<u8>,
     bios: Vec<u8>,
     rom: Vec<u8>,
+    /// The cartridge lives here because the bus is the only thing that can
+    /// reach it during execution: `read8`/`store8` see a `&mut MemoryBus` and
+    /// nothing else. It used to hang off `Gba`, where nothing on the memory
+    /// path could call it, so save memory was unreachable.
+    pub cart: super::cart::Cartridge,
     pub waitcnt: u16,
     pub sound_writes: Vec<(u32, u8)>,
     prefetch_enabled: bool,
@@ -29,6 +34,7 @@ impl MemoryBus {
             oam: vec![0; 1024],
             bios: vec![0; 16 * 1024],
             rom: Vec::new(),
+            cart: super::cart::Cartridge::empty(),
             waitcnt: 0,
             sound_writes: Vec::new(),
             prefetch_enabled: false,
@@ -162,6 +168,10 @@ impl MemoryBus {
                 let addr = (address & 0x01FF_FFFF) as usize;
                 if addr < self.rom.len() { self.rom[addr] } else { 0 }
             }
+            // Cartridge backup. GBATEK, GBA Cart Backup SRAM/FRAM: mapped at
+            // 0x0E000000, "the databus is restricted to 8 bits, it should be
+            // accessed by LDRB, LDRSB, and STRB opcodes only".
+            0x0E00_0000..=0x0FFF_FFFF => self.cart.save_read(address),
             _ => 0,
         }
     }
@@ -174,13 +184,37 @@ impl MemoryBus {
         self.read32(address & !3).rotate_right((address & 3) * 8)
     }
 
+    /// Alignment for 16- and 32-bit access is forced here rather than by the
+    /// callers, because the backup region must see the *unmasked* address: its
+    /// databus is 8 bits, so which byte is touched depends on the low bits
+    /// that alignment would throw away.
+    ///
+    /// True for the cartridge backup region, whose databus is 8 bits wide.
+    fn is_save_region(address: u32) -> bool {
+        (0x0E00_0000..=0x0FFF_FFFF).contains(&address)
+    }
+
     pub fn read16(&self, address: u32) -> u16 {
+        // An 8-bit databus cannot deliver two distinct bytes, so a halfword
+        // read of the backup region returns the one byte replicated. Reading
+        // consecutive addresses instead gives 0xFF01 where hardware gives
+        // 0x0101 (gba-suite save test 4).
+        if Self::is_save_region(address) {
+            let byte = self.read8(address) as u16;
+            return byte | (byte << 8);
+        }
+        let address = address & !1;
         let lo = self.read8(address) as u16;
         let hi = self.read8(address + 1) as u16;
         lo | (hi << 8)
     }
 
     pub fn read32(&self, address: u32) -> u32 {
+        if Self::is_save_region(address) {
+            let byte = self.read8(address) as u32;
+            return byte * 0x0101_0101;
+        }
+        let address = address & !3;
         let b0 = self.read8(address) as u32;
         let b1 = self.read8(address + 1) as u32;
         let b2 = self.read8(address + 2) as u32;
@@ -266,16 +300,31 @@ impl MemoryBus {
             0x0500_0000..=0x05FF_FFFF => self.palette[(address & 0x3FF) as usize] = value,
             0x0600_0000..=0x06FF_FFFF => self.vram[Self::vram_offset(address)] = value,
             0x0700_0000..=0x07FF_FFFF => self.oam[(address & 0x3FF) as usize] = value,
+            0x0E00_0000..=0x0FFF_FFFF => self.cart.save_write(address, value),
             _ => {}
         }
     }
 
     pub fn write16(&mut self, address: u32, value: u16) {
+        // Only one byte reaches an 8-bit databus: the one selected by the
+        // accessed address.
+        if Self::is_save_region(address) {
+            let byte = (value >> (8 * (address & 1))) as u8;
+            self.store8(address, byte);
+            return;
+        }
+        let address = address & !1;
         self.store8(address, (value & 0xFF) as u8);
         self.store8(address + 1, (value >> 8) as u8);
     }
 
     pub fn write32(&mut self, address: u32, value: u32) {
+        if Self::is_save_region(address) {
+            let byte = (value >> (8 * (address & 3))) as u8;
+            self.store8(address, byte);
+            return;
+        }
+        let address = address & !3;
         self.store8(address, (value & 0xFF) as u8);
         self.store8(address + 1, ((value >> 8) & 0xFF) as u8);
         self.store8(address + 2, ((value >> 16) & 0xFF) as u8);

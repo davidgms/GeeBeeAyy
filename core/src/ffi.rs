@@ -204,6 +204,81 @@ pub unsafe extern "C" fn geebeeayy_set_keys(ptr: *mut c_void, keys: u16) {
     handle.inner.bus.set_keys(keys);
 }
 
+/// Size of the cartridge's battery save in bytes, or 0 if it has no save chip.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_size(ptr: *mut c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    handle.inner.save_data().map_or(0, |d| d.len())
+}
+
+/// Copy the battery save into `out`, returning the number of bytes written.
+///
+/// Call `geebeeayy_save_take_dirty` **before** this, never after: a write that
+/// lands between the read and the clear would be dropped on the floor.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `out` must have room for `max_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_read(
+    ptr: *mut c_void,
+    out: *mut u8,
+    max_len: usize,
+) -> usize {
+    if ptr.is_null() || out.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    let Some(data) = handle.inner.save_data() else {
+        return 0;
+    };
+    let count = data.len().min(max_len);
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), out, count);
+    }
+    count
+}
+
+/// Restore a battery save. Returns 0 on success, -1 on a null argument.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `data` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_write(
+    ptr: *mut c_void,
+    data: *const u8,
+    len: usize,
+) -> i32 {
+    if ptr.is_null() || data.is_null() {
+        return -1;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    handle.inner.load_save(bytes);
+    0
+}
+
+/// Whether save memory changed since the last call, clearing the flag.
+///
+/// Returns 1 if dirty, 0 otherwise. Check this first, then call
+/// `geebeeayy_save_read` - see its note on ordering.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_take_dirty(ptr: *mut c_void) -> i32 {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.inner.take_save_dirty() as i32
+}
+
 /// Create a save state. Returns an opaque pointer.
 ///
 /// # Safety
@@ -376,6 +451,62 @@ pub mod android {
         }
         let gba = unsafe { &mut *(handle as *mut GbaHandle) };
         gba.inner.bus.set_keys(keys as u16);
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveTakeDirty(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
+        if handle == 0 {
+            return 0;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        gba.inner.take_save_dirty() as jint
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveRead<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass,
+        handle: jlong,
+    ) -> JByteArray<'local> {
+        let empty = env.new_byte_array(0).unwrap_or_default();
+        if handle == 0 {
+            return empty;
+        }
+        let gba = unsafe { &*(handle as *const GbaHandle) };
+        let Some(data) = gba.inner.save_data() else {
+            return empty;
+        };
+        let signed: Vec<i8> = data.iter().map(|&b| b as i8).collect();
+        match env.new_byte_array(signed.len() as i32) {
+            Ok(array) => {
+                let _ = env.set_byte_array_region(&array, 0, &signed);
+                array
+            }
+            Err(_) => empty,
+        }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveWrite(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        data: JByteArray,
+    ) -> jint {
+        if handle == 0 {
+            return -1;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        let Ok(bytes) = (unsafe { env.get_array_elements(&data, ReleaseMode::NoCopyBack) }) else {
+            return -1;
+        };
+        let buf: Vec<u8> = bytes.iter().map(|&b| b as u8).collect();
+        gba.inner.load_save(&buf);
+        0
     }
 
     #[no_mangle]

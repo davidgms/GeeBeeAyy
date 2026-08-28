@@ -524,7 +524,7 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         if byte_transfer {
             bus.write8(addr, val as u8);
         } else {
-            bus.write32(addr & !3, val);
+            bus.write32(addr, val);
         }
     }
 
@@ -571,7 +571,7 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
         let val = match sh {
             // LDRH from an odd address reads the aligned halfword and rotates
             // the result right by 8, the same way a misaligned LDR rotates.
-            0b01 => (bus.read16(addr & !1) as u32).rotate_right((addr & 1) * 8),
+            0b01 => (bus.read16(addr) as u32).rotate_right((addr & 1) * 8),
             0b10 => bus.read8(addr) as i8 as i32 as u32,
             // LDRSH from an odd address degrades to LDRSB on that byte.
             _ => {
@@ -584,7 +584,7 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
         };
         cpu.set_reg(rd, val);
     } else {
-        bus.write16(addr & !1, cpu.reg(rd) as u16);
+        bus.write16(addr, cpu.reg(rd) as u16);
     }
 
     // Post-indexed transfers always write back, but never clobber Rn when it

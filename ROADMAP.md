@@ -22,7 +22,7 @@ as unverified.
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
-| `cart/` | ~285 | ROM load, save type detection. SRAM/Flash code exists but **the bus never calls it** - no arm for 0x0E000000, so saves are discarded. EEPROM is byte-addressed RAM, not the serial protocol. |
+| `cart/` | ~330 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs. EEPROM is still byte-addressed RAM, not the serial protocol. |
 | `savestate.rs` | ~275 | Format v2 (adds the SVC/ABT/UND/User banks). Round-trips in a test. Not wired to any UI. |
 | `bios.rs` | ~275 | HLE SWIs. `CpuFastSet` (0x0C), `ArcTan` (0x09), `ArcTan2` (0x0A) and the diff unfilters are missing. |
 | `ffi.rs` | ~390 | C ABI + JNI, including `geebeeayy_set_keys`. |
@@ -126,14 +126,19 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       handle it gets back; `loadState` is an empty body. Ten slots per game,
       written atomically (temp file, then rename), with a versioned magic
       header so a format change cannot silently corrupt a save.
-- [ ] **Battery saves: wire the cart to the bus first** - `rust-engineer`.
-      Not a persistence problem. `Cartridge::save_read`/`save_write` have zero
-      callers and `MemoryBus` has no arm for 0x0E000000, so every in-game save
-      write is discarded. `gba_suite_save_*` are `#[ignore]`d against exactly
-      this. Wire the bus, then add the four-function FFI (`save_size`,
-      `save_read`, `save_write`, `save_take_dirty`), then persist on the
-      Android side. Flash chip-ID reads are also missing, which makes some
-      games refuse to save even once wired.
+- [x] **Battery saves: cart wired to the bus** - the cartridge now lives in
+      `MemoryBus`, the 0x0E000000 region is mapped with its 8-bit databus
+      semantics, Flash gained chip erase and the two-stage erase unlock, and
+      the four-function FFI (`save_size`, `save_read`, `save_write`,
+      `save_take_dirty`) plus JNI exports are in. **`gba_suite_save_sram`,
+      `save_flash64`, `save_flash128` and `save_none` all pass.**
+- [ ] **Battery saves: persist them on the Android side** - `kotlin-specialist`
+      with `mobile-developer` on the file layout. The core exposes the bytes
+      and a dirty flag; nothing writes them to disk yet.
+- [ ] **Flash chip ID reads** - `rust-engineer`. Command 0x90 sets a state but
+      no read behaviour, so a game probing the manufacturer/device ID gets
+      flash contents instead. Not covered by the gba-suite save ROMs, which
+      pass without it.
 - [ ] **Save state v3** - `rust-engineer`. v2 restores a machine that never
       existed: timers come back disabled with counter and reload swapped, DMA
       derived state is stale, and `io_regs`, the APU and the cart save are not

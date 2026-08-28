@@ -31,6 +31,9 @@ pub struct Cartridge {
     eeprom: Vec<u8>,     // EEPROM 512B/8KB
     flash_state: u8,     // Flash command state machine
     flash_bank: usize,   // Flash bank select (for 128KB)
+    /// Set whenever a byte of save memory actually changes, so a frontend can
+    /// flush without diffing the whole buffer every frame.
+    save_dirty: bool,
 }
 
 impl Cartridge {
@@ -39,11 +42,12 @@ impl Cartridge {
             rom: Vec::new(),
             save_type: SaveType::None,
             title: String::new(),
-            sram: vec![0; 32 * 1024],
-            flash: vec![0; 128 * 1024],
-            eeprom: vec![0; 8 * 1024],
+            sram: vec![0xFF; 32 * 1024],
+            flash: vec![0xFF; 128 * 1024],
+            eeprom: vec![0xFF; 8 * 1024],
             flash_state: 0,
             flash_bank: 0,
+            save_dirty: false,
         }
     }
 
@@ -85,11 +89,14 @@ impl Cartridge {
             rom: data.to_vec(),
             save_type,
             title,
-            sram: vec![0; sram_size],
-            flash: vec![0; flash_size],
-            eeprom: vec![0; eeprom_size],
+            // Erased save memory reads 0xFF; every gba-suite save ROM checks
+            // this before anything else.
+            sram: vec![0xFF; sram_size],
+            flash: vec![0xFF; flash_size],
+            eeprom: vec![0xFF; eeprom_size],
             flash_state: 0,
             flash_bank: 0,
+            save_dirty: false,
         })
     }
 
@@ -136,15 +143,25 @@ impl Cartridge {
                 if addr < self.sram.len() { self.sram[addr] } else { 0 }
             }
             SaveType::Flash64 | SaveType::Flash128 => {
-                let addr = (address as usize) & 0xFFFF;
-                if addr < self.flash.len() { self.flash[addr] } else { 0 }
+                let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF))
+                    & (self.flash.len() - 1);
+                if addr < self.flash.len() { self.flash[addr] } else { 0xFF }
             }
             SaveType::Eeprom512 | SaveType::Eeprom8k => {
                 let addr = (address as usize) & (self.eeprom.len() - 1);
                 self.eeprom[addr]
             }
-            SaveType::None => 0,
+            // An absent save chip floats high on the 8-bit databus.
+            SaveType::None => 0xFF,
         }
+    }
+
+    /// Take the dirty flag, clearing it.
+    ///
+    /// Check this **before** reading the bytes out. Reversed, a write landing
+    /// between the read and the clear is lost.
+    pub fn take_save_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.save_dirty, false)
     }
 
     /// Write a byte to save memory
@@ -154,6 +171,7 @@ impl Cartridge {
                 let addr = (address as usize) & 0x7FFF;
                 if addr < self.sram.len() {
                     self.sram[addr] = value;
+                    self.save_dirty = true;
                 }
             }
             SaveType::Flash64 | SaveType::Flash128 => {
@@ -183,6 +201,7 @@ impl Cartridge {
                         let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF)) & (self.flash.len() - 1);
                         if addr < self.flash.len() {
                             self.flash[addr] = value;
+                            self.save_dirty = true;
                         }
                         self.flash_state = 0;
                     }
@@ -190,16 +209,33 @@ impl Cartridge {
                         self.flash_bank = (value as usize) & 1;
                         self.flash_state = 0;
                     }
-                    6 => { // Erase
-                        if value == 0x30 {
-                            // Erase sector
-                            let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF)) & (self.flash.len() - 1);
-                            let sector = addr & 0xFFFFF000;
-                            if sector + 0x1000 <= self.flash.len() {
-                                for i in sector..sector + 0x1000 {
-                                    self.flash[i] = 0xFF;
+                    // Erase needs a SECOND unlock sequence before the command:
+                    // the full form is AA,55,80,AA,55, then 0x10 (chip) or 0x30
+                    // (sector). Taking the command straight after 0x80 meant the
+                    // 0xAA was swallowed here and the erase never ran.
+                    6 => {
+                        if value == 0xAA { self.flash_state = 7; } else { self.flash_state = 0; }
+                    }
+                    7 => {
+                        if value == 0x55 { self.flash_state = 8; } else { self.flash_state = 0; }
+                    }
+                    8 => {
+                        match value {
+                            0x30 => {
+                                let addr = ((self.flash_bank << 16)
+                                    | (address as usize & 0xFFFF))
+                                    & (self.flash.len() - 1);
+                                let sector = addr & !0xFFF;
+                                if sector + 0x1000 <= self.flash.len() {
+                                    self.flash[sector..sector + 0x1000].fill(0xFF);
+                                    self.save_dirty = true;
                                 }
                             }
+                            0x10 => {
+                                self.flash.fill(0xFF);
+                                self.save_dirty = true;
+                            }
+                            _ => {}
                         }
                         self.flash_state = 0;
                     }
