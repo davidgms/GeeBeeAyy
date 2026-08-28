@@ -139,59 +139,32 @@ impl Gba {
         }
     }
 
-    fn apu_sound_write(&mut self, offset: u32, value: u8) {
-        match offset {
-            0x60 => self.apu.write_sound1_reg(0x60, value),
-            0x62 => self.apu.write_sound1_reg(0x62, value),
-            0x63 => self.apu.write_sound1_reg(0x63, value),
-            0x64 => self.apu.write_sound1_reg(0x64, value),
-            0x68 => self.apu.write_sound2_reg(0x68, value),
-            0x6C => self.apu.write_sound2_reg(0x6C, value),
-            0x6D => self.apu.write_sound2_reg(0x6D, value),
-            0x6E => self.apu.write_sound2_reg(0x6E, value),
-            0x70 => self.apu.write_sound3_reg(0x70, value),
-            0x72 => self.apu.write_sound3_reg(0x72, value),
-            0x74 => self.apu.write_sound3_reg(0x74, value),
-            0x78 => self.apu.write_sound4_reg(0x78, value),
-            0x7A => self.apu.write_sound4_reg(0x7A, value),
-            0x7C => self.apu.write_sound4_reg(0x7C, value),
-            0x7E => self.apu.write_sound4_reg(0x7E, value),
-            0x80 => {
-                let hi = self.bus.read8(0x0400_0081);
-                self.apu.write_soundcnt_l(((hi as u16) << 8) | value as u16);
+    /// Route a captured sound-register byte write to the APU.
+    ///
+    /// The bus records byte writes; the APU decodes whole 16-bit registers, so
+    /// every offset is folded onto its containing register and the full value
+    /// re-read from I/O memory. The previous version matched a hand-listed set
+    /// of offsets and silently dropped the rest - roughly half the sound
+    /// registers, including `0x65` where the channel-1 trigger bit lives, and
+    /// all of wave RAM.
+    fn apu_sound_write(&mut self, offset: u32, _value: u8) {
+        let base = match offset {
+            0x60..=0x81 | 0x84..=0x85 | 0x90..=0x9F => offset & !1,
+            // FIFO writes are byte streams, not registers.
+            0xA0..=0xA3 => {
+                self.apu.write_fifo_a(_value as i8);
+                return;
             }
-            0x81 => {
-                let lo = self.bus.read8(0x0400_0080);
-                self.apu.write_soundcnt_l(((value as u16) << 8) | lo as u16);
+            0xA4..=0xA7 => {
+                self.apu.write_fifo_b(_value as i8);
+                return;
             }
-            0x82 => {
-                let hi = self.bus.read8(0x0400_0083);
-                self.apu.write_soundcnt_h(((hi as u16) << 8) | value as u16);
-            }
-            0x83 => {
-                let lo = self.bus.read8(0x0400_0082);
-                self.apu.write_soundcnt_h(((value as u16) << 8) | lo as u16);
-            }
-            // SOUNDCNT_X, the PSG/FIFO master enable. This was not routed at
-            // all, so the APU never saw a game turn sound on.
-            0x84 => {
-                let hi = self.bus.read8(0x0400_0085);
-                self.apu.write_soundcnt_x(((hi as u16) << 8) | value as u16);
-            }
-            0x85 => {
-                let lo = self.bus.read8(0x0400_0084);
-                self.apu.write_soundcnt_x(((value as u16) << 8) | lo as u16);
-            }
-            0xA0 => self.apu.write_fifo_a(value as i8),
-            0xA1 => self.apu.write_fifo_a(value as i8),
-            0xA2 => self.apu.write_fifo_a(value as i8),
-            0xA3 => self.apu.write_fifo_a(value as i8),
-            0xA4 => self.apu.write_fifo_b(value as i8),
-            0xA5 => self.apu.write_fifo_b(value as i8),
-            0xA6 => self.apu.write_fifo_b(value as i8),
-            0xA7 => self.apu.write_fifo_b(value as i8),
-            _ => {}
-        }
+            0x82..=0x83 => 0x82,
+            _ => return,
+        };
+        let lo = self.bus.read8(0x0400_0000 + base) as u16;
+        let hi = self.bus.read8(0x0400_0000 + base + 1) as u16;
+        self.apu.write_register(base, lo | (hi << 8));
     }
 
     /// The cartridge's battery-backed save, or `None` if the cart has no save

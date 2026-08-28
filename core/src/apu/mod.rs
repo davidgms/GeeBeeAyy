@@ -236,106 +236,146 @@ impl Apu {
         self.sound_on = value & 0x0080 != 0;
     }
 
-    pub fn write_sound1_reg(&mut self, reg: u32, value: u8) {
+    /// Write a 16-bit sound register, addressed by its offset from 0x04000000.
+    ///
+    /// Decoding happens at 16-bit granularity on purpose. The previous
+    /// byte-level decoders had `SOUND1CNT_H`'s split off by one - `0x62` read
+    /// the envelope fields that GBATEK places in `0x63`, `0x63` read a length
+    /// that belongs in `0x62`, and `0x65` had no handler at all, which is where
+    /// the trigger bit lives. No PSG channel could ever be started.
+    pub fn write_register(&mut self, reg: u32, value: u16) {
         match reg {
-            0x60 => { // SOUND1CNT_L - Sweep
-                self.ch1.sweep_shift = value & 0x07;
-                self.ch1.sweep_dir = (value >> 3) & 1;
-                self.ch1.sweep_timer = (value >> 4) & 0x07;
-                self.ch1.sweep_enabled = value != 0;
+            // SOUND1CNT_L - sweep
+            0x60 => {
+                self.ch1.sweep_shift = (value & 0x07) as u8;
+                self.ch1.sweep_dir = ((value >> 3) & 1) as u8;
+                self.ch1.sweep_timer = ((value >> 4) & 0x07) as u8;
+                self.ch1.sweep_enabled = self.ch1.sweep_timer != 0;
             }
-            0x62 => { // SOUND1CNT_H - Duty/Volume/Envelope
-                self.ch1.duty = (value >> 6) & 3;
-                self.ch1.volume_init = (value >> 4) & 0x0F;
-                self.ch1.volume_cur = self.ch1.volume_init;
-                self.ch1.envelope_dir = (value >> 3) & 1;
-                self.ch1.envelope_period = value & 0x07;
-                self.ch1.envelope_timer = 0;
-            }
-            0x63 => { // SOUND1CNT_X low
-                self.ch1.length_counter = value as u16;
-            }
-            0x64 => { // SOUND1CNT_X high
-                self.ch1.freq_divider = ((value as u16) << 8) | (self.ch1.freq_divider & 0xFF);
-                if value & 0x80 != 0 {
-                    self.ch1.enabled = true;
-                    self.ch1.freq_counter = 0;
-                    self.ch1.sample_idx = 0;
-                }
-            }
-            _ => {}
-        }
-    }
+            // SOUND1CNT_H - length, duty, envelope
+            0x62 => self.write_duty_envelope(0, value),
+            // SOUND1CNT_X - frequency and control
+            0x64 => self.write_frequency_control(0, value),
 
-    pub fn write_sound2_reg(&mut self, reg: u32, value: u8) {
-        match reg {
-            0x68 => {
-                self.ch2.duty = (value >> 6) & 3;
-                self.ch2.volume_init = (value >> 4) & 0x0F;
-                self.ch2.volume_cur = self.ch2.volume_init;
-                self.ch2.envelope_dir = (value >> 3) & 1;
-                self.ch2.envelope_period = value & 0x07;
-            }
-            0x6C => {
-                self.ch2.length_counter = value as u16;
-            }
-            0x6E => {
-                self.ch2.freq_divider = ((value as u16) << 8) | (self.ch2.freq_divider & 0xFF);
-                if value & 0x80 != 0 {
-                    self.ch2.enabled = true;
-                    self.ch2.freq_counter = 0;
-                    self.ch2.sample_idx = 0;
-                }
-            }
-            _ => {}
-        }
-    }
+            // SOUND2CNT_L / SOUND2CNT_H, same layout minus the sweep
+            0x68 => self.write_duty_envelope(1, value),
+            0x6C => self.write_frequency_control(1, value),
 
-    pub fn write_sound3_reg(&mut self, reg: u32, value: u8) {
-        match reg {
+            // SOUND3CNT_L - wave RAM bank and enable
             0x70 => {
-                self.ch3.bank_select = value & 0x20 != 0;
-                self.ch3.volume_code = (value >> 5) & 3;
+                self.ch3.bank_select = value & 0x0040 != 0;
+                self.ch3.enabled = value & 0x0080 != 0;
             }
+            // SOUND3CNT_H - length and volume
             0x72 => {
-                self.ch3.length_counter = value as u16;
+                self.ch3.length_counter = value & 0xFF;
+                self.ch3.volume_code = ((value >> 13) & 0x07) as u8;
             }
-            0x74 => {
-                self.ch3.freq_divider = ((value as u16) & 0x7F) | (self.ch3.freq_divider & 0xFF80);
-                if value & 0x80 != 0 {
-                    self.ch3.enabled = true;
-                    self.ch3.freq_counter = 0;
-                    self.ch3.sample_idx = 0;
-                }
-            }
-            _ => {}
-        }
-    }
+            // SOUND3CNT_X - frequency and control
+            0x74 => self.write_frequency_control(2, value),
 
-    pub fn write_sound4_reg(&mut self, reg: u32, value: u8) {
-        match reg {
+            // SOUND4CNT_L - length and envelope
             0x78 => {
-                self.ch4.volume_init = (value >> 4) & 0x0F;
+                self.ch4.length_counter = value & 0x3F;
+                self.ch4.envelope_period = ((value >> 8) & 0x07) as u8;
+                self.ch4.envelope_dir = ((value >> 11) & 1) as u8;
+                self.ch4.volume_init = ((value >> 12) & 0x0F) as u8;
                 self.ch4.volume_cur = self.ch4.volume_init;
-                self.ch4.envelope_dir = (value >> 3) & 1;
-                self.ch4.envelope_period = value & 0x07;
+                self.ch4.envelope_timer = 0;
             }
-            0x7A => {
-                self.ch4.length_counter = value as u16;
-            }
+            // SOUND4CNT_H - noise parameters and control
             0x7C => {
-                self.ch4.shift_freq = (value >> 4) & 0x0F;
-                self.ch4.width_mode = (value >> 3) & 1;
-                self.ch4.div_ratio = value & 0x07;
-            }
-            0x7E => {
-                if value & 0x80 != 0 {
+                self.ch4.div_ratio = (value & 0x07) as u8;
+                self.ch4.width_mode = ((value >> 3) & 1) as u8;
+                self.ch4.shift_freq = ((value >> 4) & 0x0F) as u8;
+                self.ch4.length_enabled = value & 0x4000 != 0;
+                if value & 0x8000 != 0 {
                     self.ch4.enabled = true;
                     self.ch4.lfsr = 0x7FFF;
                     self.ch4.freq_counter = 0;
                 }
             }
+
+            0x80 => self.write_soundcnt_l(value),
+            0x82 => self.write_soundcnt_h(value),
+            0x84 => self.write_soundcnt_x(value),
+
+            // Wave RAM, which the routing table used to drop entirely.
+            0x90..=0x9F => {
+                let idx = (reg - 0x90) as usize;
+                if idx + 1 < self.ch3.wave_ram.len() {
+                    self.ch3.wave_ram[idx] = (value & 0xFF) as u8;
+                    self.ch3.wave_ram[idx + 1] = (value >> 8) as u8;
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Shared by channels 1 and 2: length, duty and the volume envelope.
+    /// GBATEK: bits 0-5 length, 6-7 duty, 8-10 envelope step, 11 direction,
+    /// 12-15 initial volume.
+    fn write_duty_envelope(&mut self, channel: usize, value: u16) {
+        let length = value & 0x3F;
+        let duty = ((value >> 6) & 3) as u8;
+        let period = ((value >> 8) & 0x07) as u8;
+        let dir = ((value >> 11) & 1) as u8;
+        let volume = ((value >> 12) & 0x0F) as u8;
+        if channel == 0 {
+            self.ch1.length_counter = length;
+            self.ch1.duty = duty;
+            self.ch1.envelope_period = period;
+            self.ch1.envelope_dir = dir;
+            self.ch1.volume_init = volume;
+            self.ch1.volume_cur = volume;
+            self.ch1.envelope_timer = 0;
+        } else {
+            self.ch2.length_counter = length;
+            self.ch2.duty = duty;
+            self.ch2.envelope_period = period;
+            self.ch2.envelope_dir = dir;
+            self.ch2.volume_init = volume;
+            self.ch2.volume_cur = volume;
+            self.ch2.envelope_timer = 0;
+        }
+    }
+
+    /// Shared by channels 1, 2 and 3: frequency in bits 0-10, the length flag
+    /// in bit 14 and the restart trigger in bit 15.
+    fn write_frequency_control(&mut self, channel: usize, value: u16) {
+        let freq = value & 0x07FF;
+        let length_enabled = value & 0x4000 != 0;
+        let trigger = value & 0x8000 != 0;
+        match channel {
+            0 => {
+                self.ch1.freq_divider = freq;
+                self.ch1.length_enabled = length_enabled;
+                if trigger {
+                    self.ch1.enabled = true;
+                    self.ch1.freq_counter = 0;
+                    self.ch1.sample_idx = 0;
+                    self.ch1.volume_cur = self.ch1.volume_init;
+                }
+            }
+            1 => {
+                self.ch2.freq_divider = freq;
+                self.ch2.length_enabled = length_enabled;
+                if trigger {
+                    self.ch2.enabled = true;
+                    self.ch2.freq_counter = 0;
+                    self.ch2.sample_idx = 0;
+                    self.ch2.volume_cur = self.ch2.volume_init;
+                }
+            }
+            _ => {
+                self.ch3.freq_divider = freq;
+                self.ch3.length_enabled = length_enabled;
+                if trigger {
+                    self.ch3.enabled = true;
+                    self.ch3.freq_counter = 0;
+                    self.ch3.sample_idx = 0;
+                }
+            }
         }
     }
 

@@ -157,52 +157,23 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       structs, generated as matching write/read pairs so the orders cannot
       drift. The sample buffer is deliberately excluded: it is drained to the
       frontend every frame, so snapshotting it would replay stale audio.
-- [ ] **The APU register map is broken and no channel can be triggered** -
-      `rust-engineer`, with GBATEK open. Found while testing the above:
-      - `SOUND1CNT_H`'s byte split is off by one. `0x62` decodes duty *and*
-        envelope volume/direction/period, but per GBATEK those live in the high
-        byte `0x63`; `0x63` is decoded as a length register, which actually
-        sits in `0x62` bits 5-0.
-      - **`0x65` is not handled at all**, and that is where the trigger bit
-        (bit 15 of `SOUND1CNT_X`) lives - so no PSG channel can ever start.
-      - `0x64` is treated as the register's high byte and shifted left 8; it is
-        the low byte.
-      - The routing table in `Gba::apu_sound_write` covers a subset of offsets:
-        `0x61`, `0x65`-`0x67`, `0x69`-`0x6B`, `0x71`, `0x73`, `0x75`-`0x77`,
-        `0x79`, `0x7B`, `0x7D`, `0x7F` and the wave RAM at `0x90`-`0x9F` are all
-        dropped, even though the bus captures them.
-      Two real fixes already landed: `SOUNDCNT_X` (the PSG/FIFO master enable)
-      was not routed to the APU at all, and `sound_on` was being derived from
-      SOUNDCNT_H bit 15, which GBATEK defines as "DMA Sound B Reset FIFO".
-- [x] **Render path** - `kotlin-specialist`. The bitmap, its pixel staging
-      buffer and the `ImageBitmap` wrapper are each allocated once and reused.
-      The OpenGL ES path still waits on a measurement. Unverified: not compiled.
-- [ ] **Audio verified against a game** - `kotlin-specialist`. The
-      `AudioTrack` path is wired and the core is the timing master, but no
-      game has ever driven it. Measure underruns and drift over ten minutes.
-- [x] **Frame pacing** - `kotlin-specialist`. The fallback pacing delay (used
-      only when there is no audio device to block on) is now measured from
-      `DisplayManager` instead of hardcoded to 16ms; audio is still the timing
-      master when it's available. Emulation stops on `ON_STOP` and resumes on
-      `ON_START` via the emulation route's `LocalLifecycleOwner`, tracking
-      whether backgrounding (rather than the player) caused the pause so a
-      manually-paused game doesn't auto-resume. Unverified: not compiled, no
-      device test.
-- [ ] **Controller support** - `kotlin-specialist`. Bluetooth and USB HID via
-      Android's gamepad abstraction. Test on Xbox, PS4/PS5, Switch Pro and
-      8BitDo; vendor quirks are the usual failure.
-- [x] **PPU verification, mode 0** - `core/tests/ppu.rs` drives jsmolka's
-      `stripes`, `shades` and `hello` ROMs and asserts the rendered colours are
-      the ones the ROM wrote. It found that **`char_base` was a VRAM offset used
-      as an absolute address**, so mode 0 never read tile data at all, plus
-      missing tile flip bits, a missing 4bpp palette bank, and a backdrop hard
-      coded to white instead of palette entry 0.
-- [ ] **PPU verification, the other modes** - `rust-engineer`. Modes 1, 2, 4
-      and 5, sprites, windows, mosaic and blending still have no test-ROM
-      coverage. `get_bg_pixel` is shared with modes 1 and 2, so those likely
-      improved with the `char_base` fix, but nothing proves it.
-- [ ] **Accessibility pass** - `accessibility-tester`. Touch target sizes at
-      every overlay scale, and contrast in the pixel bee theme.
+- [x] **APU register map rewritten** - decoding now happens at 16-bit register
+      granularity rather than per byte, which is where the bugs lived:
+      `SOUND1CNT_H`'s byte split was off by one, `0x64` was treated as a high
+      byte and shifted left 8 when it is the low byte, and **`0x65` had no
+      handler at all** - which is where the trigger bit sits, so no PSG channel
+      could ever start. `Gba::apu_sound_write` also matched a hand-listed set
+      of offsets and dropped roughly half the sound registers plus all of wave
+      RAM; it now folds every captured byte onto its containing register.
+      Two adjacent fixes: `SOUNDCNT_X` (the PSG/FIFO master enable) was not
+      routed to the APU at all, and `sound_on` was read from SOUNDCNT_H bit 15,
+      which GBATEK defines as "DMA Sound B Reset FIFO".
+      Verified by `a_psg_channel_can_actually_be_triggered` and
+      `the_master_enable_silences_the_apu` - the first tests in this project's
+      history that get audio out of the APU.
+- [ ] **Audio verified against a real game** - `kotlin-specialist`. The APU can
+      now be driven, but no game has driven it and no device has played it.
+      Needs hardware.
 
 **Exit criterion:** a full game is playable start to finish, with sound, on a
 physical device, without losing progress.

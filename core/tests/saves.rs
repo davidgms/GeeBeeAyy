@@ -258,3 +258,42 @@ fn save_state_carries_the_apu() {
         "the APU did not come back from the save state"
     );
 }
+
+#[test]
+fn a_psg_channel_can_actually_be_triggered() {
+    // Before the register map was rewritten at 16-bit granularity this was
+    // impossible: 0x65, where SOUND1CNT_X's trigger bit lives, had no handler
+    // at all, so no PSG channel could ever start.
+    //
+    // GBATEK, Sound Channel 1: SOUND1CNT_H bits 12-15 are the initial envelope
+    // volume and 6-7 the duty; SOUND1CNT_X bits 0-10 are the frequency and bit
+    // 15 restarts the sound. SOUNDCNT_X bit 7 is the master enable.
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write16(0x0400_0084, 0x0080); // master enable
+    gba.bus.write16(0x0400_0080, 0x0077); // both sides, full volume
+    gba.bus.write16(0x0400_0062, 0xF080); // volume 15, 50% duty
+    gba.bus.write16(0x0400_0064, 0x8400); // frequency, restart
+    gba.run_frame();
+
+    assert!(
+        gba.apu_samples().iter().any(|&s| s != 0.0),
+        "channel 1 produced silence after being triggered"
+    );
+}
+
+#[test]
+fn the_master_enable_silences_the_apu() {
+    // SOUNDCNT_X bit 7 clear means "both PSG and FIFO sounds are disabled"
+    // (GBATEK). This register was not routed to the APU at all.
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write16(0x0400_0080, 0x0077);
+    gba.bus.write16(0x0400_0062, 0xF080);
+    gba.bus.write16(0x0400_0064, 0x8400);
+    gba.bus.write16(0x0400_0084, 0x0000); // master enable OFF
+    gba.run_frame();
+
+    assert!(
+        gba.apu_samples().iter().all(|&s| s == 0.0),
+        "sound played with the master enable off"
+    );
+}

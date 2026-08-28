@@ -317,8 +317,13 @@ Two adjacent bugs already fixed: `SOUNDCNT_X` (0x84, the PSG/FIFO master
 enable, bit 7) was not routed at all, and `sound_on` was derived from
 SOUNDCNT_H bit 15 which GBATEK defines as "DMA Sound B Reset FIFO".
 
-**Application**: the APU has never produced sound from a game, so any audio
-work downstream of it - the `AudioTrack` path, buffer sizing, latency - is
-untested against real output. Fix the register map before trusting any audio
-measurement. Decode each register from GBATEK's byte layout, not from a
-16-bit mental model flattened into the low byte.
+**Fixed on 2026-08-28** by decoding at 16-bit register granularity instead of
+per byte, and by folding every captured byte offset onto its containing
+register rather than matching a hand-listed subset. `core/tests/saves.rs` now
+has the first tests in this project's history that get audio out of the APU.
+
+**Application**: byte-level register decoding is where this class of bug
+breeds - a 16-bit layout flattened into the low byte looks plausible and is
+wrong in a way no test catches until you ask for output. Decode whole
+registers. And note that downstream audio work (the `AudioTrack` path, buffer
+sizing, latency) has still never been exercised by real game audio.
