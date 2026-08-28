@@ -131,6 +131,45 @@ fn arm_ldr_str_word() {
     ]);
     steps(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.registers[2], 0xAB);
+    // Assert the address too. A store and a load that agree on the *wrong*
+    // address still round-trip, which is how an inverted offset-mode flag
+    // survived here undetected.
+    assert_eq!(bus.read32(0x0200_0000), 0xAB, "the store went somewhere else");
+}
+
+#[test]
+fn arm_ldr_str_immediate_offset_is_not_a_register() {
+    // Bit 25 clear means the offset is the literal 12-bit field, not Rm.
+    // mov r0, #0x02000000 ; mov r4, #0xF0 ; mov r1, #0x5A
+    // str r1, [r0, #4]    ; ldr r2, [r0, #4]
+    // The offset field is 0x004, and R4 holds 0xF0, so a decoder that reads
+    // the low nibble as Rm lands 0xF0 bytes away instead of 4.
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0402, // mov r0, #0x02000000
+        0xE3A0_40F0, // mov r4, #0xF0
+        0xE3A0_105A, // mov r1, #0x5A
+        0xE580_1004, // str r1, [r0, #4]
+        0xE590_2004, // ldr r2, [r0, #4]
+    ]);
+    steps(&mut cpu, &mut bus, 5);
+    assert_eq!(bus.read32(0x0200_0004), 0x5A, "immediate offset was not 4");
+    assert_eq!(bus.read32(0x0200_00F0), 0, "R4 was used as the offset");
+    assert_eq!(cpu.registers[2], 0x5A);
+}
+
+#[test]
+fn arm_ldr_register_offset_still_works() {
+    // Bit 25 set means Rm is the offset, shifted by the [11:7] field.
+    // mov r0, #0x02000000 ; mov r3, #2 ; mov r1, #0x77
+    // str r1, [r0, r3, lsl #2]  -> 0x02000008
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0402, // mov r0, #0x02000000
+        0xE3A0_3002, // mov r3, #2
+        0xE3A0_1077, // mov r1, #0x77
+        0xE780_1103, // str r1, [r0, r3, lsl #2]
+    ]);
+    steps(&mut cpu, &mut bus, 4);
+    assert_eq!(bus.read32(0x0200_0008), 0x77, "register offset or its shift is wrong");
 }
 
 #[test]

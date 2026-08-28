@@ -40,7 +40,22 @@ impl MemoryBus {
             io: super::io::IoHandler::new(),
         };
         bus.init_bios();
+        // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
+        // so a zero-filled io_regs would read as all ten buttons held forever.
+        bus.set_keys(0);
         bus
+    }
+
+    /// Update KEYINPUT from a frontend key bitmask.
+    ///
+    /// `keys` uses the GBATEK bit order (0=A, 1=B, 2=Select, 3=Start, 4=Right,
+    /// 5=Left, 6=Up, 7=Down, 8=R, 9=L) with **1 = pressed**, which is the
+    /// natural polarity for a caller. The inversion to the hardware's active-low
+    /// KEYINPUT happens here and nowhere else.
+    pub fn set_keys(&mut self, keys: u16) {
+        let raw = !keys & 0x03FF;
+        self.io_regs[super::io::IO_KEYINPUT] = (raw & 0xFF) as u8;
+        self.io_regs[super::io::IO_KEYINPUT + 1] = (raw >> 8) as u8;
     }
 
     /// Populate BIOS memory with a minimal HLE IRQ handler.
@@ -62,11 +77,12 @@ impl MemoryBus {
         //   0x28: ldrh r2, [r12, #2]      ; IF
         //   0x2C: and r1, r1, r2          ; IE & IF
         //   0x30: strh r1, [r12, #2]      ; acknowledge IF
-        //   0x34: ldr r0, [pc, #8]        ; load 0x03007FFC address from literal pool at 0x44
+        //   0x34: ldr r0, [pc, #12]       ; load 0x03007FFC from the literal pool
         //   0x38: ldr r0, [r0]            ; deref -> game handler address
         //   0x3C: blx r0                  ; call game handler
-        //   0x40: ldmia sp!, {r0-r3, r12, pc}^  ; return from IRQ, restore CPSR
-        //   0x44: .word 0x03007FFC        ; literal: pointer to game's IRQ vector
+        //   0x40: ldmia sp!, {r0-r3, r12, lr}
+        //   0x44: subs pc, lr, #4         ; return from IRQ, restoring CPSR
+        //   0x48: .word 0x03007FFC        ; literal: pointer to game's IRQ vector
         let bios_irq_handler: [u32; 11] = [
             0xE92D500F, // stmdb sp!, {r0-r3, r12, lr}
             0xE3A0C301, // mov r12, #0x04000000
@@ -74,12 +90,17 @@ impl MemoryBus {
             0xE1DC10B0, // ldrh r1, [r12]            ; r1 = IE
             0xE1DC20B2, // ldrh r2, [r12, #2]        ; r2 = IF
             0xE0011002, // and r1, r1, r2             ; r1 = IE & IF
-            0xE1CC10B2, // strh r1, [r12, #2]        ; acknowledge IF
-            0xE59F0008, // ldr r0, [pc, #8]          ; r0 -> literal at 0x44
+            0xE1CC10B2, // strh r1, [r12, #2]        ; acknowledge IF (W1C)
+            0xE59F000C, // ldr r0, [pc, #12]         ; r0 -> literal at 0x48
             0xE5900000, // ldr r0, [r0]              ; r0 = game handler addr
             0xE12FFF30, // blx r0                    ; call game handler
-            0xE8FDD00F, // ldmia sp!, {r0-r3, r12, pc}^ ; return from IRQ (S bit set)
+            0xE8BD500F, // ldmia sp!, {r0-r3, r12, lr}
         ];
+        // `subs pc, lr, #4` undoes the +4 the exception entry added to LR_irq
+        // and restores CPSR from SPSR_irq in the same instruction. Entry and
+        // exit have to agree: if one adds 4 and the other does not, every
+        // interrupt returns one instruction off and it looks like a game bug.
+        let bios_irq_return: u32 = 0xE25EF004; // subs pc, lr, #4
         let literal: u32 = 0x0300_7FFC;
 
         let offset = 0x18usize;
@@ -88,7 +109,9 @@ impl MemoryBus {
             let bytes = word.to_le_bytes();
             self.bios[addr..addr + 4].copy_from_slice(&bytes);
         }
-        let lit_addr = offset + bios_irq_handler.len() * 4;
+        let ret_addr = offset + bios_irq_handler.len() * 4;
+        self.bios[ret_addr..ret_addr + 4].copy_from_slice(&bios_irq_return.to_le_bytes());
+        let lit_addr = ret_addr + 4;
         self.bios[lit_addr..lit_addr + 4].copy_from_slice(&literal.to_le_bytes());
     }
 

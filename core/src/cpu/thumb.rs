@@ -540,7 +540,9 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
         }
         0b1001 => { // NEG
             result = 0u32.wrapping_sub(rs_val);
-            let carry = 0 >= rs_val;
+            // NEG is RSB rd, rs, #0. C is "no borrow", which for 0 - rs_val
+            // holds only when rs_val is 0.
+            let carry = rs_val == 0;
             let overflow = crate::cpu::arm::overflow_sub(0, rs_val, result);
             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
             cpu.set_reg(rd, result);

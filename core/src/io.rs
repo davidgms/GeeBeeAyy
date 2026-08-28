@@ -147,6 +147,9 @@ pub const IO_TM2CNT_H: usize = 0x10A;
 pub const IO_TM3CNT_L: usize = 0x10C;
 pub const IO_TM3CNT_H: usize = 0x10E;
 
+// --- Keypad I/O register offsets ---
+pub const IO_KEYINPUT: usize = 0x130;
+
 // --- Interrupt I/O register offsets ---
 pub const IO_IE: usize = 0x200;
 pub const IO_IF: usize = 0x202;

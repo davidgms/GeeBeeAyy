@@ -14,8 +14,20 @@ pub enum Mode {
 
 pub struct Cpu {
     pub registers: [u32; 16],
+    /// R8-R12 plus R13/R14, banked for FIQ only.
     pub fiq_registers: [u32; 7],
+    /// R13, R14 for IRQ mode.
     pub irq_registers: [u32; 2],
+    /// R13, R14 for Supervisor mode.
+    pub svc_registers: [u32; 2],
+    /// R13, R14 for Abort mode.
+    pub abt_registers: [u32; 2],
+    /// R13, R14 for Undefined mode.
+    pub und_registers: [u32; 2],
+    /// R13, R14 for User/System, parked here while a privileged mode runs.
+    pub usr_registers: [u32; 2],
+    /// R8-R12 for User/System, parked here only while FIQ runs.
+    pub usr_r8_r12: [u32; 5],
     pub cpsr: u32,
     pub spsr_fiq: u32,
     pub spsr_irq: u32,
@@ -38,6 +50,11 @@ impl Cpu {
             registers: [0; 16],
             fiq_registers: [0; 7],
             irq_registers: [0; 2],
+            svc_registers: [0; 2],
+            abt_registers: [0; 2],
+            und_registers: [0; 2],
+            usr_registers: [0; 2],
+            usr_r8_r12: [0; 5],
             cpsr: Mode::System as u32,
             spsr_fiq: 0,
             spsr_irq: 0,
@@ -51,10 +68,77 @@ impl Cpu {
 
     /// Initialize CPU state as if the GBA BIOS boot has completed.
     pub fn boot(&mut self) {
-        self.registers[13] = 0x0300_7F00; // SP (System/User mode)
+        // Conventional post-boot stacks, as the real BIOS sets them
+        // (GBATEK, BIOS RAM Usage). SP itself has no hardware reset value.
+        self.registers[13] = 0x0300_7F00; // sp_sys / sp_usr
+        self.usr_registers[0] = 0x0300_7F00;
+        self.svc_registers[0] = 0x0300_7FE0;
+        self.irq_registers[0] = 0x0300_7FA0;
         self.registers[15] = 0x0800_0000; // PC = ROM entry point
         self.cpsr = Mode::System as u32;  // System mode, IRQ disabled
         self.halted = false;
+    }
+
+    /// Write CPSR, switching the banked registers when the mode field changes.
+    ///
+    /// Every path that alters CPSR's mode bits must go through here. Writing
+    /// `cpsr` directly leaves the wrong bank live, which shows up later as a
+    /// corrupted stack rather than as an obvious fault.
+    pub fn set_cpsr(&mut self, value: u32) {
+        let old = self.mode();
+        self.cpsr = value;
+        let new = self.mode();
+        if old != new {
+            self.switch_bank(old, new);
+        }
+    }
+
+    /// Park the outgoing mode's banked registers and load the incoming one's.
+    ///
+    /// GBATEK, ARM CPU Register Set: only FIQ banks R8-R12. Supervisor, Abort,
+    /// IRQ and Undefined bank R13 and R14 alone, and System shares User's bank.
+    fn switch_bank(&mut self, old: Mode, new: Mode) {
+        // Save R13/R14 into the outgoing mode's bank.
+        let outgoing = [self.registers[13], self.registers[14]];
+        match old {
+            Mode::Fiq => {
+                self.fiq_registers[5] = outgoing[0];
+                self.fiq_registers[6] = outgoing[1];
+                for i in 0..5 {
+                    self.fiq_registers[i] = self.registers[8 + i];
+                }
+            }
+            Mode::Irq => self.irq_registers = outgoing,
+            Mode::Supervisor => self.svc_registers = outgoing,
+            Mode::Abort => self.abt_registers = outgoing,
+            Mode::Undefined => self.und_registers = outgoing,
+            Mode::User | Mode::System => self.usr_registers = outgoing,
+        }
+
+        // Restore R8-R12 to the User bank when leaving FIQ.
+        if old == Mode::Fiq && new != Mode::Fiq {
+            for i in 0..5 {
+                self.registers[8 + i] = self.usr_r8_r12[i];
+            }
+        }
+        // Park the User R8-R12 when entering FIQ.
+        if new == Mode::Fiq && old != Mode::Fiq {
+            for i in 0..5 {
+                self.usr_r8_r12[i] = self.registers[8 + i];
+                self.registers[8 + i] = self.fiq_registers[i];
+            }
+        }
+
+        let incoming = match new {
+            Mode::Fiq => [self.fiq_registers[5], self.fiq_registers[6]],
+            Mode::Irq => self.irq_registers,
+            Mode::Supervisor => self.svc_registers,
+            Mode::Abort => self.abt_registers,
+            Mode::Undefined => self.und_registers,
+            Mode::User | Mode::System => self.usr_registers,
+        };
+        self.registers[13] = incoming[0];
+        self.registers[14] = incoming[1];
     }
 
     pub fn step(&mut self, bus: &mut super::memory::MemoryBus) -> u32 {
@@ -326,19 +410,29 @@ impl Cpu {
         super::bios::handle_swi(comment, self, bus);
     }
 
-    /// Handle IRQ exception
+    /// Handle IRQ exception.
+    ///
+    /// GBATEK, ARM CPU Exceptions: `LR_irq = return address + 4` (a pipeline
+    /// artefact, applied whether the interrupted code was ARM or Thumb),
+    /// `SPSR_irq = CPSR`, `T = 0` so the handler always runs in ARM state,
+    /// `I = 1`, `F` unchanged, mode = IRQ. The canonical return is
+    /// `SUBS PC, LR, #4`, which undoes the +4 and restores CPSR in one go.
     pub fn handle_irq(&mut self) {
         if self.cpsr & 0x80 != 0 {
             return;
         }
-        let pc = self.registers[15];
+        let return_addr = self.registers[15];
         self.halted = false;
-        self.spsr_irq = self.cpsr;
-        self.cpsr = (self.cpsr & !0x3F) | Mode::Irq as u32;
-        self.cpsr |= 0x80;  // mask further IRQs
-        self.cpsr &= !0x20; // the vector at 0x18 is ARM code
-        self.irq_registers[1] = pc;
-        self.registers[14] = pc;
+
+        let old_cpsr = self.cpsr;
+        let mut new_cpsr = (old_cpsr & !0x3F) | Mode::Irq as u32;
+        new_cpsr |= 0x80;  // mask further IRQs
+        new_cpsr &= !0x20; // the vector at 0x18 is ARM code
+        self.set_cpsr(new_cpsr);
+
+        // set_cpsr has switched to the IRQ bank, so this writes LR_irq.
+        self.spsr_irq = old_cpsr;
+        self.registers[14] = return_addr.wrapping_add(4);
         self.registers[15] = 0x0000_0018;
     }
 }

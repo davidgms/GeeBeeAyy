@@ -4,7 +4,8 @@ use super::Gba;
 
 /// Save state magic and version
 const SAVE_MAGIC: &[u8; 4] = b"GBAS";
-const SAVE_VERSION: u32 = 1;
+/// v2 added the Supervisor, Abort, Undefined and User register banks.
+const SAVE_VERSION: u32 = 2;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -24,6 +25,11 @@ impl SaveState {
         write_u32_array(&mut buf, &gba.cpu.registers);
         write_u32_array(&mut buf, &gba.cpu.fiq_registers);
         write_u32_array(&mut buf, &gba.cpu.irq_registers);
+        write_u32_array(&mut buf, &gba.cpu.svc_registers);
+        write_u32_array(&mut buf, &gba.cpu.abt_registers);
+        write_u32_array(&mut buf, &gba.cpu.und_registers);
+        write_u32_array(&mut buf, &gba.cpu.usr_registers);
+        write_u32_array(&mut buf, &gba.cpu.usr_r8_r12);
         write_u32(&mut buf, gba.cpu.cpsr);
         write_u32(&mut buf, gba.cpu.spsr_fiq);
         write_u32(&mut buf, gba.cpu.spsr_irq);
@@ -120,6 +126,11 @@ impl SaveState {
         read_u32_array(&mut cursor, &mut gba.cpu.registers)?;
         read_u32_array(&mut cursor, &mut gba.cpu.fiq_registers)?;
         read_u32_array(&mut cursor, &mut gba.cpu.irq_registers)?;
+        read_u32_array(&mut cursor, &mut gba.cpu.svc_registers)?;
+        read_u32_array(&mut cursor, &mut gba.cpu.abt_registers)?;
+        read_u32_array(&mut cursor, &mut gba.cpu.und_registers)?;
+        read_u32_array(&mut cursor, &mut gba.cpu.usr_registers)?;
+        read_u32_array(&mut cursor, &mut gba.cpu.usr_r8_r12)?;
         gba.cpu.cpsr = read_u32(&mut cursor)?;
         gba.cpu.spsr_fiq = read_u32(&mut cursor)?;
         gba.cpu.spsr_irq = read_u32(&mut cursor)?;

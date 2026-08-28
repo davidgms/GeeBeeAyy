@@ -55,10 +55,11 @@ impl Timer {
                         self.counters[i + 1] += 1;
                     }
 
-                    // Trigger timer IRQ if enabled
+                    // GBATEK, GBA Interrupt Control: IF bits 3,4,5,6 are
+                    // Timer 0,1,2,3 overflow. IE and IME gate whether the CPU
+                    // takes the exception, never whether IF is set.
                     if self.irq_enabled[i] {
-                        // TODO: Set IF bit for timer i
-                        let _ = bus;
+                        bus.io.request_interrupt(1 << (3 + i));
                     }
                 }
             }

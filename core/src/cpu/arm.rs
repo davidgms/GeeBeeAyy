@@ -219,7 +219,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
                     super::Mode::Undefined => cpu.spsr_und,
                     _ => cpu.cpsr,
                 };
-                cpu.cpsr = spsr;
+                cpu.set_cpsr(spsr);
             } else {
                 cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
             }
@@ -416,7 +416,7 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
             _ => {}
         }
     } else {
-        cpu.cpsr = (cpu.cpsr & !mask) | (new_psr & mask);
+        cpu.set_cpsr((cpu.cpsr & !mask) | (new_psr & mask));
     }
 
     1
@@ -427,7 +427,13 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
 // ---------------------------------------------------------------------------
 
 fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
-    let immediate_offset = (instruction >> 25) & 1 == 0;
+    // Bit 25 is the I flag: 0 = 12-bit immediate offset, 1 = shifted register.
+    // These two were swapped, so every `ldr rd, [rn, #imm]` took Rm as its
+    // offset instead. It hid for a long time because the common
+    // `ldr/str rd, [rn]` form has Rm == 0 encoded in the low nibble, which
+    // makes both operands the same register and sends load and store to the
+    // same wrong address - a round-trip test still passes.
+    let register_offset = (instruction >> 25) & 1 == 1;
     let up_down = (instruction >> 23) & 1 == 1;
     let byte_transfer = (instruction >> 22) & 1 == 1;
     let write_back = (instruction >> 21) & 1 == 1;
@@ -436,15 +442,21 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
     let rd = ((instruction >> 12) & 0xF) as usize;
 
     let base = cpu.reg(rn);
-    let offset = if immediate_offset {
-        let shift_imm = ((instruction >> 4) & 0xF) * 2;
-        let rm = (instruction & 0xF) as usize;
-        let rm_val = cpu.reg(rm);
+    let offset = if register_offset {
+        // Immediate-shift form: amount in bits [11:7], type in [6:5], Rm in [3:0].
+        let shift_imm = (instruction >> 7) & 0x1F;
+        let rm_val = cpu.reg((instruction & 0xF) as usize);
         match (instruction >> 5) & 3 {
-            0b00 => rm_val.wrapping_shl(shift_imm),
-            0b01 => rm_val.wrapping_shr(if shift_imm == 0 { 32 } else { shift_imm }),
-            0b10 => ((rm_val as i32) >> if shift_imm == 0 { 32 } else { shift_imm }) as u32,
-            0b11 => rm_val.rotate_right(shift_imm),
+            0b00 => cpu.lsl(rm_val, shift_imm).value,
+            0b01 => cpu.lsr(rm_val, if shift_imm == 0 { 32 } else { shift_imm }).value,
+            0b10 => cpu.asr(rm_val, if shift_imm == 0 { 32 } else { shift_imm }).value,
+            0b11 => {
+                if shift_imm == 0 {
+                    cpu.rrx(rm_val).value
+                } else {
+                    cpu.ror(rm_val, shift_imm).value
+                }
+            }
             _ => unreachable!(),
         }
     } else {
@@ -592,7 +604,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                 super::Mode::Undefined => cpu.spsr_und,
                 _ => cpu.cpsr,
             };
-            cpu.cpsr = spsr;
+            cpu.set_cpsr(spsr);
         }
     } else {
         for i in 0..16u32 {

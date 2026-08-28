@@ -158,8 +158,10 @@ impl Dma {
             ch.source = src_save;
         }
 
+        // GBATEK, GBA Interrupt Control: IF bits 8,9,10,11 are DMA 0,1,2,3.
+        // Raised once the word count is exhausted, not mid-transfer.
         if ch.irq_on_end {
-            // TODO: Trigger DMA IRQ via IoHandler
+            bus.io.request_interrupt(1 << (8 + channel));
         }
 
         if !ch.repeat {

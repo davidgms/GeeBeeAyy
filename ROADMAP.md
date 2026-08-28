@@ -16,16 +16,16 @@ as unverified.
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `cpu/` | ~1650 | ARM + THUMB decoders. 25 regression tests. Not yet run against a hardware test ROM. |
+| `cpu/` | ~1800 | ARM + THUMB decoders, full register banking. 38 regression tests. Not yet run against a hardware test ROM. |
 | `ppu/` | ~1030 | Modes 0-5, sprites, affine, windows, mosaic, blending. Renders a mode 3 pixel end to end. Otherwise unverified. |
 | `apu/` | ~560 | 4 PSG channels + FIFO A/B. Mono f32 at 17403 Hz. Reaches an Android `AudioTrack`. Never verified against a game. |
-| `memory/` + `io.rs` | ~485 | Bus, mirrors, wait states, prefetch. `KEYINPUT` is declared and unused. |
-| `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. **Never raises its IRQ.** |
-| `timer/` | ~110 | Prescaler and cascade. **Never raises its IRQ.** |
+| `memory/` + `io.rs` | ~485 | Bus, mirrors, wait states, prefetch. `KEYINPUT` wired, defaults to released. |
+| `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
+| `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
 | `cart/` | ~285 | ROM load, save type detection, SRAM/Flash/EEPROM. |
-| `savestate.rs` | ~265 | Round-trips in a test. Not wired to any UI. |
+| `savestate.rs` | ~275 | Format v2 (adds the SVC/ABT/UND/User banks). Round-trips in a test. Not wired to any UI. |
 | `bios.rs` | ~275 | HLE SWIs. `CpuFastSet` (0x0C), `ArcTan` (0x09), `ArcTan2` (0x0A) and the diff unfilters are missing. |
-| `ffi.rs` | ~390 | C ABI + JNI. **No input entry point exists.** |
+| `ffi.rs` | ~390 | C ABI + JNI, including `geebeeayy_set_keys`. |
 | `android/` | ~2100 | Compose UI, JNI bridge, audio output, touch overlay drawn but not connected. |
 | `ios/` | ~750 | SwiftUI views and an engine wrapper. **No Xcode project - has never been compiled.** |
 
@@ -41,34 +41,34 @@ roughly the order to do it in.
 
 ### 0.1 Input - `rust-engineer`, then `kotlin-specialist`
 
-- [ ] Initialise `0x04000130` (`KEYINPUT`) to `0x03FF` in `MemoryBus::new`.
+- [x] Initialise `0x04000130` (`KEYINPUT`) to `0x03FF` in `MemoryBus::new`.
       The register is active-low and `io_regs` is zero-filled, so today every
       read reports all ten buttons held down, forever.
-- [ ] Add `geebeeayy_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
+- [x] Add `geebeeayy_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
       export.
 - [ ] Call it from the touch overlay in `EmulationScreen.kt`. The on-screen
       controls are currently decorative.
-- [ ] Test: a ROM that polls `KEYINPUT` sees released buttons by default and
+- [x] Test: a ROM that polls `KEYINPUT` sees released buttons by default and
       pressed ones after `set_keys`.
 
 ### 0.2 Interrupts - `rust-engineer`
 
-- [ ] Raise the timer IRQ. `core/src/timer/mod.rs:59` is a `TODO` with a
+- [x] Raise the timer IRQ. `core/src/timer/mod.rs:59` is a `TODO` with a
       `let _ = bus;` standing in, so a timer interrupt never fires. Games that
       wait on one hang, and DMA-sound refill is timer-driven.
-- [ ] Raise the DMA IRQ. Same shape at `core/src/dma.rs:161`.
-- [ ] Test: enabling a timer with IRQ set eventually sets the matching `IF`
+- [x] Raise the DMA IRQ. Same shape at `core/src/dma.rs:161`.
+- [x] Test: enabling a timer with IRQ set eventually sets the matching `IF`
       bit and enters the handler.
 
 ### 0.3 Banked registers - `rust-engineer`
 
-- [ ] Swap `SP` and `LR` on mode change, and `R8-R12` for FIQ.
+- [x] Swap `SP` and `LR` on mode change, and `R8-R12` for FIQ.
       `fiq_registers` and `irq_registers` (`core/src/cpu/mod.rs:17`) exist and
       are serialised into save states, but nothing ever swaps them. IRQ mode
       therefore runs on the game's own stack, and the HLE BIOS handler pushes
       six registers onto it. Any game that sets up a separate IRQ stack
       corrupts memory on its first interrupt.
-- [ ] Test: entering IRQ mode uses the IRQ stack pointer; returning restores
+- [x] Test: entering IRQ mode uses the IRQ stack pointer; returning restores
       the caller's.
 
 ### 0.4 The accuracy gate - `rust-engineer` with `search-specialist`

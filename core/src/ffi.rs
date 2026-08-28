@@ -185,6 +185,25 @@ pub unsafe extern "C" fn geebeeayy_audio_copy(
     count
 }
 
+/// Set the pressed-button bitmask.
+///
+/// `keys` uses the GBATEK bit order (0=A, 1=B, 2=Select, 3=Start, 4=Right,
+/// 5=Left, 6=Up, 7=Down, 8=R, 9=L) with **1 = pressed**, which is the natural
+/// polarity for a caller. The inversion to the hardware's active-low KEYINPUT
+/// happens inside the core, so a frontend never deals with it. Bits above 9
+/// are ignored.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_set_keys(ptr: *mut c_void, keys: u16) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.inner.bus.set_keys(keys);
+}
+
 /// Create a save state. Returns an opaque pointer.
 ///
 /// # Safety
@@ -343,6 +362,20 @@ pub mod android {
         };
         let _ = env.set_float_array_region(&out, 0, &buf[..count]);
         count as jint
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSetKeys(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        keys: jint,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        gba.inner.bus.set_keys(keys as u16);
     }
 
     #[no_mangle]
