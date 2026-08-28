@@ -75,3 +75,53 @@ fn gba_suite_thumb() {
 fn gba_suite_memory() {
     run_suite("memory");
 }
+
+// --- jsmolka/gba-tests, the same r12 protocol -----------------------------
+//
+// These are ignored, not deleted: they fail for a known and documented reason
+// rather than an unknown one, and a permanently red gate teaches people to
+// ignore it. Run them with `cargo test -- --ignored` to see where the work
+// stands.
+//
+// Every save suite fails at test 1, which only asks that uninitialised save
+// memory reads 0xFF. It reads 0x00 because **the save region is never reached**:
+// `MemoryBus` has no arm for 0x0E000000 and never calls the cartridge at all -
+// it keeps its own `rom` copy, while `Gba.cartridge` exists only for save-type
+// detection. The cartridge side is actually complete (`Cartridge::save_read`,
+// `save_write`, `save_data`, `load_save` in `core/src/cart/mod.rs`); what is
+// missing is the wiring between the bus and it, and the FFI to get the bytes
+// in and out. Drop the `#[ignore]` as each lands.
+
+#[test]
+#[ignore = "save memory is not mapped to the bus yet"]
+fn gba_suite_save_sram() {
+    run_suite("sram");
+}
+
+#[test]
+#[ignore = "save memory is not mapped to the bus yet"]
+fn gba_suite_save_flash64() {
+    run_suite("flash64");
+}
+
+#[test]
+#[ignore = "save memory is not mapped to the bus yet"]
+fn gba_suite_save_flash128() {
+    run_suite("flash128");
+}
+
+#[test]
+#[ignore = "save memory is not mapped to the bus yet"]
+fn gba_suite_save_none() {
+    run_suite("none");
+}
+
+/// Exercises the HLE BIOS. Expect this to disagree with a real BIOS in places
+/// - its first check reads the BIOS ROM itself, which high-level emulation
+/// does not reproduce - so read a failure here as "which test number", not as
+/// a simple pass/fail.
+#[test]
+#[ignore = "HLE BIOS cannot satisfy tests that read the BIOS ROM itself"]
+fn gba_suite_bios() {
+    run_suite("bios");
+}
