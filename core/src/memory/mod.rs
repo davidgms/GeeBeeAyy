@@ -115,11 +115,23 @@ impl MemoryBus {
         self.bios[lit_addr..lit_addr + 4].copy_from_slice(&literal.to_le_bytes());
     }
 
+    /// VRAM mirrors in 128 KB steps, but the region is 96 KB: the upper 32 KB
+    /// is itself a mirror of the block before it, so 0x18000..0x20000 folds
+    /// back onto 0x10000..0x18000.
+    fn vram_offset(address: u32) -> usize {
+        let offset = (address & 0x1_FFFF) as usize;
+        if offset >= 0x18000 {
+            offset - 0x8000
+        } else {
+            offset
+        }
+    }
+
     pub fn read8(&self, address: u32) -> u8 {
         match address {
             0x0000_0000..=0x0000_3FFF => self.bios[(address & 0x3FFF) as usize],
-            0x0200_0000..=0x0203_FFFF => self.ewram[(address & 0x3FFFF) as usize],
-            0x0300_0000..=0x0300_7FFF => self.iwram[(address & 0x7FFF) as usize],
+            0x0200_0000..=0x02FF_FFFF => self.ewram[(address & 0x3_FFFF) as usize],
+            0x0300_0000..=0x03FF_FFFF => self.iwram[(address & 0x7FFF) as usize],
             0x0400_0000..=0x0400_03FE => {
                 let offset = (address & 0x3FF) as usize;
                 if offset == super::io::IO_IE {
@@ -140,15 +152,14 @@ impl MemoryBus {
                     self.io_regs[offset]
                 }
             }
-            0x0500_0000..=0x0500_03FF => self.palette[(address & 0x3FF) as usize],
-            0x0600_0000..=0x0601_7FFF => self.vram[(address & 0x17FFF) as usize],
-            0x0700_0000..=0x0700_03FF => self.oam[(address & 0x3FF) as usize],
-            0x0800_0000..=0x09FF_FFFF => {
-                let addr = (address - 0x0800_0000) as usize;
-                if addr < self.rom.len() { self.rom[addr] } else { 0 }
-            }
-            0x0A00_0000..=0x0BFF_FFFF => {
-                let addr = (address - 0x0A00_0000) as usize;
+            0x0500_0000..=0x05FF_FFFF => self.palette[(address & 0x3FF) as usize],
+            0x0600_0000..=0x06FF_FFFF => self.vram[Self::vram_offset(address)],
+            0x0700_0000..=0x07FF_FFFF => self.oam[(address & 0x3FF) as usize],
+            // The cartridge appears three times, once per wait-state region:
+            // 0x08 (WS0), 0x0A (WS1) and 0x0C (WS2). Same data, different
+            // access timing.
+            0x0800_0000..=0x0DFF_FFFF => {
+                let addr = (address & 0x01FF_FFFF) as usize;
                 if addr < self.rom.len() { self.rom[addr] } else { 0 }
             }
             _ => 0,
@@ -177,10 +188,40 @@ impl MemoryBus {
         b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
     }
 
+    /// 8-bit store with the GBA's video-memory rules applied.
+    ///
+    /// OAM ignores byte writes entirely; palette and the BG half of VRAM
+    /// duplicate the byte across the addressed halfword; the OBJ half of VRAM
+    /// ignores them. The OBJ boundary moves with the video mode: 0x14000 in
+    /// the bitmap modes, 0x10000 in the tiled ones.
+    ///
+    /// `write16` and `write32` deliberately bypass this and use `store8`,
+    /// because those rules apply only to genuine byte stores.
     pub fn write8(&mut self, address: u32, value: u8) {
         match address {
-            0x0200_0000..=0x0203_FFFF => self.ewram[(address & 0x3FFFF) as usize] = value,
-            0x0300_0000..=0x0300_7FFF => self.iwram[(address & 0x7FFF) as usize] = value,
+            0x0500_0000..=0x05FF_FFFF => {
+                let offset = (address & 0x3FF) as usize & !1;
+                self.palette[offset] = value;
+                self.palette[offset + 1] = value;
+            }
+            0x0600_0000..=0x06FF_FFFF => {
+                let offset = Self::vram_offset(address);
+                let obj_base = if self.io_regs[0] & 7 >= 3 { 0x14000 } else { 0x10000 };
+                if offset < obj_base {
+                    let offset = offset & !1;
+                    self.vram[offset] = value;
+                    self.vram[offset + 1] = value;
+                }
+            }
+            0x0700_0000..=0x07FF_FFFF => {}
+            _ => self.store8(address, value),
+        }
+    }
+
+    fn store8(&mut self, address: u32, value: u8) {
+        match address {
+            0x0200_0000..=0x02FF_FFFF => self.ewram[(address & 0x3_FFFF) as usize] = value,
+            0x0300_0000..=0x03FF_FFFF => self.iwram[(address & 0x7FFF) as usize] = value,
             0x0400_0000..=0x0400_03FE => {
                 let offset = (address & 0x3FF) as usize;
                 if offset == super::io::IO_IE {
@@ -222,23 +263,23 @@ impl MemoryBus {
                     _ => {}
                 }
             }
-            0x0500_0000..=0x0500_03FF => self.palette[(address & 0x3FF) as usize] = value,
-            0x0600_0000..=0x0601_7FFF => self.vram[(address & 0x17FFF) as usize] = value,
-            0x0700_0000..=0x0700_03FF => self.oam[(address & 0x3FF) as usize] = value,
+            0x0500_0000..=0x05FF_FFFF => self.palette[(address & 0x3FF) as usize] = value,
+            0x0600_0000..=0x06FF_FFFF => self.vram[Self::vram_offset(address)] = value,
+            0x0700_0000..=0x07FF_FFFF => self.oam[(address & 0x3FF) as usize] = value,
             _ => {}
         }
     }
 
     pub fn write16(&mut self, address: u32, value: u16) {
-        self.write8(address, (value & 0xFF) as u8);
-        self.write8(address + 1, (value >> 8) as u8);
+        self.store8(address, (value & 0xFF) as u8);
+        self.store8(address + 1, (value >> 8) as u8);
     }
 
     pub fn write32(&mut self, address: u32, value: u32) {
-        self.write8(address, (value & 0xFF) as u8);
-        self.write8(address + 1, ((value >> 8) & 0xFF) as u8);
-        self.write8(address + 2, ((value >> 16) & 0xFF) as u8);
-        self.write8(address + 3, ((value >> 24) & 0xFF) as u8);
+        self.store8(address, (value & 0xFF) as u8);
+        self.store8(address + 1, ((value >> 8) & 0xFF) as u8);
+        self.store8(address + 2, ((value >> 16) & 0xFF) as u8);
+        self.store8(address + 3, ((value >> 24) & 0xFF) as u8);
     }
 
     pub fn load_bios(&mut self, data: &[u8]) {

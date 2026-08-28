@@ -228,3 +228,58 @@ fn irq_returns_to_the_interrupted_instruction() {
     cpu.step(&mut bus);
     assert_eq!(cpu.registers[1], 2);
 }
+
+// ---------------------------------------------------------------------------
+// Memory map: mirroring and the 8-bit video write rules
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ram_regions_mirror_through_their_blocks() {
+    let mut bus = MemoryBus::new();
+    bus.write32(0x0200_0000, 0xDEAD_BEEF);
+    assert_eq!(bus.read32(0x0204_0000), 0xDEAD_BEEF, "EWRAM mirrors every 256 KB");
+
+    bus.write32(0x0300_0000, 0xCAFE_BABE);
+    assert_eq!(bus.read32(0x0300_8000), 0xCAFE_BABE, "IWRAM mirrors every 32 KB");
+
+    bus.write16(0x0500_0010, 0x1234);
+    assert_eq!(bus.read16(0x0500_0410), 0x1234, "palette mirrors every 1 KB");
+
+    bus.write16(0x0700_0010, 0x5678);
+    assert_eq!(bus.read16(0x0700_0410), 0x5678, "OAM mirrors every 1 KB");
+}
+
+#[test]
+fn vram_upper_block_folds_back() {
+    // VRAM mirrors in 128 KB steps but holds 96 KB: 0x18000..0x20000 is a
+    // second view of 0x10000..0x18000.
+    let mut bus = MemoryBus::new();
+    bus.write16(0x0601_0000, 0xABCD);
+    assert_eq!(bus.read16(0x0601_8000), 0xABCD);
+}
+
+#[test]
+fn byte_writes_to_video_memory_follow_the_gba_rules() {
+    let mut bus = MemoryBus::new();
+
+    // OAM ignores byte writes entirely.
+    bus.write16(0x0700_0010, 0x0000);
+    bus.write8(0x0700_0010, 0xFF);
+    assert_eq!(bus.read16(0x0700_0010), 0x0000, "OAM must ignore byte stores");
+
+    // Palette duplicates the byte across the halfword.
+    bus.write8(0x0500_0020, 0xAB);
+    assert_eq!(bus.read16(0x0500_0020), 0xABAB);
+
+    // A halfword store must NOT be treated as two byte stores.
+    bus.write16(0x0500_0020, 0x1234);
+    assert_eq!(bus.read16(0x0500_0020), 0x1234, "write16 leaked into the byte path");
+
+    // VRAM: BG half duplicates, OBJ half ignores. Mode 0 puts OBJ at 0x10000.
+    bus.write16(0x0400_0000, 0x0000);
+    bus.write8(0x0600_0040, 0xCD);
+    assert_eq!(bus.read16(0x0600_0040), 0xCDCD, "BG VRAM duplicates the byte");
+    bus.write16(0x0601_0040, 0x0000);
+    bus.write8(0x0601_0040, 0xEE);
+    assert_eq!(bus.read16(0x0601_0040), 0x0000, "OBJ VRAM must ignore byte stores");
+}

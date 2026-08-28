@@ -16,10 +16,10 @@ as unverified.
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `cpu/` | ~1800 | ARM + THUMB decoders, full register banking. 38 regression tests. Not yet run against a hardware test ROM. |
+| `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
 | `ppu/` | ~1030 | Modes 0-5, sprites, affine, windows, mosaic, blending. Renders a mode 3 pixel end to end. Otherwise unverified. |
 | `apu/` | ~560 | 4 PSG channels + FIFO A/B. Mono f32 at 17403 Hz. Reaches an Android `AudioTrack`. Never verified against a game. |
-| `memory/` + `io.rs` | ~485 | Bus, mirrors, wait states, prefetch. `KEYINPUT` wired, defaults to released. |
+| `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
 | `cart/` | ~285 | ROM load, save type detection, SRAM/Flash/EEPROM. |
@@ -73,15 +73,16 @@ roughly the order to do it in.
 
 ### 0.4 The accuracy gate - `rust-engineer` with `search-specialist`
 
-- [ ] Run jsmolka's `gba-suite` (`arm.gba`, `thumb.gba`, `memory.gba`). Each
+- [x] Run jsmolka's `gba-suite` (`arm.gba`, `thumb.gba`, `memory.gba`). Each
       writes the failing test number to `r12` and spins, so the harness is
       small: run frames until PC stops moving, assert `r12 == 0`.
-- [ ] Point it at `temp/roms/` and skip when the file is absent. **No ROM is
+- [x] Point it at `temp/roms/` and skip when the file is absent. **No ROM is
       committed to this repository**, homebrew test suites included.
-- [ ] Fix what it finds.
+- [x] Fix what it finds. **All three suites pass.**
 
-This is the highest-value task in Phase 0. The 25 tests written so far cover
-the bugs that were found; they say nothing about the ones that were not.
+It was the highest-value task in Phase 0 and it earned that: `arm.gba`,
+`thumb.gba` and `memory.gba` all pass as of 2026-08-28, after eleven further
+decoder and memory-map bugs that the hand-written tests had missed entirely.
 
 ### 0.5 Rebuild the native library - `mobile-app-developer`
 
