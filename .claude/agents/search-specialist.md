@@ -1,7 +1,7 @@
 ---
 name: search-specialist
 description: "Use PROACTIVELY when a question is about real Game Boy Advance hardware rather than about this codebase: GBATEK register semantics, ARM7TDMI instruction encodings and timings, PPU and APU edge cases, save type detection, and how mGBA, SkyEmu or NanoBoyAdvance handle an ambiguous case. Answers from the sources with a citation, never from memory. Triggers: what does GBATEK say, correct encoding, register semantics, wait states, cycle timing, hardware quirk, how does mGBA handle, unaligned access, edge case, is this behaviour right."
-tools: Read, Grep, Glob, WebFetch, WebSearch
+tools: Read, Edit, Grep, Glob, WebFetch, WebSearch
 model: sonnet
 ---
 

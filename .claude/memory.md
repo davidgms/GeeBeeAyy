@@ -101,3 +101,27 @@ and `io_regs` is zero-filled. The register is active-low, so a read returns
 misbehaves from the first frame. Initialising it to `0x03FF` is half the fix;
 the other half is an FFI entry point, since no input path from the frontends
 to the core exists at all.
+
+### 2026-08-27 - Fetching GBATEK: use the per-section pages, not the monolith
+
+The combined `gbatek.htm` truncates badly through WebFetch's markdown
+conversion. Use the split pages instead, pattern
+`https://problemkaputt.de/gbatek-<section-slug>.htm` - for example
+`gbatek-arm-cpu-register-set.htm`, `gbatek-arm-cpu-exceptions.htm`,
+`gbatek-gba-interrupt-control.htm`, `gbatek-gba-timers.htm`,
+`gbatek-gba-keypad-input.htm`. Find a slug with a `site:problemkaputt.de`
+search rather than guessing anchors on the combined page.
+
+The ARM7TDMI TRM at `developer.arm.com/documentation/ddi0029*` redirects to a
+JS-rendered page that cannot be fetched as static text. GBATEK's *ARM CPU
+Exceptions* page reproduces the same exception-entry table and is fetchable,
+so it is the practical primary source even though the TRM outranks it.
+
+### 2026-08-27 - An agent whose `tools:` list omits Edit cannot satisfy the Memory Protocol
+
+`search-specialist` and `accessibility-tester` shipped with read-only tool
+lists (`Read, Grep, Glob, ...`), so the `SubagentStop` hook nudged them on
+every run for a write they were structurally incapable of making. Both now
+carry `Edit`. When registering an agent that has a `## Discoveries` section,
+check that its frontmatter grants `Edit` or `Write` - the hook and the tool
+list have to agree or the agent loops.

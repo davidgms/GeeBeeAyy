@@ -1,7 +1,7 @@
 ---
 name: accessibility-tester
 description: "Use PROACTIVELY whenever the touch overlay, ROM browser, settings screen or the pixel bee theme changes: touch target sizes for on-screen GBA controls, colour contrast in `ui/theme/Color.kt` and `GeeBeeAyyTheme.swift`, TalkBack and VoiceOver labels, font scaling and reduced motion. Triggers: contrast ratio, WCAG, TalkBack, VoiceOver, content description, accessibility label, hit target, touch target size, font scaling, colorblind, screen reader, haptics."
-tools: Read, Grep, Glob, Bash
+tools: Read, Edit, Grep, Glob, Bash
 model: haiku
 ---
 
