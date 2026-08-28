@@ -54,72 +54,88 @@ impl Gba {
         Ok(())
     }
 
+    /// Advance the whole machine by one CPU instruction.
+    ///
+    /// Ticks the timers, PPU, APU and DMA with the cycles that instruction
+    /// consumed, and delivers any interrupt it raised. `run_frame` is this in
+    /// a loop; a test or debugger that steps `cpu` directly instead will stall
+    /// forever on a ROM that polls DISPSTAT for VBlank.
+    pub fn step(&mut self) -> u32 {
+        let before = self.cycles;
+        // If halted, just advance PPU until an interrupt wakes us
+        if self.cpu.halted || self.bus.io.halt {
+            // Advance one scanline at a time so a HALT cannot outrun the PPU
+            // that has to wake it.
+            const SCANLINE: u32 = 1232;
+            self.ppu.tick(SCANLINE, &mut self.bus, &mut self.dma);
+            self.timer.tick(SCANLINE, &mut self.bus);
+            self.apu.tick(SCANLINE);
+            self.cycles += SCANLINE as u64;
+
+            if self.bus.io.interrupt_pending() {
+                self.cpu.halted = false;
+                self.bus.io.halt = false;
+                self.cpu.handle_irq();
+            }
+            return (self.cycles - before) as u32;
+        }
+
+        let cycles = self.cpu.step(&mut self.bus);
+        self.cycles += cycles as u32 as u64;
+        self.timer.tick(cycles as u32, &mut self.bus);
+        self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
+        self.apu.tick(cycles as u32);
+
+        for _ in 0..cycles {
+            self.bus.prefetch_tick();
+        }
+
+        // DMA Sound
+        if self.apu.fifo_a_half_empty() {
+            if let Some((dest, data)) = self.dma.do_sound_transfer(1, &mut self.bus) {
+                if dest == 0x0400_00A0 {
+                    for &byte in &data { self.apu.write_fifo_a(byte as i8); }
+                }
+            }
+        }
+        if self.apu.fifo_b_half_empty() {
+            if let Some((dest, data)) = self.dma.do_sound_transfer(2, &mut self.bus) {
+                if dest == 0x0400_00A4 {
+                    for &byte in &data { self.apu.write_fifo_b(byte as i8); }
+                }
+            }
+        }
+
+        let overflows = self.timer.drain_overflows();
+        for (i, &overflow) in overflows.iter().enumerate() {
+            if overflow { self.apu.on_timer_overflow(i as u8); }
+        }
+
+        let writes = self.bus.drain_sound_writes();
+        for (offset, value) in writes {
+            self.apu_sound_write(offset, value);
+        }
+
+        // Route interrupts from PPU -> bus.io
+        if self.ppu.vblank_pending() {
+            self.bus.io.request_interrupt(0x0001);
+        }
+        if self.ppu.hblank_pending() {
+            self.bus.io.request_interrupt(0x0002);
+        }
+
+        // Deliver IRQs to CPU
+        if self.bus.io.interrupt_pending() {
+            self.cpu.handle_irq();
+        }
+
+        (self.cycles - before) as u32
+    }
+
     pub fn run_frame(&mut self) {
         let target = self.cycles + CYCLES_PER_FRAME;
         while self.cycles < target {
-            // If halted, just advance PPU until an interrupt wakes us
-            if self.cpu.halted || self.bus.io.halt {
-                let remaining = (target - self.cycles) as u32;
-                self.ppu.tick(remaining.min(1232), &mut self.bus, &mut self.dma);
-                self.cycles += remaining.min(1232) as u64;
-
-                // Check if any pending interrupt can wake the CPU
-                if self.bus.io.interrupt_pending() {
-                    self.cpu.halted = false;
-                    self.bus.io.halt = false;
-                    self.cpu.handle_irq();
-                }
-                continue;
-            }
-
-            let cycles = self.cpu.step(&mut self.bus);
-            self.cycles += cycles as u32 as u64;
-            self.timer.tick(cycles as u32, &mut self.bus);
-            self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
-            self.apu.tick(cycles as u32);
-
-            for _ in 0..cycles {
-                self.bus.prefetch_tick();
-            }
-
-            // DMA Sound
-            if self.apu.fifo_a_half_empty() {
-                if let Some((dest, data)) = self.dma.do_sound_transfer(1, &mut self.bus) {
-                    if dest == 0x0400_00A0 {
-                        for &byte in &data { self.apu.write_fifo_a(byte as i8); }
-                    }
-                }
-            }
-            if self.apu.fifo_b_half_empty() {
-                if let Some((dest, data)) = self.dma.do_sound_transfer(2, &mut self.bus) {
-                    if dest == 0x0400_00A4 {
-                        for &byte in &data { self.apu.write_fifo_b(byte as i8); }
-                    }
-                }
-            }
-
-            let overflows = self.timer.drain_overflows();
-            for (i, &overflow) in overflows.iter().enumerate() {
-                if overflow { self.apu.on_timer_overflow(i as u8); }
-            }
-
-            let writes = self.bus.drain_sound_writes();
-            for (offset, value) in writes {
-                self.apu_sound_write(offset, value);
-            }
-
-            // Route interrupts from PPU -> bus.io
-            if self.ppu.vblank_pending() {
-                self.bus.io.request_interrupt(0x0001);
-            }
-            if self.ppu.hblank_pending() {
-                self.bus.io.request_interrupt(0x0002);
-            }
-
-            // Deliver IRQs to CPU
-            if self.bus.io.interrupt_pending() {
-                self.cpu.handle_irq();
-            }
+            self.step();
         }
     }
 

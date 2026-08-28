@@ -51,12 +51,42 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         cpu.set_reg(rd, val);
                     }
                 }
-                _ => unreachable!(),
+                // Format 2: ADD/SUB with a register or 3-bit immediate operand.
+                // bits[15:11] = 00011, so shift_op reads as 0b11 here. This
+                // used to fall into `unreachable!()` and panic the emulator.
+                _ => {
+                    let immediate = (instruction >> 10) & 1 == 1;
+                    let subtract = (instruction >> 9) & 1 == 1;
+                    let field = (instruction >> 6) & 7;
+                    let operand = if immediate {
+                        field as u32
+                    } else {
+                        cpu.reg(field as usize)
+                    };
+
+                    let result = if subtract {
+                        rs_val.wrapping_sub(operand)
+                    } else {
+                        rs_val.wrapping_add(operand)
+                    };
+                    let carry = if subtract {
+                        rs_val >= operand
+                    } else {
+                        result < rs_val
+                    };
+                    let overflow = if subtract {
+                        crate::cpu::arm::overflow_sub(rs_val, operand, result)
+                    } else {
+                        crate::cpu::arm::overflow_add(rs_val, operand, result)
+                    };
+                    cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
+                    cpu.set_reg(rd, result);
+                }
             }
             1
         }
 
-        // Format 2/3: ADD, SUB (various forms)
+        // Format 3: MOV, CMP, ADD, SUB with an 8-bit immediate
         0b0010 | 0b0011 => {
             let op_type = (instruction >> 11) & 3;
             match op_type {
