@@ -31,7 +31,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         let opcode_bits = (instruction >> 20) & 0xFF;
         match opcode_bits {
             0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu),
-            0b0000_1000..=0b0000_1011 => return multiply_long(instruction, cpu),
+            0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu),
             0b0001_0000..=0b0001_0011 => return swap(instruction, cpu, bus),
             _ => {}
         }
@@ -117,7 +117,32 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
     let rd = ((instruction >> 12) & 0xF) as usize;
     let immediate = (instruction >> 25) & 1 == 1;
 
-    let rn_val = cpu.reg(rn);
+    // TST, TEQ, CMP and CMN with S set and Rd = R15 are the pre-ARMv4 "P"
+    // forms: they discard the comparison and copy SPSR into CPSR. Exception
+    // handlers use this to return, so missing it strands the CPU in whatever
+    // privileged mode it was in - with that mode's stack pointer.
+    if s_flag && rd == 15 && (0b1000..=0b1011).contains(&opcode) {
+        let spsr = match cpu.mode() {
+            super::Mode::Fiq => cpu.spsr_fiq,
+            super::Mode::Irq => cpu.spsr_irq,
+            super::Mode::Supervisor => cpu.spsr_svc,
+            super::Mode::Abort => cpu.spsr_abt,
+            super::Mode::Undefined => cpu.spsr_und,
+            // User and System have no SPSR; the operation is unpredictable.
+            _ => cpu.cpsr,
+        };
+        cpu.set_cpsr(spsr);
+        return 1;
+    }
+
+    // A register-specified shift costs an extra cycle, so every R15 read in
+    // that form sees PC + 12 rather than the usual PC + 8.
+    let register_specified_shift = !immediate && (instruction >> 4) & 1 == 1;
+    let rn_val = if rn == 15 && register_specified_shift {
+        cpu.reg(15).wrapping_add(4)
+    } else {
+        cpu.reg(rn)
+    };
 
     // Shift operand2
     let shifted = cpu.shift_operand2(instruction, immediate);
@@ -286,6 +311,9 @@ fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
 }
 
 fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
+    // cond 00001 U A S RdHi RdLo Rs 1001 Rm
+    // U = 1 is the *signed* form (SMULL/SMLAL); U = 0 is unsigned.
+    let signed = (instruction >> 22) & 1 == 1;
     let accumulate = (instruction >> 21) & 1 == 1;
     let set_flags = (instruction >> 20) & 1 == 1;
     let rd_hi = ((instruction >> 16) & 0xF) as usize;
@@ -293,25 +321,22 @@ fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
     let rs = ((instruction >> 8) & 0xF) as usize;
     let rm = (instruction & 0xF) as usize;
 
-    let rm_val = cpu.reg(rm) as i32 as i64;
-    let rs_val = cpu.reg(rs) as i32 as i64;
-
-    let unsigned_mul = (instruction >> 22) & 1 == 1;
-
-    let result = if unsigned_mul {
-        let rm_u = cpu.reg(rm) as u64;
-        let rs_u = cpu.reg(rs) as u64;
-        rm_u.wrapping_mul(rs_u)
+    let product = if signed {
+        let rm_val = cpu.reg(rm) as i32 as i64;
+        let rs_val = cpu.reg(rs) as i32 as i64;
+        rm_val.wrapping_mul(rs_val) as u64
     } else {
-        (rm_val.wrapping_mul(rs_val)) as u64
+        (cpu.reg(rm) as u64).wrapping_mul(cpu.reg(rs) as u64)
     };
 
+    // The accumulate form adds the existing RdHi:RdLo pair to the product.
+    // It used to discard the product and write the pair straight back, which
+    // made every UMLAL and SMLAL a no-op.
     let result = if accumulate {
-        let hi = cpu.reg(rd_hi) as u64;
-        let lo = cpu.reg(rd_lo) as u64;
-        (hi << 32) | lo
+        let existing = ((cpu.reg(rd_hi) as u64) << 32) | cpu.reg(rd_lo) as u64;
+        product.wrapping_add(existing)
     } else {
-        result
+        product
     };
 
     cpu.set_reg(rd_lo, result as u32);

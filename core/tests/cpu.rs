@@ -401,3 +401,60 @@ fn arm_register_specified_lsl_at_and_past_32() {
     assert!(cpu.flag_z());
     assert!(!cpu.flag_c(), "LSL past 32 must clear the carry");
 }
+
+#[test]
+fn arm_test_opcode_with_rd_r15_restores_cpsr_from_spsr() {
+    // gba-suite arm test 234. `cmp pc, pc, r0` (0xE15FF000) has S set and
+    // Rd = R15. CMP writes no result, so the ARM7TDMI copies SPSR into CPSR
+    // instead - the way exception handlers return.
+    use geebeeayy_core::cpu::Mode;
+    let (mut cpu, mut bus) = setup_arm(&[0xE15F_F000]);
+    cpu.set_cpsr((cpu.cpsr & !0x1F) | Mode::Fiq as u32);
+    cpu.spsr_fiq = (cpu.cpsr & !0x1F) | Mode::System as u32;
+    cpu.registers[15] = BASE;
+
+    cpu.step(&mut bus);
+
+    assert_eq!(
+        cpu.mode(),
+        Mode::System,
+        "S + Rd=R15 on a test opcode must load CPSR from SPSR"
+    );
+}
+
+#[test]
+fn arm_long_multiplies() {
+    // gba-suite arm test 306 and neighbours. Bit 22 selects signed (SMULL),
+    // not unsigned, and the accumulate forms add to RdHi:RdLo.
+    // umull r2, r3, r0, r1 with both operands 0xFFFFFFFF -> 0xFFFFFFFE_00000001
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3E0_0000, // mvn r0, #0   -> 0xFFFFFFFF
+        0xE3E0_1000, // mvn r1, #0
+        0xE083_2190, // umull r2, r3, r0, r1
+    ]);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[2], 0x0000_0001, "UMULL low word");
+    assert_eq!(cpu.registers[3], 0xFFFF_FFFE, "UMULL high word");
+
+    // smull r2, r3, r0, r1 with -1 * -1 = 1
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3E0_0000, // mvn r0, #0
+        0xE3E0_1000, // mvn r1, #0
+        0xE0C3_2190, // smull r2, r3, r0, r1
+    ]);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[2], 1, "SMULL low word");
+    assert_eq!(cpu.registers[3], 0, "SMULL high word");
+
+    // umlal must add to the existing pair, not replace it.
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0002, // mov r0, #2
+        0xE3A0_1003, // mov r1, #3
+        0xE3A0_2005, // mov r2, #5
+        0xE3A0_3000, // mov r3, #0
+        0xE0A3_2190, // umlal r2, r3, r0, r1
+    ]);
+    steps(&mut cpu, &mut bus, 5);
+    assert_eq!(cpu.registers[2], 11, "UMLAL must accumulate: 2*3 + 5");
+    assert_eq!(cpu.registers[3], 0);
+}

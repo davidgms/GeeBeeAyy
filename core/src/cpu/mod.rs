@@ -351,7 +351,13 @@ impl Cpu {
             let shift_imm = (instruction >> 7) & 0x1F;
             let shift_by_reg = (instruction >> 4) & 1 == 1;
 
-            let rm_val = self.registers[rm];
+            // Same PC + 12 rule as above: with a register-specified shift the
+            // instruction takes an extra cycle and R15 reads four bytes further on.
+            let rm_val = if shift_by_reg && rm == 15 {
+                self.registers[15].wrapping_add(4)
+            } else {
+                self.registers[rm]
+            };
 
             if shift_by_reg {
                 // Register shift: shift amount comes from bits [11:8] (Rs)
