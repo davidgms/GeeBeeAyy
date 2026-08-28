@@ -192,3 +192,31 @@ fn a_rejected_save_state_leaves_the_machine_untouched() {
         "a rejected state must roll back, not half-apply"
     );
 }
+
+#[test]
+fn flash_reports_its_chip_id() {
+    // GBATEK, GBA Cart Backup Flash ROM: AA,55,90 enters ID mode, then
+    // man = [0E000000], dev = [0E000001], with the published ID written
+    // MSB = device, LSB = manufacturer. AA,55,F0 leaves ID mode.
+    //
+    // A game that probes this and gets flash contents back concludes the cart
+    // has no save chip and refuses to save at all.
+    for (marker, id) in [("FLASH_V123", 0x1B32u16), ("FLASH1M_V102", 0x1362u16)] {
+        let mut gba = gba_with(marker);
+        let cmd = |g: &mut Gba, v: u8| g.bus.write8(SAVE_BASE + 0x5555, v);
+
+        // Data reads before entering ID mode are erased flash.
+        assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF);
+
+        cmd(&mut gba, 0xAA);
+        cmd(&mut gba, 0x55);
+        cmd(&mut gba, 0x90);
+        assert_eq!(gba.bus.read8(SAVE_BASE), (id & 0xFF) as u8, "manufacturer byte");
+        assert_eq!(gba.bus.read8(SAVE_BASE + 1), (id >> 8) as u8, "device byte");
+
+        cmd(&mut gba, 0xAA);
+        cmd(&mut gba, 0x55);
+        cmd(&mut gba, 0xF0);
+        assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF, "ID mode was never terminated");
+    }
+}

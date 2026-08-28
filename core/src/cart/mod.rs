@@ -34,6 +34,9 @@ pub struct Cartridge {
     /// Set whenever a byte of save memory actually changes, so a frontend can
     /// flush without diffing the whole buffer every frame.
     save_dirty: bool,
+    /// Flash chip-ID mode: reads return the manufacturer and device bytes
+    /// instead of data until the mode is terminated.
+    flash_id_mode: bool,
 }
 
 impl Cartridge {
@@ -48,6 +51,7 @@ impl Cartridge {
             flash_state: 0,
             flash_bank: 0,
             save_dirty: false,
+            flash_id_mode: false,
         }
     }
 
@@ -97,6 +101,7 @@ impl Cartridge {
             flash_state: 0,
             flash_bank: 0,
             save_dirty: false,
+            flash_id_mode: false,
         })
     }
 
@@ -143,6 +148,23 @@ impl Cartridge {
                 if addr < self.sram.len() { self.sram[addr] } else { 0 }
             }
             SaveType::Flash64 | SaveType::Flash128 => {
+                // In ID mode the chip answers with its identity rather than
+                // data. Games probe this before writing, and one that gets
+                // flash contents back concludes there is no chip and refuses
+                // to save. GBATEK: man=[E000000h], dev=[E000001h], with the ID
+                // written MSB=device, LSB=manufacturer.
+                if self.flash_id_mode {
+                    let id: u16 = match self.save_type {
+                        // Panasonic 64K, the common 64K part.
+                        SaveType::Flash64 => 0x1B32,
+                        // Sanyo 128K.
+                        _ => 0x1362,
+                    };
+                    return match address & 1 {
+                        0 => (id & 0xFF) as u8,
+                        _ => (id >> 8) as u8,
+                    };
+                }
                 let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF))
                     & (self.flash.len() - 1);
                 if addr < self.flash.len() { self.flash[addr] } else { 0xFF }
@@ -187,15 +209,19 @@ impl Cartridge {
                     }
                     2 => {
                         match value {
-                            0x90 => self.flash_state = 3, // Chip ID mode
+                            0x90 => { // Enter chip ID mode
+                                self.flash_id_mode = true;
+                                self.flash_state = 0;
+                            }
+                            0xF0 => { // Terminate chip ID mode
+                                self.flash_id_mode = false;
+                                self.flash_state = 0;
+                            }
                             0xA0 => self.flash_state = 4, // Byte program
                             0xB0 => self.flash_state = 5, // Bank select
                             0x80 => self.flash_state = 6, // Erase
                             _ => self.flash_state = 0,
                         }
-                    }
-                    3 => { // Chip ID mode
-                        self.flash_state = 0;
                     }
                     4 => { // Byte program
                         let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF)) & (self.flash.len() - 1);
