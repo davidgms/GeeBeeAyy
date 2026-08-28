@@ -274,3 +274,24 @@ Same failure shape as the "committed .so" and "cart saves are emulated"
 claims: **a number repeated from prose rather than read from the file that
 defines it.** For Android facts, `build.gradle.kts` is the source of truth,
 not the README.
+
+### 2026-08-28 - Mode 0 never read tile data: a VRAM offset used as an address
+
+`Ppu::get_bg_pixel` returned `char_base = ((cnt >> 2) & 3) * 0x4000` - a VRAM
+*offset* - and the caller passed it straight to `bus.read8()`. Every tile-data
+read therefore landed around `0x4000` (unmapped) instead of `0x06004000`, so
+every pixel decoded to colour 0 and was skipped. The screen-entry read in the
+same function *did* add `0x0600_0000`, which is what made it hard to spot.
+
+It was invisible because `render_scanline` pre-filled each line with **white**
+rather than the backdrop, so a background that drew nothing looked like a
+deliberately bright screen. Two bugs hiding each other.
+
+Also fixed while there: screen-entry bits 10/11 (horizontal and vertical tile
+flip) were ignored, and bits 12-15 (the 4bpp palette bank) were computed as a
+`_palette_base` that was never used.
+
+**Application**: in `ppu/`, be explicit about whether a value is a VRAM offset
+or a bus address - the two differ by `0x06000000` and only one of them faults
+visibly. And never clear a scanline to a colour that could be mistaken for
+real output; clear to the backdrop or to something obviously wrong.

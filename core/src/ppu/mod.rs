@@ -415,12 +415,21 @@ impl Ppu {
             return;
         }
 
-        // Clear scanline to white
+        // Clear the scanline to the backdrop, which is palette entry 0 - not
+        // white. Clearing to white made every unrendered pixel look like a
+        // deliberately bright background and hid the fact that mode 0 was
+        // drawing nothing at all.
+        let backdrop = bus.read16(0x0500_0000);
+        let (br, bg_, bb) = (
+            ((backdrop & 0x1F) as u8) << 3,
+            (((backdrop >> 5) & 0x1F) as u8) << 3,
+            (((backdrop >> 10) & 0x1F) as u8) << 3,
+        );
         for x in 0..SCREEN_WIDTH {
             let idx = (y * SCREEN_WIDTH + x) * 3;
-            self.frame_buffer[idx] = 0xFF;
-            self.frame_buffer[idx + 1] = 0xFF;
-            self.frame_buffer[idx + 2] = 0xFF;
+            self.frame_buffer[idx] = br;
+            self.frame_buffer[idx + 1] = bg_;
+            self.frame_buffer[idx + 2] = bb;
         }
 
         match self.bg_mode {
@@ -490,7 +499,7 @@ impl Ppu {
         for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
                 let (mx, my) = self.mosaic_bg(x, y);
-                let (tile_local_x, tile_local_y, screen_entry, char_base, _palette_base, is_8bpp) =
+                let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
 
                 let color = if !is_8bpp {
@@ -499,7 +508,8 @@ impl Ppu {
                     let byte = bus.read8((tile_data_addr + byte_offset) as u32);
                     let color_index = if tile_local_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F };
                     if color_index == 0 { continue; }
-                    bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
+                    let entry = palette_bank * 16 + color_index as usize;
+                    bus.read16((0x0500_0000 + entry * 2) as u32)
                 } else {
                     let tile_data_addr = char_base + screen_entry as usize * 64;
                     let byte_offset = tile_local_y * 8 + tile_local_x;
@@ -538,7 +548,7 @@ impl Ppu {
         for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
                 let (mx, my) = self.mosaic_bg(x, y);
-                let (tile_local_x, tile_local_y, screen_entry, char_base, _palette_base, is_8bpp) =
+                let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
 
                 let color = if !is_8bpp {
@@ -547,7 +557,8 @@ impl Ppu {
                     let byte = bus.read8((tile_data_addr + byte_offset) as u32);
                     let color_index = if tile_local_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F };
                     if color_index == 0 { continue; }
-                    bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
+                    let entry = palette_bank * 16 + color_index as usize;
+                    bus.read16((0x0500_0000 + entry * 2) as u32)
                 } else {
                     let tile_data_addr = char_base + screen_entry as usize * 64;
                     let byte_offset = tile_local_y * 8 + tile_local_x;
@@ -874,9 +885,23 @@ impl Ppu {
         let screen_entry_addr = 0x0600_0000 + screen_base + screen_entry * 2;
         let screen_entry_value = bus.read16(screen_entry_addr as u32);
         let tile_number = screen_entry_value & 0x03FF;
-        let char_base = ((cnt >> 2) & 3) as usize * 0x4000;
+        // Absolute address, not a VRAM offset: the caller reads through the bus.
+        let char_base = 0x0600_0000 + ((cnt >> 2) & 3) as usize * 0x4000;
 
-        (scrolled_x % 8, scrolled_y % 8, tile_number, char_base, 0, is_8bpp)
+        // Screen entry bit 10 flips horizontally, bit 11 vertically.
+        let mut local_x = scrolled_x % 8;
+        let mut local_y = scrolled_y % 8;
+        if screen_entry_value & 0x0400 != 0 {
+            local_x = 7 - local_x;
+        }
+        if screen_entry_value & 0x0800 != 0 {
+            local_y = 7 - local_y;
+        }
+
+        // Bits 12-15 select one of sixteen 16-colour palettes, 4bpp only.
+        let palette_bank = ((screen_entry_value >> 12) & 0xF) as usize;
+
+        (local_x, local_y, tile_number, char_base, palette_bank, is_8bpp)
     }
 
     // ========================================================================

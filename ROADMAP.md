@@ -17,7 +17,7 @@ as unverified.
 | Module | Lines | Status |
 |--------|-------|--------|
 | `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
-| `ppu/` | ~1030 | Modes 0-5, sprites, affine, windows, mosaic, blending. Renders a mode 3 pixel end to end. Otherwise unverified. |
+| `ppu/` | ~1040 | Mode 0 tiled output verified against three test ROMs. Modes 1, 2, 4, 5, sprites, windows, mosaic and blending remain unverified. |
 | `apu/` | ~560 | 4 PSG channels + FIFO A/B. Mono f32 at 17403 Hz. Reaches an Android `AudioTrack`. Never verified against a game. |
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
@@ -172,9 +172,16 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
 - [ ] **Controller support** - `kotlin-specialist`. Bluetooth and USB HID via
       Android's gamepad abstraction. Test on Xbox, PS4/PS5, Switch Pro and
       8BitDo; vendor quirks are the usual failure.
-- [ ] **PPU verification** - `rust-engineer` with `search-specialist`. Palette
-      handling is the one PPU item never checked, and mode 0 tiled output
-      depends on it. Verify against a test ROM per mode.
+- [x] **PPU verification, mode 0** - `core/tests/ppu.rs` drives jsmolka's
+      `stripes`, `shades` and `hello` ROMs and asserts the rendered colours are
+      the ones the ROM wrote. It found that **`char_base` was a VRAM offset used
+      as an absolute address**, so mode 0 never read tile data at all, plus
+      missing tile flip bits, a missing 4bpp palette bank, and a backdrop hard
+      coded to white instead of palette entry 0.
+- [ ] **PPU verification, the other modes** - `rust-engineer`. Modes 1, 2, 4
+      and 5, sprites, windows, mosaic and blending still have no test-ROM
+      coverage. `get_bg_pixel` is shared with modes 1 and 2, so those likely
+      improved with the `char_base` fix, but nothing proves it.
 - [ ] **Accessibility pass** - `accessibility-tester`. Touch target sizes at
       every overlay scale, and contrast in the pixel bee theme.
 
