@@ -458,3 +458,53 @@ fn arm_long_multiplies() {
     assert_eq!(cpu.registers[2], 11, "UMLAL must accumulate: 2*3 + 5");
     assert_eq!(cpu.registers[3], 0);
 }
+
+#[test]
+fn arm_pre_and_post_indexed_transfers() {
+    // gba-suite arm test 353. Post-index transfers at the base then updates it;
+    // pre-index with writeback transfers at base+offset and keeps it.
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0020, // mov r0, #32
+        0xE3A0_1001, // mov r1, #1
+        0xE3A0_2402, // mov r2, #0x02000000
+        0xE482_0004, // str r0, [r2], #4          -> stores at 0x02000000, r2 += 4
+        0xE732_3101, // ldr r3, [r2, -r1, lsl #2]! -> loads 0x02000000, r2 -= 4
+    ]);
+    steps(&mut cpu, &mut bus, 5);
+    assert_eq!(bus.read32(0x0200_0000), 32, "post-indexed store used base+offset");
+    assert_eq!(cpu.registers[3], 32, "pre-indexed load read the wrong address");
+    assert_eq!(cpu.registers[2], 0x0200_0000, "writeback did not land");
+}
+
+#[test]
+fn arm_misaligned_word_load_rotates() {
+    // gba-suite arm test 355. The bus fetches the aligned word; the CPU rotates
+    // it right by the byte offset. Reading the unaligned bytes gives a
+    // different, wrong answer.
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0020, // mov r0, #32
+        0xE3A0_2402, // mov r2, #0x02000000
+        0xE582_0000, // str r0, [r2]
+        0xE592_1003, // ldr r1, [r2, #3]
+    ]);
+    steps(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers[1], 32u32.rotate_right(24));
+}
+
+#[test]
+fn arm_data_processing_without_s_preserves_flags() {
+    // gba-suite arm test 363 leans on this: a `mov`/`orr`/`bic`/`mvn` between a
+    // comparison and its branch must not disturb the condition flags.
+    let (mut cpu, mut bus) = setup_arm(&[
+        0xE3A0_0000, // mov r0, #0
+        0xE350_0000, // cmp r0, #0        -> Z set
+        0xE3A0_10FF, // mov r1, #0xFF
+        0xE381_20F0, // orr r2, r1, #0xF0
+        0xE3C2_3001, // bic r3, r2, #1
+        0xE3E0_4000, // mvn r4, #0
+        0x03A0_5001, // moveq r5, #1      -> must still execute
+    ]);
+    steps(&mut cpu, &mut bus, 7);
+    assert!(cpu.flag_z(), "a non-S data processing op cleared Z");
+    assert_eq!(cpu.registers[5], 1, "the EQ condition was destroyed");
+}

@@ -155,6 +155,14 @@ impl MemoryBus {
         }
     }
 
+    /// Word load with ARM's misaligned-access semantics: the bus always
+    /// fetches the aligned word and the CPU rotates it right by the byte
+    /// offset. Reading the unaligned bytes directly and then rotating gives a
+    /// different, wrong answer.
+    pub fn read32_rotated(&self, address: u32) -> u32 {
+        self.read32(address & !3).rotate_right((address & 3) * 8)
+    }
+
     pub fn read16(&self, address: u32) -> u16 {
         let lo = self.read8(address) as u16;
         let hi = self.read8(address + 1) as u16;

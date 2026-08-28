@@ -217,25 +217,13 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
             );
             return 1;
         }
-        0b1100 => {
-            let result = rn_val | op2;
-            cpu.set_flag_nz_data(result, shifted.carry_out);
-            (result, true, shifted.carry_out, cpu.flag_v())
-        }
+        0b1100 => (rn_val | op2, true, shifted.carry_out, cpu.flag_v()),
         0b1101 => {
             let result = op2;
             (result, true, shifted.carry_out, cpu.flag_v())
         }
-        0b1110 => {
-            let result = rn_val & !op2;
-            cpu.set_flag_nz_data(result, shifted.carry_out);
-            (result, true, shifted.carry_out, cpu.flag_v())
-        }
-        0b1111 => {
-            let result = !op2;
-            cpu.set_flag_nz_data(result, shifted.carry_out);
-            (result, true, shifted.carry_out, cpu.flag_v())
-        }
+        0b1110 => (rn_val & !op2, true, shifted.carry_out, cpu.flag_v()),
+        0b1111 => (!op2, true, shifted.carry_out, cpu.flag_v()),
         _ => unreachable!(),
     };
 
@@ -370,7 +358,8 @@ fn swap(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         bus.write8(addr, rm_val as u8);
         cpu.set_reg(rd, mem_val as u32);
     } else {
-        let mem_val = bus.read32(addr & !0x3);
+        // SWP rotates the loaded word the same way LDR does.
+        let mem_val = bus.read32_rotated(addr);
         bus.write32(addr & !0x3, rm_val);
         cpu.set_reg(rd, mem_val);
     }
@@ -496,21 +485,24 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         instruction & 0xFFF
     };
 
-    let addr = if up_down {
+    let offset_addr = if up_down {
         base.wrapping_add(offset)
     } else {
         base.wrapping_sub(offset)
     };
+
+    // Bit 24 is P: 1 = pre-indexed (transfer at base +/- offset), 0 = post-indexed
+    // (transfer at base, then update it). This was missing entirely, so every
+    // post-indexed `ldr rd, [rn], #off` read from the wrong address.
+    let pre_index = (instruction >> 24) & 1 == 1;
+    let addr = if pre_index { offset_addr } else { base };
 
     if load {
         if byte_transfer {
             let val = bus.read8(addr);
             cpu.set_reg(rd, val as u32);
         } else {
-            let val = bus.read32(addr);
-            // Handle unaligned LDR
-            let rotate_amount = (addr & 3) * 8;
-            let val = val.rotate_right(rotate_amount);
+            let val = bus.read32_rotated(addr);
             cpu.set_reg(rd, val);
         }
     } else {
@@ -526,8 +518,11 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         }
     }
 
-    if write_back {
-        cpu.set_reg(rn, addr);
+    // A post-indexed transfer always writes the new base back; a pre-indexed
+    // one only when W is set. Never clobber Rn when it was also the load
+    // destination - the loaded value wins.
+    if (!pre_index || write_back) && !(load && rd == rn) {
+        cpu.set_reg(rn, offset_addr);
     }
 
     if load { 3 } else { 2 }

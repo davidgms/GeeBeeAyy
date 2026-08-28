@@ -217,8 +217,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
             match (load, byte) {
                 (true, false) => {
-                    let val = bus.read32(addr);
-                    cpu.set_reg(rd, val.rotate_right((addr & 3) * 8));
+                    let val = bus.read32_rotated(addr);
+                    cpu.set_reg(rd, val);
                     3
                 }
                 (true, true) => {
@@ -264,7 +264,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let addr = sp.wrapping_add(offset);
 
             if load {
-                let val = bus.read32(addr);
+                // SP-relative loads rotate on a misaligned SP, same as any LDR.
+                let val = bus.read32_rotated(addr);
                 cpu.set_reg(rd, val);
                 3
             } else {
@@ -695,9 +696,7 @@ fn format7_ldr(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) {
     let rb = ((instruction >> 3) & 7) as usize;
     let rd = (instruction & 7) as usize;
     let addr = cpu.reg(rb).wrapping_add(cpu.reg(offset));
-    let val = bus.read32(addr);
-    let rotate = (addr & 3) * 8;
-    let val = val.rotate_right(rotate);
+    let val = bus.read32_rotated(addr);
     cpu.set_reg(rd, val);
 }
 
