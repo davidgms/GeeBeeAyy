@@ -32,7 +32,10 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         match opcode_bits {
             0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu),
             0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu),
-            0b0001_0000..=0b0001_0011 => return swap(instruction, cpu, bus),
+            // SWP is 00010 B 00, so bits[27:20] are 0x10 for the word form and
+                // 0x14 for the byte form. The old range stopped at 0x13, so
+                // every SWPB fell through and was decoded as an MSR.
+                0b0001_0000 | 0b0001_0100 => return swap(instruction, cpu, bus),
             _ => {}
         }
     }
@@ -558,20 +561,28 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
     let addr = if pre_index { offset_addr } else { base };
 
     if load {
-        // Unaligned halfword accesses are forced to alignment rather than
-        // rotated; ARM7TDMI also degrades a misaligned LDRSH to LDRSB.
         let val = match sh {
-            0b01 => bus.read16(addr & !1) as u32,
+            // LDRH from an odd address reads the aligned halfword and rotates
+            // the result right by 8, the same way a misaligned LDR rotates.
+            0b01 => (bus.read16(addr & !1) as u32).rotate_right((addr & 1) * 8),
             0b10 => bus.read8(addr) as i8 as i32 as u32,
-            _ => bus.read16(addr & !1) as i16 as i32 as u32,
+            // LDRSH from an odd address degrades to LDRSB on that byte.
+            _ => {
+                if addr & 1 != 0 {
+                    bus.read8(addr) as i8 as i32 as u32
+                } else {
+                    bus.read16(addr) as i16 as i32 as u32
+                }
+            }
         };
         cpu.set_reg(rd, val);
     } else {
         bus.write16(addr & !1, cpu.reg(rd) as u16);
     }
 
-    // Post-indexed transfers always write back.
-    if !pre_index || write_back {
+    // Post-indexed transfers always write back, but never clobber Rn when it
+    // was also the load destination - the loaded value wins.
+    if (!pre_index || write_back) && !(load && rd == rn) {
         cpu.set_reg(rn, offset_addr);
     }
 
@@ -650,7 +661,10 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         }
     }
 
-    if write_back {
+    // Same rule for LDM: if the base register was in the transfer list, the
+    // value loaded into it wins over the writeback.
+    let base_in_list = reg_list & (1 << rn as u32) != 0;
+    if write_back && !(load && base_in_list) {
         let new_base = if up_down {
             base.wrapping_add(reg_count * 4)
         } else {
