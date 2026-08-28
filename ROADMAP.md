@@ -85,9 +85,17 @@ the bugs that were found; they say nothing about the ones that were not.
 
 ### 0.5 Rebuild the native library - `mobile-app-developer`
 
-- [ ] Rebuild `android/app/src/main/jniLibs/*/libgeebeeayy_core.so`. Both
-      committed copies predate the decoder fixes, so a device test against
-      them tests the old bugs.
+- [x] `android/app/src/main/jniLibs/*/libgeebeeayy_core.so` are **not
+      committed at all** - `.gitignore`'s `*.so` rule matches them, and
+      `git ls-files` confirms neither copy is tracked. They only exist on
+      whichever machine last ran a local build, so a fresh clone has no
+      native library and a device build against it would
+      `UnsatisfiedLinkError` on the first JNI call, not run stale code.
+      `.github/workflows/ci.yml`'s `android` job now builds both ABIs with
+      `cargo-ndk` on every push and uploads them as workflow artifacts,
+      which is a better answer than committing binaries by hand. Local
+      device testing still needs `./build-mobile.sh android-all` or a
+      downloaded CI artifact copied into place first.
 - [ ] Decide what `android/app/src/main/cpp/` is for. Nothing references it,
       `build.gradle.kts` declares no `externalNativeBuild`, and its
       CMakeLists points at `libgeebeeayyayy_core.so` - a filename that does

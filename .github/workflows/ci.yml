@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Superseding pushes on the same branch cancel the in-flight run instead of
+# queuing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Kept in one place so the core job, the Android job and the developer
+  # tooling (Dockerfile, setup-android-wsl.sh) agree on the same revision.
+  ANDROID_NDK_VERSION: "27.0.12077973"
+
+jobs:
+  # Proves core/ still behaves: the accuracy gate (cargo test), lints, and
+  # (informationally) formatting.
+  core:
+    name: Core - test, clippy, fmt
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      # ubuntu-latest ships a stable toolchain with these already, but that
+      # is an assumption about the runner image, not a guarantee - this is
+      # idempotent and cheap either way.
+      - name: Ensure clippy and rustfmt components are present
+        run: rustup component add clippy rustfmt
+
+      - name: cargo test (the accuracy gate)
+        run: cargo test
+
+      - name: cargo clippy --all-targets
+        run: cargo clippy --all-targets
+
+      # cargo fmt --check fails repo-wide today (e.g. core/src/apu/mod.rs has
+      # never been run through rustfmt). Reformatting the codebase is not
+      # part of setting up CI, so this step reports drift without blocking
+      # the job. Flip continue-on-error off once the repo has been formatted
+      # once, in a commit that does nothing else.
+      - name: cargo fmt --check (informational, not blocking - see comment above)
+        run: cargo fmt --check
+        continue-on-error: true
+
+  # Proves the Rust core still cross-compiles for Android and that the
+  # Kotlin side still builds against it. This is the only thing that
+  # currently exercises the Android build at all - there is no local SDK/NDK
+  # available to the developer on this machine.
+  android:
+    name: Android - build native library and debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Add Rust Android targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set up Android SDK (sdkmanager, licenses, ANDROID_HOME)
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK ${{ env.ANDROID_NDK_VERSION }}
+        run: |
+          sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      # core/.cargo/config.toml and the repo-root .cargo/config.toml hardcode
+      # an absolute linker path from one developer's WSL machine
+      # (/home/david/android-sdk/ndk/...), which does not exist on this
+      # runner. cargo-ndk sets its own CARGO_TARGET_*_LINKER env vars, which
+      # take precedence over config.toml, so this step is likely redundant -
+      # but it removes the ambiguity outright instead of relying on that
+      # precedence rule, which could not be verified in this sandbox. This
+      # only touches the runner's checkout; nothing is committed.
+      - name: Remove machine-specific cargo linker config
+        run: rm -f core/.cargo/config.toml .cargo/config.toml
+
+      # -o writes straight into the Gradle jniLibs layout
+      # (<abi>/libgeebeeayy_core.so), overwriting whatever stale copy was
+      # already there. --lib skips the desktop CLI binary target, which
+      # nothing here needs.
+      - name: Build libgeebeeayy_core.so for arm64-v8a and armeabi-v7a
+        working-directory: core
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release --lib
+
+      - name: Upload native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgeebeeayy_core-so
+          path: android/app/src/main/jniLibs/*/libgeebeeayy_core.so
+          if-no-files-found: error
+
+      # There is no Gradle wrapper committed in android/ (no gradlew, no
+      # gradle/wrapper/gradle-wrapper.jar) - the Kotlin side has never been
+      # built by anyone, on this machine or in CI. gradle/actions/setup-gradle
+      # provisions a pinned Gradle distribution directly, so the build works
+      # without adding wrapper files to the repo. AGP 8.5.1 (see
+      # android/build.gradle.kts) requires Gradle 8.7 or newer.
+      - name: Set up Gradle 8.7 (no wrapper is committed - see comment above)
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: geebeeayy-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  # Installs the APK built above on a real emulator and confirms the app
+  # launches and stays alive. This is the only check in this workflow that
+  # runs anything on an actual (virtual) device.
+  emulator-smoke-test:
+    name: Emulator smoke test (arm64-v8a)
+    needs: android
+    # abiFilters in android/app/build.gradle.kts are arm64-v8a and
+    # armeabi-v7a only - no x86_64 slice is ever built, so an x86_64 AVD
+    # image would install the APK and immediately UnsatisfiedLinkError on
+    # the first JNI call. The alternative to this job (an x86_64 image on a
+    # Linux runner) can never pass.
+    #
+    # arm64-v8a system images need a real ARM host for hardware-accelerated
+    # virtualization; x86_64 GitHub-hosted Linux runners can only emulate
+    # arm64-v8a in pure software, which is far too slow to boot inside a CI
+    # timeout. macos-14 runners are Apple Silicon (arm64 host), so the
+    # arm64-v8a emulator gets hardware acceleration via Apple's Hypervisor
+    # framework instead. Trade-off: macOS runner minutes are billed at a
+    # higher multiplier than Linux ones, and this job is unverified - it has
+    # never been run, since there is no local device or SDK to test it with.
+    runs-on: macos-14
+    steps:
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: geebeeayy-debug-apk
+          path: apk
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install app and confirm it launches without crashing
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: arm64-v8a
+          profile: pixel_5
+          disable-animations: true
+          script: |
+            set -e
+            apk_path=$(find apk -name "*.apk" | head -1)
+            echo "Installing ${apk_path}"
+            adb install -r "${apk_path}"
+            adb shell monkey -p com.geebeeayy.app -c android.intent.category.LAUNCHER 1
+            sleep 5
+            if ! adb shell pidof com.geebeeayy.app; then
+              echo "com.geebeeayy.app is not running after launch - crashed or failed to start"
+              adb logcat -d | tail -300
+              exit 1
+            fi
+            echo "com.geebeeayy.app launched and is still running."

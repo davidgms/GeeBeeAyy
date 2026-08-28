@@ -117,6 +117,22 @@ JS-rendered page that cannot be fetched as static text. GBATEK's *ARM CPU
 Exceptions* page reproduces the same exception-entry table and is fetchable,
 so it is the practical primary source even though the TRM outranks it.
 
+### 2026-08-28 - `libgeebeeayy_core.so` was never actually committed
+
+CLAUDE.md's own architecture section and `ROADMAP.md` item 0.5 both asserted
+the jniLibs `.so` files were "committed" and merely stale. `git ls-files
+android/app/src/main/jniLibs` returns nothing: `.gitignore`'s `*.so` rule
+(under the "Build artifacts" section) matches them, and they were never
+force-added. They exist only as local build output on whatever machine last
+ran `./build-mobile.sh` or `./build.sh android`. A fresh clone has empty (in
+fact absent - git does not track empty directories) `arm64-v8a`/`armeabi-v7a`
+folders, so a Gradle build from a clean checkout packages an APK with no
+native library at all, and it `UnsatisfiedLinkError`s on the first JNI call -
+not "runs the old bugs" as the stale wording implied. `.github/workflows/ci.yml`
+(added 2026-08-28) now builds both ABIs with `cargo-ndk` on every push and
+uploads them as artifacts; nothing needs to change about `.gitignore`, since
+there was never anything to remove from git in the first place.
+
 ### 2026-08-27 - An agent whose `tools:` list omits Edit cannot satisfy the Memory Protocol
 
 `search-specialist` and `accessibility-tester` shipped with read-only tool

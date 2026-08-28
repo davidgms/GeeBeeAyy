@@ -116,9 +116,13 @@ Whole project, from the root:
 ./build-mobile.sh          # Android and iOS target builds
 ```
 
-**`android/app/src/main/jniLibs/*/libgeebeeayy_core.so` is committed, and it
-goes stale the moment the core changes.** A device test against a stale `.so`
-tests the old bug. Rebuild it before testing on hardware.
+**`android/app/src/main/jniLibs/*/libgeebeeayy_core.so` is *not* committed -
+`.gitignore`'s `*.so` rule matches it, `git ls-files` confirms neither ABI is
+tracked, and a fresh clone has no native library at all.** It only exists as
+whatever a local build last produced. `.github/workflows/ci.yml`'s `android`
+job rebuilds both ABIs with `cargo-ndk` on every push and uploads them as
+workflow artifacts; grab the artifact, or run `./build-mobile.sh android-all`,
+before testing on hardware.
 
 ## Agents
 
