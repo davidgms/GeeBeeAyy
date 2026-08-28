@@ -381,3 +381,23 @@ fn arm_msr_still_decodes_after_the_halfword_arm() {
     cpu.step(&mut bus);
     assert!(cpu.flag_n() && cpu.flag_z() && cpu.flag_c() && cpu.flag_v());
 }
+
+#[test]
+fn arm_register_specified_lsl_at_and_past_32() {
+    // gba-suite arm tests 152/153. Only the low byte of Rs is used.
+    // LSL #32 -> result 0, carry = bit 0 of Rm. LSL #33+ -> result 0, carry 0.
+    // movs r0, r0, lsl r1  ==  lsls r0, r1
+    let by_32 = &[0xE3A0_0001, 0xE3A0_1020, 0xE1B0_0110]; // r0=1, r1=32
+    let (mut cpu, mut bus) = setup_arm(by_32);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[0], 0, "LSL by 32 must clear the register");
+    assert!(cpu.flag_z());
+    assert!(cpu.flag_c(), "LSL by 32 carries out bit 0 of Rm");
+
+    let by_33 = &[0xE3A0_0001, 0xE3A0_1021, 0xE1B0_0110]; // r0=1, r1=33
+    let (mut cpu, mut bus) = setup_arm(by_33);
+    steps(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers[0], 0, "LSL past 32 must clear the register");
+    assert!(cpu.flag_z());
+    assert!(!cpu.flag_c(), "LSL past 32 must clear the carry");
+}

@@ -62,13 +62,21 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
     }
 
-    // Data Processing / Register Shift — bits [27:26]=00, bit [4]=0
-    if (instruction >> 26) & 0x3 == 0b00 && (instruction >> 4) & 1 == 0 {
-        return data_processing(instruction, cpu);
-    }
-
-    // Data Processing / Immediate Shift — bits [27:26]=00, bit [25]=1
-    if (instruction >> 26) & 0x3 == 0b00 && (instruction >> 25) & 1 == 1 {
+    // Data Processing — bits [27:26]=00, and not one of the multiply, swap or
+    // halfword encodings, which are the only [27:26]=00 forms with both bit 7
+    // and bit 4 set. Those were all matched above.
+    //
+    // The register-specified shift form (`movs r0, r0, lsl r1`) has bit 4 set
+    // and bit 7 clear. An earlier `bit [4] == 0` guard here excluded it, and an
+    // immediate-shift-only fallback did not catch it either, so every
+    // `<op> rd, rn, rm, lsl rs` in the instruction set silently did nothing.
+    // The bit 7 / bit 4 exclusion only applies to the register-operand form.
+    // With bit 25 set the operand is an immediate and bits [7:4] are part of
+    // its value, so `mov r1, #0xFF00` (0xE3A01CFF) must not be filtered out.
+    if (instruction >> 26) & 0x3 == 0b00
+        && ((instruction >> 25) & 1 == 1
+            || !((instruction >> 4) & 1 == 1 && (instruction >> 7) & 1 == 1))
+    {
         return data_processing(instruction, cpu);
     }
 
