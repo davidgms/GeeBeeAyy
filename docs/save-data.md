@@ -161,10 +161,17 @@ The version check rejects older states outright rather than misreading them.
   so a game probing the manufacturer/device ID gets flash contents instead.
   Some games check this before writing and will refuse to save. The gba-suite
   save ROMs pass without it, so it needs its own test.
-- **EEPROM is not EEPROM.** Ours is byte-addressed RAM. Real EEPROM is a serial
-  device: the game DMAs a bit stream to `0x0D000000` and DMAs bits back. That
-  is a different device, not a simplification, and the region is currently
-  claimed by ROM reads. Needs a GBATEK read before anyone writes code.
+- ~~EEPROM is not EEPROM.~~ **Implemented 2026-08-28.** It is now the real
+  serial protocol at `0x0D000000`, driven bit by bit through DMA's halfword
+  path: `11` + 6 or 14 address bits + `0` to set a read address, 68 bits back
+  of which the first four are discarded, and `10` + address + 64 data bits +
+  `0` to write. Two traps worth knowing if you touch it: **both** commands end
+  with a stop bit that must be consumed, or it lands in the next command's
+  opcode and desynchronises the stream - which is exactly how the first version
+  failed. Address width comes from the detected size, and remains guessed at
+  ROM load rather than inferred from the game's first access, so a cart whose
+  real EEPROM size differs from our guess gets a file other emulators will not
+  read.
 - **APU state is still absent from the save state.** Everything else v2 was
   missing is now in v3 (see below), but the audio channels are not, so sound
   restarts from silence after a load rather than continuing mid-note.

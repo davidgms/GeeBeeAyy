@@ -1,5 +1,7 @@
 package com.geebeeayy.app.ui.screens
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
@@ -22,9 +24,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
+import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.ui.theme.*
 import java.io.File
+
+private val ScaleMode.label: String
+    get() = when (this) {
+        ScaleMode.FIT -> "Fit"
+        ScaleMode.INTEGER -> "Integer (Pixel Perfect)"
+        ScaleMode.STRETCH -> "Stretch"
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +46,11 @@ fun SettingsScreen(
     val context = LocalContext.current
     val folderManager = remember { RomFolderManager(context) }
     var folders by remember { mutableStateOf(folderManager.getFolderPaths()) }
+
+    val displaySettings = remember { DisplaySettings(context) }
+    var scaleMode by remember { mutableStateOf(displaySettings.getScaleMode()) }
+    var showScaleMenu by remember { mutableStateOf(false) }
+    var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -165,24 +181,49 @@ fun SettingsScreen(
             }
 
             SettingsSection(title = "Display") {
-                SettingsItem(
-                    icon = Icons.Default.Star,
-                    title = "Screen Scale",
-                    subtitle = "2x (Native)",
-                    onClick = { }
-                )
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Star,
+                        title = "Screen Scale",
+                        subtitle = scaleMode.label,
+                        onClick = { showScaleMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showScaleMenu,
+                        onDismissRequest = { showScaleMenu = false },
+                    ) {
+                        ScaleMode.entries.forEach { mode ->
+                            DropdownMenuItem(
+                                text = { Text(mode.label) },
+                                onClick = {
+                                    scaleMode = mode
+                                    displaySettings.setScaleMode(mode)
+                                    showScaleMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
                 SettingsItem(
                     icon = Icons.Default.Tune,
                     title = "Screen Filter",
-                    subtitle = "Pixel Perfect",
+                    subtitle = "Nearest Neighbor (pixel perfect)",
                     onClick = { }
                 )
                 SettingsSwitch(
                     icon = Icons.Default.StayCurrentPortrait,
                     title = "Force Portrait",
                     subtitle = "Lock orientation",
-                    checked = true,
-                    onCheckedChange = { }
+                    checked = forcePortrait,
+                    onCheckedChange = { checked ->
+                        forcePortrait = checked
+                        displaySettings.setForcePortrait(checked)
+                        (context as? Activity)?.requestedOrientation = if (checked) {
+                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        } else {
+                            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                        }
+                    }
                 )
             }
 

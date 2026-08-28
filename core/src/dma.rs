@@ -142,7 +142,9 @@ impl Dma {
                 let val = bus.read32(ch.source);
                 bus.write32(ch.dest, val);
             } else {
-                let val = bus.read16(ch.source);
+                // `read16_mut` so an EEPROM read advances its state machine.
+                // DMA is the only way a game reaches EEPROM at all.
+                let val = bus.read16_mut(ch.source);
                 bus.write16(ch.dest, val);
             }
 

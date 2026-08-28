@@ -22,7 +22,7 @@ as unverified.
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
-| `cart/` | ~330 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs. EEPROM is still byte-addressed RAM, not the serial protocol. |
+| `cart/` | ~480 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs, Flash chip ID, and EEPROM as the real serial protocol over DMA. |
 | `savestate.rs` | ~275 | Format v2 (adds the SVC/ABT/UND/User banks). Round-trips in a test. Not wired to any UI. |
 | `bios.rs` | ~275 | HLE SWIs. `CpuFastSet` (0x0C), `ArcTan` (0x09), `ArcTan2` (0x0A) and the diff unfilters are missing. |
 | `ffi.rs` | ~390 | C ABI + JNI, including `geebeeayy_set_keys`. |
@@ -182,10 +182,33 @@ physical device, without losing progress.
 ## Phase 2 - Quality
 
 - [ ] Customisable touch overlay: size, position, opacity, per-game layouts.
-- [ ] Screen scaling (1x, 2x, 3x, fit) and integer-scaling option.
-- [ ] Screen filters (pixel-perfect, 2xSaI, CRT).
+- [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
+      now supports Fit (largest size preserving 3:2, letterboxed), Integer
+      (largest whole-number multiple, falling back to Fit below 240x160) and
+      Stretch (the old fill-everything behaviour); default is Integer.
+      Persisted in `DisplaySettings` (plain `SharedPreferences`, matching
+      `RomFolderManager`'s pattern - no DataStore dependency exists in this
+      project) and changed from `SettingsScreen.kt`. Unverified: not compiled,
+      no device test.
+- [x] **Pixel-perfect filtering** - `drawImage`'s `filterQuality` is set to
+      `FilterQuality.None` explicitly rather than left at the bilinear
+      default, so a 240x160 frame scaled up keeps hard pixel edges. 2xSaI and
+      CRT remain undone; they need their own shader/sampling work, not a flag.
+      Unverified: not compiled, no device test.
+- [ ] Screen filters: 2xSaI, CRT.
 - [ ] ROM library with cover art and metadata.
-- [ ] Landscape/portrait handling.
+- [x] **Landscape/portrait handling** - `kotlin-specialist`. The manifest no
+      longer hard-locks `screenOrientation="portrait"`;  `MainActivity`
+      applies the lock at runtime instead, from a `DisplaySettings.forcePortrait`
+      toggle that defaults to `true` so an existing install's behaviour does
+      not change until the player opts into landscape from Settings. In
+      landscape, `EmulationScreen` flanks the play area with the D-pad on the
+      left and action/transport buttons on the right instead of stacking
+      controls under it. Unverified: not compiled, no device test, and the
+      `Configuration.ORIENTATION_LANDSCAPE` recomposition path in particular
+      depends on `android:configChanges="orientation|..."` actually keeping
+      Compose's `LocalConfiguration` live without recreating the Activity -
+      that is documented Compose behaviour, not something exercised here.
 - [ ] Input latency measured and driven under 45 ms; consider runahead.
 - [ ] Icon and store asset set - `visual-asset-generator`.
 

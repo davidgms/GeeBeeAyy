@@ -297,3 +297,77 @@ fn the_master_enable_silences_the_apu() {
         "sound played with the master enable off"
     );
 }
+
+// --- EEPROM: a serial device, not addressable memory -----------------------
+
+/// Drive the EEPROM's serial line the way a game's DMA would.
+fn eeprom_send(gba: &mut Gba, bits: &[bool]) {
+    for &b in bits {
+        gba.bus.write16(0x0D00_0000, b as u16);
+    }
+}
+
+fn eeprom_recv(gba: &mut Gba, count: usize) -> Vec<bool> {
+    (0..count)
+        .map(|_| gba.bus.read16_mut(0x0D00_0000) & 1 == 1)
+        .collect()
+}
+
+/// MSB-first bits of `value`, `n` wide.
+fn bits_of(value: u64, n: usize) -> Vec<bool> {
+    (0..n).map(|i| (value >> (n - 1 - i)) & 1 == 1).collect()
+}
+
+#[test]
+fn eeprom_round_trips_a_64_bit_block() {
+    // GBATEK, GBA Cart Backup EEPROM. Write: "10", 6 address bits, 64 data
+    // bits, "0". Read: "11", 6 address bits, "0", then 68 bits back of which
+    // the first 4 are discarded.
+    //
+    // This is a serial device driven by DMA, not addressable RAM - the old
+    // implementation treated 0x0D000000 as bytes and no real game would have
+    // read back what it wrote.
+    let mut gba = gba_with("EEPROM_V122");
+    let payload: u64 = 0x0123_4567_89AB_CDEF;
+
+    let mut write = vec![true, false]; // "10" = write
+    write.extend(bits_of(5, 6)); // block 5
+    write.extend(bits_of(payload, 64));
+    write.push(false);
+    eeprom_send(&mut gba, &write);
+
+    let mut read = vec![true, true]; // "11" = read
+    read.extend(bits_of(5, 6));
+    read.push(false);
+    eeprom_send(&mut gba, &read);
+
+    let out = eeprom_recv(&mut gba, 68);
+    let mut got: u64 = 0;
+    for &b in &out[4..] {
+        got = (got << 1) | b as u64;
+    }
+    assert_eq!(got, payload, "EEPROM did not return the block that was written");
+}
+
+#[test]
+fn eeprom_writes_mark_the_save_dirty() {
+    let mut gba = gba_with("EEPROM_V122");
+    assert!(!gba.take_save_dirty());
+
+    let mut write = vec![true, false];
+    write.extend(bits_of(0, 6));
+    write.extend(bits_of(0xDEAD_BEEF_0000_0000, 64));
+    write.push(false);
+    eeprom_send(&mut gba, &write);
+
+    assert!(gba.take_save_dirty(), "an EEPROM write must mark the save dirty");
+}
+
+#[test]
+fn eeprom_marker_is_detected() {
+    let gba = gba_with("EEPROM_V122");
+    assert!(
+        gba.cartridge().uses_eeprom(),
+        "the EEPROM_V marker was not detected, so the save type is wrong"
+    );
+}

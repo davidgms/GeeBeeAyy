@@ -37,6 +37,9 @@ pub struct Cartridge {
     /// Flash chip-ID mode: reads return the manufacturer and device bytes
     /// instead of data until the mode is terminated.
     flash_id_mode: bool,
+    /// Serial EEPROM state. Unlike SRAM and Flash, EEPROM is not addressable
+    /// memory - it is a one-bit serial device driven by DMA.
+    eeprom_state: EepromState,
 }
 
 impl Cartridge {
@@ -52,6 +55,7 @@ impl Cartridge {
             flash_bank: 0,
             save_dirty: false,
             flash_id_mode: false,
+            eeprom_state: EepromState::new(),
         }
     }
 
@@ -102,6 +106,7 @@ impl Cartridge {
             flash_bank: 0,
             save_dirty: false,
             flash_id_mode: false,
+            eeprom_state: EepromState::new(),
         })
     }
 
@@ -138,6 +143,31 @@ impl Cartridge {
 
     pub fn len(&self) -> usize {
         self.rom.len()
+    }
+
+    /// Address width in bits: 6 for a 512-byte EEPROM, 14 for an 8 KB one.
+    fn eeprom_address_bits(&self) -> usize {
+        if self.eeprom.len() > 512 { 14 } else { 6 }
+    }
+
+    /// One serial bit out of the EEPROM, in bit 0 as the hardware presents it.
+    pub fn eeprom_read(&mut self) -> u16 {
+        let bits = self.eeprom_address_bits();
+        self.eeprom_state.read_bit(&self.eeprom, bits)
+    }
+
+    /// One serial bit into the EEPROM, taken from bit 0.
+    pub fn eeprom_write(&mut self, value: u16) {
+        let bits = self.eeprom_address_bits();
+        if self.eeprom_state.write_bit(&mut self.eeprom, bits, value & 1 == 1) {
+            self.save_dirty = true;
+        }
+    }
+
+    /// Whether this cartridge uses EEPROM, which is addressed through
+    /// `0x0D000000` rather than the usual save region.
+    pub fn uses_eeprom(&self) -> bool {
+        matches!(self.save_type, SaveType::Eeprom512 | SaveType::Eeprom8k)
     }
 
     /// Read a byte from save memory
@@ -343,6 +373,173 @@ fn detect_save_type(rom: &[u8], title: &str) -> SaveType {
             "POKEMON RUBY" | "POKEMON SAPPHIRE" | "POKEMON EMERALD" => SaveType::Flash128,
             "POKEMON FIRERED" | "POKEMON LEAFGREEN" => SaveType::Flash128,
             _ => SaveType::None,
+        }
+    }
+}
+
+/// The serial EEPROM protocol, per GBATEK's *GBA Cart Backup EEPROM*.
+///
+/// EEPROM is not addressable memory. It hangs off bit 0 of the data bus and a
+/// game talks to it by DMAing a bit stream:
+///
+/// - **Set read address**: `11`, then 6 or 14 address bits (MSB first), then `0`.
+/// - **Read**: 68 bits back - 4 to ignore, then 64 data bits, MSB first.
+/// - **Write**: `10`, the address bits, 64 data bits, then `0`.
+///
+/// Addressing is in units of 64 bits, so an address selects an 8-byte block.
+/// Treating the region as byte-addressed RAM, as this emulator did before, is
+/// not a simplification of that - it is a different device, and no real game
+/// would read back what it wrote.
+///
+/// A write command runs to 81 bits for a 14-bit address, so this collects the
+/// stream in phases rather than one integer.
+#[derive(Clone, Copy, PartialEq)]
+enum EepromPhase {
+    /// Collecting the two opcode bits.
+    Opcode,
+    /// Collecting address bits; `write` records which opcode we saw.
+    Address { write: bool },
+    /// Collecting the 64 data bits of a write.
+    WriteData,
+    /// A read command ends with one "0" bit before the data comes back. It has
+    /// to be consumed here: treating it as the start of a new command cancels
+    /// the read that was just set up.
+    ReadStop,
+    /// A write command also ends with a "0". Left unconsumed it lands in the
+    /// next command's opcode and desynchronises the whole stream.
+    WriteStop,
+    /// Streaming 68 bits back out.
+    Reading,
+}
+
+#[derive(Clone)]
+struct EepromState {
+    phase: EepromPhase,
+    /// Bits accumulated in the current phase.
+    acc: u64,
+    count: usize,
+    addr: usize,
+    read_pos: usize,
+}
+
+impl EepromState {
+    fn new() -> Self {
+        Self {
+            phase: EepromPhase::Opcode,
+            acc: 0,
+            count: 0,
+            addr: 0,
+            read_pos: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.phase = EepromPhase::Opcode;
+        self.acc = 0;
+        self.count = 0;
+    }
+
+    /// Serial output: four bits the game discards, then 64 data bits MSB first.
+    fn read_bit(&mut self, eeprom: &[u8], _addr_bits: usize) -> u16 {
+        if self.phase != EepromPhase::Reading {
+            // Idle, or the game is polling for a write to finish. Writes here
+            // complete instantly, so report ready.
+            return 1;
+        }
+        let pos = self.read_pos;
+        self.read_pos += 1;
+        if self.read_pos >= 68 {
+            self.read_pos = 0;
+            self.reset();
+        }
+        if pos < 4 {
+            return 0;
+        }
+        let bit_index = pos - 4;
+        let byte = self.addr * 8 + bit_index / 8;
+        if byte >= eeprom.len() {
+            return 1;
+        }
+        ((eeprom[byte] >> (7 - (bit_index % 8))) & 1) as u16
+    }
+
+    /// Serial input. Returns true when a write actually modified the chip.
+    fn write_bit(&mut self, eeprom: &mut [u8], addr_bits: usize, bit: bool) -> bool {
+        match self.phase {
+            EepromPhase::Reading => {
+                // A new command while a read is outstanding: abandon it.
+                self.read_pos = 0;
+                self.reset();
+                self.write_bit(eeprom, addr_bits, bit)
+            }
+            EepromPhase::Opcode => {
+                self.acc = (self.acc << 1) | bit as u64;
+                self.count += 1;
+                if self.count == 2 {
+                    let write = match self.acc {
+                        0b11 => false,
+                        0b10 => true,
+                        // Not a command; wait for a clean start.
+                        _ => {
+                            self.reset();
+                            return false;
+                        }
+                    };
+                    self.phase = EepromPhase::Address { write };
+                    self.acc = 0;
+                    self.count = 0;
+                }
+                false
+            }
+            EepromPhase::Address { write } => {
+                self.acc = (self.acc << 1) | bit as u64;
+                self.count += 1;
+                if self.count == addr_bits {
+                    // Only the low bits address the array; GBATEK notes the
+                    // upper 4 of a 14-bit address should be zero.
+                    self.addr = (self.acc as usize) & (eeprom.len() / 8 - 1);
+                    self.acc = 0;
+                    self.count = 0;
+                    self.phase = if write {
+                        EepromPhase::WriteData
+                    } else {
+                        EepromPhase::ReadStop
+                    };
+                }
+                false
+            }
+            EepromPhase::WriteStop => {
+                // Programming completes instantly here, so nothing to wait for.
+                self.reset();
+                false
+            }
+            EepromPhase::ReadStop => {
+                // Whatever this bit is, the address is set and the data comes
+                // out next.
+                self.phase = EepromPhase::Reading;
+                self.read_pos = 0;
+                false
+            }
+            EepromPhase::WriteData => {
+                self.acc = (self.acc << 1) | bit as u64;
+                self.count += 1;
+                if self.count == 64 {
+                    let base = self.addr * 8;
+                    let dirty = if base + 8 <= eeprom.len() {
+                        for i in 0..8 {
+                            eeprom[base + i] = (self.acc >> (56 - i * 8)) as u8;
+                        }
+                        true
+                    } else {
+                        false
+                    };
+                    self.acc = 0;
+                    self.count = 0;
+                    self.phase = EepromPhase::WriteStop;
+                    return dirty;
+                }
+                false
+            }
         }
     }
 }

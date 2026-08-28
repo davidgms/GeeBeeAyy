@@ -194,6 +194,22 @@ impl MemoryBus {
         (0x0E00_0000..=0x0FFF_FFFF).contains(&address)
     }
 
+    /// EEPROM lives at 0x0D000000 and is driven one bit at a time by DMA, so
+    /// it needs the 16-bit path rather than the byte path the other save types
+    /// use. On a cart without EEPROM the region stays a ROM mirror.
+    fn is_eeprom_region(&self, address: u32) -> bool {
+        (0x0D00_0000..=0x0DFF_FFFF).contains(&address) && self.cart.uses_eeprom()
+    }
+
+    /// 16-bit read that can advance the EEPROM state machine. Reading EEPROM
+    /// changes it, which a `&self` accessor cannot express.
+    pub fn read16_mut(&mut self, address: u32) -> u16 {
+        if self.is_eeprom_region(address) {
+            return self.cart.eeprom_read();
+        }
+        self.read16(address)
+    }
+
     pub fn read16(&self, address: u32) -> u16 {
         // An 8-bit databus cannot deliver two distinct bytes, so a halfword
         // read of the backup region returns the one byte replicated. Reading
@@ -306,6 +322,10 @@ impl MemoryBus {
     }
 
     pub fn write16(&mut self, address: u32, value: u16) {
+        if self.is_eeprom_region(address) {
+            self.cart.eeprom_write(value);
+            return;
+        }
         // Only one byte reaches an 8-bit databus: the one selected by the
         // accessed address.
         if Self::is_save_region(address) {

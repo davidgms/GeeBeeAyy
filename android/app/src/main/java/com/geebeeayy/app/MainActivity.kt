@@ -2,6 +2,7 @@ package com.geebeeayy.app
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -22,6 +23,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.ui.screens.*
@@ -36,6 +38,15 @@ private const val TAG = "GeeBeeAyy/Main"
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The manifest no longer hard-locks orientation (see AndroidManifest.xml); this is
+        // the equivalent lock, driven by a user-togglable setting instead of a fixed value.
+        // android:configChanges="orientation|..." on this activity means setting this does not
+        // trigger a recreate, so it is safe to call before setContent and again from Settings.
+        requestedOrientation = if (DisplaySettings(this).getForcePortrait()) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
         setContent {
             GeeBeeAyyTheme(darkTheme = true) {
                 GeeBeeAyyNavHost()
@@ -145,6 +156,10 @@ fun GeeBeeAyyNavHost() {
             val encodedPath = backStackEntry.arguments?.getString("filePath") ?: ""
             val filePath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
             val viewModel: EmulationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            // Read once per navigation to this route rather than observed live: the only way
+            // to change it is the Settings screen, which is a separate back-stack entry, so
+            // returning here always recomposes this composable fresh.
+            val scaleMode = remember(filePath) { DisplaySettings(context).getScaleMode() }
 
             val frameBuffer by viewModel.frameBuffer.collectAsState()
             val isLoading by viewModel.isLoading.collectAsState()
@@ -177,6 +192,7 @@ fun GeeBeeAyyNavHost() {
                 isLoading = isLoading,
                 errorMessage = errorMessage,
                 stateMessage = stateMessage,
+                scaleMode = scaleMode,
                 onDismissStateMessage = { viewModel.clearStateMessage() },
                 onBack = {
                     viewModel.stopEmulation()
