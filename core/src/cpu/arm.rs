@@ -7,9 +7,16 @@ use crate::memory::MemoryBus;
 /// This function dispatches based on bits [27:4] and [7:4].
 pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
-    // Software Interrupt
+    // Software Interrupt.
+    //
+    // GBATEK, ARM CPU Exceptions: an ARM SWI carries a 24bit comment field
+    // while a THUMB SWI carries 8 bits, and the BIOS handler reads the byte at
+    // [lr-2] in both cases. For an ARM opcode that byte is bits 23-16, so the
+    // function number lives there - "you could use only the most significant
+    // 8bits of the 24bit ARM comment". Passing the raw 24bit field instead
+    // makes every ARM-mode `swi n` miss its handler.
     if (instruction >> 24) & 0xF == 0xF {
-        let comment = instruction & 0x00FF_FFFF;
+        let comment = (instruction >> 16) & 0xFF;
         cpu.swi(comment, bus);
         return 3;
     }

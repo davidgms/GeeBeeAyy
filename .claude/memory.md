@@ -133,6 +133,26 @@ not "runs the old bugs" as the stale wording implied. `.github/workflows/ci.yml`
 uploads them as artifacts; nothing needs to change about `.gitignore`, since
 there was never anything to remove from git in the first place.
 
+### 2026-08-28 - ARM-mode `swi` took the function number from the wrong bits
+
+`core/src/cpu/arm.rs` passed the whole 24-bit comment field to `Cpu::swi`, so
+`bios::handle_swi` matched on `0x0C0000` and fell through to `_ => false` for
+every ARM-mode BIOS call. The real BIOS handler does `ldrb r?,[lr,#-2]`, which
+for an ARM opcode is bits 23-16 and for a THUMB opcode is the low byte - the
+comment field width differs but the byte the BIOS reads does not. GBATEK, *ARM
+CPU Exceptions*, says the same thing from the other direction: "you could use
+only the most significant 8bits of the 24bit ARM comment". THUMB
+(`thumb.rs:393`) was already correct, which is why nothing noticed: every game
+that calls BIOS functions from THUMB worked and every ARM-state call silently
+did nothing. Covered now by `arm_swi_takes_the_function_number_from_bits_23_16`
+in `core/tests/bios.rs`.
+
+The same pass found `lz77_decompress` and `rl_decompress` reading the header's
+decompressed size into `_decompressed_size` and then never using it: both had a
+bare `loop` with no exit, so a single `SWI 0x11` or `0x14` overwrote memory
+until it hit an unmapped address. The size lives in bits 8-31 of the header,
+not bits 0-23 - bits 0-3 are the unit size and 4-7 the type.
+
 ### 2026-08-27 - An agent whose `tools:` list omits Edit cannot satisfy the Memory Protocol
 
 `search-specialist` and `accessibility-tester` shipped with read-only tool

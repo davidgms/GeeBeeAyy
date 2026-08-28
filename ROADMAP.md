@@ -109,10 +109,18 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
 
 ## Phase 1 - Make it playable
 
-- [ ] **Missing SWIs** - `rust-engineer`. `core/src/bios.rs` jumps from `0x0B`
-      to `0x0E`: `CpuFastSet` (0x0C) is absent and common in decompression
-      paths. Also `ArcTan`/`ArcTan2` (0x09/0x0A) and the diff unfilters
-      (0x16/0x17).
+- [x] **Missing SWIs** - `rust-engineer`. `CpuFastSet` (0x0C),
+      `ArcTan`/`ArcTan2` (0x09/0x0A) and the three diff unfilters (0x16/0x17/0x18
+      - GBATEK's numbering, not the 0x16/0x17 this line used to claim) are in,
+      covered by `core/tests/bios.rs`. The same pass fixed four latent bugs in
+      the neighbouring calls: ARM-mode `swi` read the function number from the
+      wrong bits, `CpuSet` ignored its fill flag, and both `lz77_decompress` and
+      `rl_decompress` looped forever because they never read the header's output
+      size. Still missing: `Stop` (0x03), `GetBiosChecksum` (0x0D),
+      `HuffUnComp` (0x13), the sound driver calls (0x1A-0x24, 0x28-0x2A),
+      `MultiBoot` (0x25) and `HardReset`/`CustomHalt` (0x26/0x27). `BgAffineSet`
+      and `ObjAffineSet` (0x0E/0x0F) are still stubs that write an identity
+      matrix and ignore the requested angle.
 - [ ] **Save states, actually wired** - `kotlin-specialist`.
       `EmulationViewModel.saveState` ignores its `slot` argument and drops the
       handle it gets back; `loadState` is an empty body. Ten slots per game,
