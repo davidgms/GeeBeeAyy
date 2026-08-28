@@ -189,16 +189,23 @@ The iOS target has never been compiled. Owned by `swift-expert`, with
 
 ## Known accuracy gaps
 
-Deliberate simplifications, recorded so they are not rediscovered as bugs:
+Deliberate simplifications, recorded so they are not rediscovered as bugs.
+Two earlier entries are gone because gba-suite forced them to be fixed
+properly: misaligned halfword loads now rotate and degrade correctly, and the
+HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
+`subs pc, lr, #4` return.
 
-- `halfword_data_transfer` (`core/src/cpu/arm.rs`) forces alignment. Real
-  ARM7TDMI rotates an unaligned `LDRH` and degrades a misaligned `LDRSH` to
-  `LDRSB`.
 - No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
 - No BIOS execute permission checks.
-- The HLE BIOS IRQ handler uses non-standard `LR` semantics that happen to be
-  self-consistent with `Cpu::handle_irq`. A game installing its own handler at
-  `0x03007FFC` and expecting `subs pc, lr, #4` needs this revisited.
+- The exact cycle on which a timer or DMA raises its IF bit is not modelled;
+  the flag is set when the overflow or the transfer completes. GBATEK does not
+  document the sub-cycle behaviour, so settling it needs a hardware capture or
+  a timing test ROM rather than more reading.
+- `Gba::step` charges a whole scanline (1232 cycles) while halted, so HALT
+  wake-up granularity is one scanline rather than one cycle.
+- The PPU, the APU and DMA timing have no test-ROM coverage at all. gba-suite
+  exercises the CPU and the memory bus; everything those two subsystems do is
+  still unverified.
 
 ---
 

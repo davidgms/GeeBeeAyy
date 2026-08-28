@@ -141,3 +141,39 @@ every run for a write they were structurally incapable of making. Both now
 carry `Edit`. When registering an agent that has a `## Discoveries` section,
 check that its frontmatter grants `Edit` or `Write` - the hook and the tool
 list have to agree or the agent loops.
+
+### 2026-08-28 - gba-suite found eleven bugs the hand-written tests could not
+
+**Context**: `core/tests/gba_suite.rs` runs jsmolka's ROMs from `temp/roms/`.
+All three (`arm`, `thumb`, `memory`) pass as of 2026-08-28. Getting there took
+eleven fixes beyond the four the first hand-written suite caught.
+
+The pattern worth remembering: **every one was a decode or dispatch bug that
+hand-written tests missed because the test and the code shared the same wrong
+assumption.** The worst example was `arm_ldr_str_word`, which asserted a
+store/load round trip and passed while both halves used the wrong address -
+an inverted offset-mode flag sent them to the same wrong place. A test that
+checks a round trip without checking the address proves nothing.
+
+Categories found: inverted flag bits (`I` in single transfer, `U` in multiply
+long), dispatch ranges that excluded valid encodings (`SWPB`, `SMULL`,
+register-specified shifts), missing addressing modes (the `P` bit, `IB`/`DA`
+block starts), missing special cases (empty register list, base-in-list,
+user-bank `^` transfers, `Rd == Rn` writeback), unconditional flag writes on
+non-S operations, and a memory map with no mirroring at all.
+
+**Application**: when touching either decoder or the bus, run
+`cargo test --release --test gba_suite` before claiming anything works. Assert
+on addresses and side effects, not just on returned values. And treat any
+`unreachable!()` in a decode path as a latent panic - THUMB Format 2 sat there
+for the project's whole history.
+
+### 2026-08-28 - write16 and write32 decompose into byte writes
+
+`MemoryBus::write16`/`write32` are implemented as repeated 8-bit stores. That
+made adding the GBA's 8-bit video rules (OAM ignores byte writes; palette and
+BG VRAM duplicate the byte across the halfword; OBJ VRAM ignores them)
+dangerous, because those rules must apply **only** to genuine byte stores.
+The fix was a private `store8` that the wider writes use, with the public
+`write8` layering the video rules on top. If you add another size-dependent
+rule to the bus, check which of the two paths it belongs on.
