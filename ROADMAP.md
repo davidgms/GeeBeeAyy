@@ -97,10 +97,9 @@ decoder and memory-map bugs that the hand-written tests had missed entirely.
       which is a better answer than committing binaries by hand. Local
       device testing still needs `./build-mobile.sh android-all` or a
       downloaded CI artifact copied into place first.
-- [ ] Decide what `android/app/src/main/cpp/` is for. Nothing references it,
-      `build.gradle.kts` declares no `externalNativeBuild`, and its
-      CMakeLists points at `libgeebeeayyayy_core.so` - a filename that does
-      not exist. Delete it or wire it up.
+- [x] `android/app/src/main/cpp/` deleted. It was an unbuilt second JNI
+      implementation with no Gradle wiring, still calling three FFI symbols
+      that no longer exist.
 
 **Exit criterion:** a commercial ROM reaches its title screen with correct
 graphics, and `gba-suite`'s ARM and THUMB suites pass.
@@ -144,10 +143,10 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       falls back to app-private storage if that write fails. Flush is
       debounced 2s off the core's dirty flag, plus an unconditional flush on
       pause, stop and `onCleared`. Unverified: not compiled, no device test.
-- [ ] **Flash chip ID reads** - `rust-engineer`. Command 0x90 sets a state but
-      no read behaviour, so a game probing the manufacturer/device ID gets
-      flash contents instead. Not covered by the gba-suite save ROMs, which
-      pass without it.
+- [x] **Flash chip ID reads** - `0x90` enters ID mode and `0xF0` leaves it;
+      reads return Panasonic `1B32h` for 64K and Sanyo `1362h` for 128K, per
+      GBATEK's device table. Games probe this before writing and a wrong answer
+      means they refuse to save.
 - [x] **Save state v3** - timers, DMA derived state, the whole `io_regs` file
       and the cartridge save now round-trip, and a rejected state rolls back
       instead of half-applying. Verified by a test that runs frames, snapshots,
@@ -211,7 +210,11 @@ The iOS target has never been compiled. Owned by `swift-expert`, with
 
 ## Phase 4 - Advanced
 
-- [ ] Rewind.
+- [x] **Rewind (core side)** - `core/src/rewind.rs`, a bounded ring of save
+      states with the snapshot cadence left to the frontend, same as save
+      flushing. A state measures 512,128 bytes, so `Rewind::memory_bytes`
+      reports the live cost and a caller sizes itself against the device
+      instead of guessing. Not yet wired to any UI.
 - [ ] Cheat codes (GameShark / CodeBreaker).
 - [ ] Link cable over local WiFi.
 - [ ] JIT recompilation, ARM host only. Only after the interpreter is correct -

@@ -6,6 +6,7 @@ pub mod timer;
 pub mod cart;
 pub mod io;
 pub mod dma;
+pub mod rewind;
 pub mod savestate;
 pub mod bios;
 pub mod ffi;
