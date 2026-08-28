@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.ui.theme.*
 import kotlin.math.floor
 
@@ -35,6 +36,7 @@ fun EmulationScreen(
     onFastForward: () -> Unit,
     onSaveState: (Int) -> Unit,
     onLoadState: (Int) -> Unit,
+    onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
 ) {
     var isPaused by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
@@ -140,6 +142,7 @@ fun EmulationScreen(
                     isFastForward = !isFastForward
                     onFastForward()
                 },
+                onKeyChange = onKeyChange,
             )
         }
 
@@ -172,30 +175,39 @@ fun EmulationScreen(
 
 @Composable
 fun GbaScreen(frameBuffer: ByteArray) {
-    val bitmap = remember(frameBuffer) {
-        try {
-            val width = 240
-            val height = 160
-            val pixels = IntArray(width * height)
-            for (i in 0 until width * height) {
-                val r = frameBuffer[i * 3].toInt() and 0xFF
-                val g = frameBuffer[i * 3 + 1].toInt() and 0xFF
-                val b = frameBuffer[i * 3 + 2].toInt() and 0xFF
-                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-            }
-            android.graphics.Bitmap.createBitmap(pixels, width, height, android.graphics.Bitmap.Config.ARGB_8888)
-        } catch (e: Exception) {
-            null
-        }
+    val width = GbaEngine.SCREEN_WIDTH
+    val height = GbaEngine.SCREEN_HEIGHT
+    // Reused across frames: the bitmap and its pixel staging buffer are each
+    // allocated once and mutated in place, not recreated 60 times a second.
+    val bitmap = remember {
+        android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    }
+    val pixels = remember { IntArray(width * height) }
+    // `asImageBitmap()` wraps the bitmap in a new object each call, so hoist it
+    // out of the per-frame draw rather than allocating a wrapper 60 times a
+    // second. It stays valid because the bitmap itself is mutated in place.
+    val image = remember(bitmap) { bitmap.asImageBitmap() }
+
+    // A short buffer would throw out of the draw path and take the UI down; the
+    // core has simply not produced a frame yet.
+    if (frameBuffer.size < width * height * 3) {
+        return
     }
 
-    if (bitmap != null) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawImage(
-                image = bitmap.asImageBitmap(),
-                dstSize = IntSize(size.width.toInt(), size.height.toInt()),
-            )
-        }
+    for (i in pixels.indices) {
+        val o = i * 3
+        val r = frameBuffer[o].toInt() and 0xFF
+        val g = frameBuffer[o + 1].toInt() and 0xFF
+        val b = frameBuffer[o + 2].toInt() and 0xFF
+        pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+    bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        drawImage(
+            image = image,
+            dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+        )
     }
 }
 
@@ -205,6 +217,7 @@ fun GameControls(
     isFastForward: Boolean,
     onTogglePause: () -> Unit,
     onToggleFastForward: () -> Unit,
+    onKeyChange: (Int, Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -214,10 +227,10 @@ fun GameControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // D-Pad (left side)
-        DPad()
+        DPad(onKeyChange = onKeyChange)
 
         // Action buttons (right side)
-        ActionButtons()
+        ActionButtons(onKeyChange = onKeyChange)
 
         // Control buttons
         Column(
@@ -262,7 +275,7 @@ fun GameControls(
 }
 
 @Composable
-fun DPad() {
+fun DPad(onKeyChange: (Int, Boolean) -> Unit) {
     val buttonColor = HoneyDark
     val pressColor = AmberResin
 
@@ -270,36 +283,45 @@ fun DPad() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Up
-        DPadButton(Icons.Default.KeyboardArrowUp, "Up", buttonColor, pressColor)
+        DPadButton(Icons.Default.KeyboardArrowUp, "Up", GbaEngine.KEY_UP, buttonColor, pressColor, onKeyChange)
         // Left, Center, Right
         Row {
-            DPadButton(Icons.Default.KeyboardArrowLeft, "Left", buttonColor, pressColor)
+            DPadButton(Icons.Default.KeyboardArrowLeft, "Left", GbaEngine.KEY_LEFT, buttonColor, pressColor, onKeyChange)
             Box(modifier = Modifier.size(48.dp))
-            DPadButton(Icons.Default.KeyboardArrowRight, "Right", buttonColor, pressColor)
+            DPadButton(Icons.Default.KeyboardArrowRight, "Right", GbaEngine.KEY_RIGHT, buttonColor, pressColor, onKeyChange)
         }
         // Down
-        DPadButton(Icons.Default.KeyboardArrowDown, "Down", buttonColor, pressColor)
+        DPadButton(Icons.Default.KeyboardArrowDown, "Down", GbaEngine.KEY_DOWN, buttonColor, pressColor, onKeyChange)
     }
 }
 
+// Each direction is its own touch target, so two fingers on adjacent
+// buttons (e.g. Up + Right) OR their bits together into a diagonal. A
+// single finger cannot express a diagonal - there is no shared corner zone.
 @Composable
 fun DPadButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    key: Int,
     backgroundColor: Color,
     pressColor: Color,
+    onKeyChange: (Int, Boolean) -> Unit,
 ) {
     var isPressed by remember { mutableStateOf(false) }
 
     Button(
-        onClick = { /* Handle press */ },
+        onClick = { /* Handled via pointerInput below; a tap needs press+release reported. */ },
         modifier = Modifier
             .size(48.dp)
-            .pointerInput(Unit) {
+            .pointerInput(key) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        isPressed = event.changes.any { it.pressed }
+                        val pressed = event.changes.any { it.pressed }
+                        if (pressed != isPressed) {
+                            isPressed = pressed
+                            onKeyChange(key, pressed)
+                        }
                     }
                 }
             },
@@ -314,36 +336,42 @@ fun DPadButton(
 }
 
 @Composable
-fun ActionButtons() {
+fun ActionButtons(onKeyChange: (Int, Boolean) -> Unit) {
     val buttonColor = HoneyDark
     val pressColor = GoldenSaplight
 
     Box(modifier = Modifier.size(120.dp)) {
         // B button (left)
-        ActionButton("B", buttonColor, pressColor, Modifier.align(Alignment.CenterStart))
+        ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, Modifier.align(Alignment.CenterStart), onKeyChange)
         // A button (right)
-        ActionButton("A", buttonColor, pressColor, Modifier.align(Alignment.CenterEnd))
+        ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, Modifier.align(Alignment.CenterEnd), onKeyChange)
     }
 }
 
 @Composable
 fun ActionButton(
     label: String,
+    key: Int,
     backgroundColor: Color,
     pressColor: Color,
     modifier: Modifier = Modifier,
+    onKeyChange: (Int, Boolean) -> Unit,
 ) {
     var isPressed by remember { mutableStateOf(false) }
 
     Button(
-        onClick = { /* Handle press */ },
+        onClick = { /* Handled via pointerInput below; a tap needs press+release reported. */ },
         modifier = modifier
             .size(56.dp)
-            .pointerInput(Unit) {
+            .pointerInput(key) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        isPressed = event.changes.any { it.pressed }
+                        val pressed = event.changes.any { it.pressed }
+                        if (pressed != isPressed) {
+                            isPressed = pressed
+                            onKeyChange(key, pressed)
+                        }
                     }
                 }
             },

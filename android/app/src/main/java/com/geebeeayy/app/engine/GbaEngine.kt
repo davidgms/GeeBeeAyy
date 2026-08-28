@@ -29,6 +29,18 @@ class GbaEngine {
         const val BYTES_PER_PIXEL = 3
         /** Total frame buffer size in bytes. */
         const val FRAME_BUFFER_SIZE = SCREEN_WIDTH * SCREEN_HEIGHT * BYTES_PER_PIXEL
+
+        // Key bitmask, GBATEK order. A set bit means pressed; see nativeSetKeys.
+        const val KEY_A = 1 shl 0
+        const val KEY_B = 1 shl 1
+        const val KEY_SELECT = 1 shl 2
+        const val KEY_START = 1 shl 3
+        const val KEY_RIGHT = 1 shl 4
+        const val KEY_LEFT = 1 shl 5
+        const val KEY_UP = 1 shl 6
+        const val KEY_DOWN = 1 shl 7
+        const val KEY_R = 1 shl 8
+        const val KEY_L = 1 shl 9
     }
 
     private var handle: Long = 0L
@@ -84,6 +96,18 @@ class GbaEngine {
     fun getFrameBuffer(): ByteArray = frameBuffer
 
     /**
+     * Push the current button state to the core.
+     *
+     * @param keys Bitmask in GBATEK order (bit 0 = A, 1 = B, 2 = Select,
+     * 3 = Start, 4 = Right, 5 = Left, 6 = Up, 7 = Down, 8 = R, 9 = L).
+     * A set bit means pressed; the core handles the active-low inversion.
+     */
+    fun setKeys(keys: Int) {
+        ensureHandle()
+        nativeSetKeys(handle, keys)
+    }
+
+    /**
      * Drain the core's audio buffer into [out] (f32 mono).
      *
      * The caller owns the array so the emulation loop does not allocate once
@@ -137,6 +161,7 @@ class GbaEngine {
     private external fun nativeRunFrames(handle: Long, count: Int)
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int
+    private external fun nativeSetKeys(handle: Long, keys: Int)
     private external fun nativeSaveStateCreate(handle: Long): Long
     private external fun nativeLoadState(handle: Long, stateHandle: Long): Int
     private external fun nativeSaveStateDestroy(stateHandle: Long)

@@ -45,8 +45,29 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private var emulationJob: Job? = null
     private var romLoaded = false
 
+    /**
+     * Aggregate button bitmask, written from the input thread and read by the
+     * emulation loop, hence `@Volatile`.
+     *
+     * The loop applies it once per frame rather than letting the input thread
+     * call into the engine directly: `GbaEngine` hands the core a raw pointer,
+     * so a `setKeys` racing a `runFrame` would be two threads mutating the same
+     * `Gba` at once. The cost is at most one frame of input latency.
+     */
+    @Volatile
+    private var keyState = 0
+
     init {
         engine.create()
+    }
+
+    /**
+     * Update one button's press state and push the new bitmask to the core.
+     *
+     * @param key One of [GbaEngine]'s `KEY_*` bit constants.
+     */
+    fun setKey(key: Int, pressed: Boolean) {
+        keyState = if (pressed) keyState or key else keyState and key.inv()
     }
 
     fun loadRomFromPath(filePath: String) {
@@ -91,6 +112,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             audio.resume()
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
                 while (isActive) {
+                    // Applied here so every call into the core happens on this
+                    // one thread. See the note on `keyState`.
+                    engine.setKeys(keyState)
                     val fastForward = isFastForward.value
                     if (fastForward) {
                         engine.runFrames(4)

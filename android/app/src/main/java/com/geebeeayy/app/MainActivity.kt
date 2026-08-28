@@ -163,6 +163,7 @@ fun GeeBeeAyyNavHost() {
                 onFastForward = { viewModel.toggleFastForward() },
                 onSaveState = { slot -> viewModel.saveState(slot) },
                 onLoadState = { slot -> viewModel.loadState(slot) },
+                onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
             )
         }
 

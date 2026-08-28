@@ -46,8 +46,8 @@ roughly the order to do it in.
       read reports all ten buttons held down, forever.
 - [x] Add `geebeeayy_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
       export.
-- [ ] Call it from the touch overlay in `EmulationScreen.kt`. The on-screen
-      controls are currently decorative.
+- [x] Call it from the touch overlay in `EmulationScreen.kt`. Unverified:
+      no Android toolchain here, so CI is what will compile it.
 - [x] Test: a ROM that polls `KEYINPUT` sees released buttons by default and
       pressed ones after `set_keys`.
 
@@ -121,10 +121,9 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
 - [ ] **Battery saves persisted** - `rust-engineer` + `kotlin-specialist`.
       SRAM/Flash/EEPROM are emulated but never written to disk, so in-game
       saves die with the process.
-- [ ] **Render path** - `kotlin-specialist`. `EmulationScreen.kt:186` builds a
-      fresh ~150 KB `Bitmap` 60 times a second. Reuse one bitmap with
-      `setPixels` first; the OpenGL ES path can wait until it is measured to
-      be needed.
+- [x] **Render path** - `kotlin-specialist`. The bitmap, its pixel staging
+      buffer and the `ImageBitmap` wrapper are each allocated once and reused.
+      The OpenGL ES path still waits on a measurement. Unverified: not compiled.
 - [ ] **Audio verified against a game** - `kotlin-specialist`. The
       `AudioTrack` path is wired and the core is the timing master, but no
       game has ever driven it. Measure underruns and drift over ten minutes.
