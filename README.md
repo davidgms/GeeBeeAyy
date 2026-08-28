@@ -80,22 +80,39 @@ The hardware we need to emulate accurately:
 ## Features
 
 ### Phase 1 - Core Emulation (MVP)
-- [ ] ARM7TDMI interpreter (ARM + THUMB instruction sets)
-- [ ] Scanline-based PPU (modes 0-5, sprites, affine backgrounds)
-- [ ] Audio output (PCM + PSG channels)
-- [ ] Memory bus + I/O register dispatch
-- [ ] DMA controller (4 channels)
-- [ ] Timer system (4 timers)
-- [ ] ROM loading (.gba format)
-- [ ] Save type detection (SRAM, Flash, EEPROM)
-- [ ] HLE BIOS (no original BIOS required)
+
+**[`ROADMAP.md`](ROADMAP.md) is the authoritative status.** This list is a
+summary and has been wrong before - it claimed a complete CPU while every
+second instruction was being skipped. A box here means a test proves it.
+
+- [x] ARM7TDMI interpreter - passes jsmolka's `arm`, `thumb` and `memory` suites
+- [x] Memory bus + I/O register dispatch - region mirroring, 8-bit video and
+      save-region write rules
+- [x] DMA controller (4 channels) - raises IF bits 8-11
+- [x] Timer system (4 timers) - raises IF bits 3-6
+- [x] ROM loading (.gba format)
+- [x] Save type detection, and SRAM/Flash wired to the bus - passes the `sram`,
+      `flash64`, `flash128` and `none` suites. **EEPROM is byte-addressed RAM,
+      not the serial protocol** - see `docs/save-data.md`
+- [x] HLE BIOS - the common SWIs; `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are
+      still stubs
+- [~] Scanline-based PPU - mode 0 verified against test ROMs; modes 1, 2, 4, 5,
+      sprites, windows, mosaic and blending are unverified
+- [~] Audio output - the PSG channels and FIFOs run and a channel can be
+      triggered, but no game has ever driven them and no device has played them
 
 ### Phase 2 - Android Frontend
-- [ ] Kotlin + Jetpack Compose UI
-- [ ] Customizable on-screen touch controls
+
+**None of the Android code has ever been compiled** - there is no local SDK and
+CI has not yet run a successful build. Treat every item here as written but
+unverified.
+
+- [x] Kotlin + Jetpack Compose UI
+- [x] On-screen touch controls, wired to the core
+- [x] Save states (10 slots per game) and battery saves persisted to disk
+- [x] Fast forward (2x, 4x)
+- [ ] Customizable on-screen touch controls (size, position, opacity)
 - [ ] Bluetooth/USB controller support (Xbox, PS, Switch Pro)
-- [ ] Save states (10 slots per game)
-- [ ] Fast forward (2x, 4x)
 - [ ] Screen scaling (1x, 2x, 3x, fit)
 - [ ] Screen filters (2xSaI, CRT, pixel-perfect)
 - [ ] ROM browser with cover art + metadata
