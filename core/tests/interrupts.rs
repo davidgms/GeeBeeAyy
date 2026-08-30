@@ -307,7 +307,9 @@ fn a_halted_cpu_is_woken_by_vblank() {
     gba.bus.io.ime = 0; // deliberately masked: it must not matter
     gba.bus.io.halt = true;
 
-    for _ in 0..300 {
+    // A halted step advances to the next PPU event, not a whole scanline, so
+    // reaching line 160 takes rather more than 160 of them.
+    for _ in 0..1000 {
         gba.step();
         if !gba.bus.io.halt {
             break;
@@ -328,4 +330,35 @@ fn intr_wait_forces_ime() {
     gba.bus.io.ime = 0;
     gba.cpu.step(&mut gba.bus);
     assert_eq!(gba.bus.io.ime, 1, "VBlankIntrWait must force IME=1");
+}
+
+#[test]
+fn a_halted_cpu_still_sees_hblank() {
+    // A halted step used to advance a whole scanline in one go, which walks
+    // straight over the HBlank boundary: a game that halts with the HBlank
+    // IRQ enabled got one interrupt a frame instead of one per line.
+    use geebeeayy_core::Gba;
+    let mut gba = Gba::new();
+    let mut data = vec![0u8; 0x200];
+    data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&data).unwrap();
+
+    gba.bus.write16(0x0400_0004, 0x0010); // HBlank IRQ enable
+    gba.bus.io.ie = 0x0002;
+    gba.bus.io.ime = 0;
+
+    let mut hblanks = 0;
+    let target = gba.cycles + 280_896; // one frame
+    while gba.cycles < target {
+        gba.bus.io.halt = true;
+        gba.bus.io.if_ = 0;
+        gba.step();
+        if gba.bus.io.if_ & 0x0002 != 0 {
+            hblanks += 1;
+        }
+    }
+    assert!(
+        hblanks > 200,
+        "expected an HBlank a scanline while halted, got {hblanks}"
+    );
 }

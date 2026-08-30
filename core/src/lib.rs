@@ -65,13 +65,15 @@ impl Gba {
         let before = self.cycles;
         // If halted, just advance PPU until an interrupt wakes us
         if self.cpu.halted || self.bus.io.halt {
-            // Advance one scanline at a time so a HALT cannot outrun the PPU
-            // that has to wake it.
-            const SCANLINE: u32 = 1232;
-            self.ppu.tick(SCANLINE, &mut self.bus, &mut self.dma);
-            self.timer.tick(SCANLINE, &mut self.bus);
-            self.apu.tick(SCANLINE);
-            self.cycles += SCANLINE as u64;
+            // Advance to the next PPU event, never past it. A whole
+            // scanline in one tick steps over HBlank, so a game halted with
+            // the HBlank IRQ enabled - and that is most of every frame - was
+            // getting one interrupt a frame instead of 228.
+            let step = self.ppu.cycles_to_next_event();
+            self.ppu.tick(step, &mut self.bus, &mut self.dma);
+            self.timer.tick(step, &mut self.bus);
+            self.apu.tick(step);
+            self.cycles += step as u64;
 
             // The PPU's pending flags have to reach IF here too. Routing them
             // only on the running path meant a halted CPU never saw VBlank and

@@ -1067,6 +1067,20 @@ impl Ppu {
         }
     }
 
+    /// Cycles until the next scanline boundary or HBlank start, whichever
+    /// comes first. A halted CPU has to be advanced in these steps: ticking a
+    /// whole scanline at once walks straight past HBlank, so an enabled
+    /// HBlank IRQ never fires while the game is waiting in HALT - which is
+    /// most of every frame.
+    pub fn cycles_to_next_event(&self) -> u32 {
+        if self.cycle_counter < 960 {
+            960 - self.cycle_counter
+        } else {
+            1232 - self.cycle_counter.min(1232)
+        }
+        .max(1)
+    }
+
     pub fn vcount_pending(&mut self) -> bool {
         if self.vcount_irq_pending {
             self.vcount_irq_pending = false;
