@@ -208,6 +208,9 @@ impl Gba {
         if self.ppu.hblank_pending() {
             self.bus.io.request_interrupt(0x0002);
         }
+        if self.ppu.vcount_pending() {
+            self.bus.io.request_interrupt(0x0004);
+        }
     }
 
     fn apu_sound_write(&mut self, offset: u32, _value: u8) {

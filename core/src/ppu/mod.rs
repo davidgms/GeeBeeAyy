@@ -11,6 +11,7 @@ pub struct Ppu {
     vblank_irq_pending: bool,
     hblank_irq_pending: bool,
     vcount_irq_pending: bool,
+    vcount_match: bool,
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
@@ -94,6 +95,7 @@ impl Ppu {
             vblank_irq_pending: false,
             hblank_irq_pending: false,
             vcount_irq_pending: false,
+            vcount_match: false,
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
@@ -164,13 +166,6 @@ impl Ppu {
         if self.cycle_counter >= 1232 {
             self.cycle_counter -= 1232;
             self.sync_from_bus(bus);
-
-            // Read DISPSTAT IRQ enable bits from bus BEFORE rendering
-            let dispstat = bus.read16(0x0400_0004);
-            self.dispstat_vblank_ie = dispstat & 0x0008 != 0;
-            self.dispstat_hblank_ie = dispstat & 0x0010 != 0;
-            self.dispstat_vcount_ie = dispstat & 0x0020 != 0;
-
             self.render_scanline(bus);
             self.scanline += 1;
 
@@ -217,13 +212,29 @@ impl Ppu {
             self.hblank = false;
         }
 
-        // Write DISPSTAT: status bits from PPU state, enable bits from game
-        let dispstat = ((self.vblank as u16) << 0)
+        // DISPSTAT bits 3-15 belong to the game: the three IRQ enables and the
+        // VCount setting it compares against. They have to be re-read here,
+        // every tick, and written straight back. Caching them once per
+        // scanline and composing the register from the cache silently erased
+        // any DISPSTAT write the game made mid-scanline - which is how Yggdra
+        // Union enabled the VBlank IRQ and then waited forever for it.
+        let game_bits = bus.read16(0x0400_0004) & 0xFF38;
+        self.dispstat_vblank_ie = game_bits & 0x0008 != 0;
+        self.dispstat_hblank_ie = game_bits & 0x0010 != 0;
+        self.dispstat_vcount_ie = game_bits & 0x0020 != 0;
+
+        // Bit 2 is the VCounter match against DISPSTAT bits 8-15, not a
+        // second VBlank flag.
+        let vcount_match = self.scanline == (game_bits >> 8);
+        if vcount_match && !self.vcount_match && self.dispstat_vcount_ie {
+            self.vcount_irq_pending = true;
+        }
+        self.vcount_match = vcount_match;
+
+        let dispstat = game_bits
+            | (self.vblank as u16)
             | ((self.hblank as u16) << 1)
-            | (((self.scanline >= 160 && self.scanline <= 226) as u16) << 2)
-            | ((self.dispstat_vcount_ie as u16) << 5)
-            | ((self.dispstat_hblank_ie as u16) << 4)
-            | ((self.dispstat_vblank_ie as u16) << 3);
+            | ((vcount_match as u16) << 2);
         bus.write16(0x0400_0004, dispstat);
 
         // Write VCOUNT
@@ -1050,6 +1061,15 @@ impl Ppu {
     pub fn hblank_pending(&mut self) -> bool {
         if self.hblank_irq_pending {
             self.hblank_irq_pending = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn vcount_pending(&mut self) -> bool {
+        if self.vcount_irq_pending {
+            self.vcount_irq_pending = false;
             true
         } else {
             false

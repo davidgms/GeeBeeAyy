@@ -93,3 +93,44 @@ fn text_renders_over_the_backdrop() {
         "text should cover a small part of the screen, covered {text} pixels"
     );
 }
+
+/// The PPU composes DISPSTAT every tick. It used to build the whole register
+/// from cached copies of the IRQ-enable bits refreshed once per scanline, so a
+/// game that enabled the VBlank IRQ mid-scanline had its write erased a few
+/// cycles later and then waited on an interrupt that could never fire.
+#[test]
+fn dispstat_keeps_the_irq_enable_bits_the_game_wrote() {
+    let mut gba = Gba::new();
+    // VBlank + HBlank + VCount IRQ enabled, VCount setting 0x50.
+    gba.bus.write16(0x0400_0004, 0x5038);
+    gba.run_frame();
+    let dispstat = gba.bus.read16(0x0400_0004);
+    assert_eq!(
+        dispstat & 0xFF38,
+        0x5038,
+        "the PPU overwrote the game's DISPSTAT control bits (got {dispstat:04X})"
+    );
+}
+
+/// DISPSTAT bit 2 is the VCounter match against bits 8-15, and a match with
+/// bit 5 set raises IRQ 0x0004. It used to be hard-wired to the VBlank range,
+/// so bit 2 read back as a second VBlank flag and the IRQ never fired.
+#[test]
+fn vcount_match_sets_bit_2_and_requests_its_interrupt() {
+    let mut gba = Gba::new();
+    gba.bus.write16(0x0400_0004, 0x2020); // VCount IRQ on, setting = 0x20
+    gba.bus.write16(0x0400_0200, 0x0004); // IE: VCounter
+    while gba.bus.read16(0x0400_0006) != 0x20 {
+        gba.step();
+    }
+    assert_ne!(
+        gba.bus.read16(0x0400_0004) & 0x0004,
+        0,
+        "VCounter match flag not set at VCOUNT == the DISPSTAT setting"
+    );
+    assert_ne!(
+        gba.bus.read16(0x0400_0202) & 0x0004,
+        0,
+        "VCounter match did not request its interrupt"
+    );
+}

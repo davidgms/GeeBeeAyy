@@ -406,7 +406,9 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
         // Format 18: Unconditional branch
         0b1110 => {
-            let offset11 = (instruction & 0x7FF) as i16 as i32;
+            // The offset is 11 bits *signed*. Widening the masked field as if
+            // it were positive sends every backward branch 0x1000 forward.
+            let offset11 = (((instruction & 0x7FF) as i32) << 21) >> 21;
             let pc = cpu.registers[15];
             let target = pc.wrapping_add((offset11 << 1) as u32);
             cpu.set_reg(15, target);

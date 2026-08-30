@@ -526,3 +526,36 @@ fn thumb_add_and_sub_immediate_update_the_register() {
     assert_eq!(cpu.registers[5], 24, "add r5,#12 twice should give 24");
     assert_eq!(cpu.registers[4], 3, "sub r4,#1 twice from 5 should give 3");
 }
+
+#[test]
+fn thumb_backward_unconditional_branch() {
+    // Format 18's 11-bit offset is signed. Masked to 11 bits and widened as if
+    // it were positive, a backward `b` lands 0x1000 above the branch instead
+    // of below it - which is exactly how Yggdra Union's division routine fell
+    // out of its own function and into the C++ throw path.
+    //
+    //   0: mov r0, #0    2000
+    //   2: b   +2        E001  forward, over the traps, to 8
+    //   4: mov r0, #0x77 2077  trap
+    //   6: mov r2, #9    2209  the backward branch's target
+    //   8: mov r1, #5    2105
+    //   A: b   -8        E7FC  back to 6
+    let (mut cpu, mut bus) = setup_thumb(&[0x2000, 0xE001, 0x2077, 0x2209, 0x2105, 0xE7FC]);
+    steps(&mut cpu, &mut bus, 3); // mov r0,#0 ; b +2 ; mov r1,#5
+    assert_eq!(
+        cpu.registers[0], 0,
+        "forward B should have skipped the trap"
+    );
+    assert_eq!(
+        cpu.registers[1], 5,
+        "forward B landed on the wrong halfword"
+    );
+    cpu.step(&mut bus); // b -8
+    assert_eq!(
+        cpu.registers[15],
+        BASE + 6,
+        "backward B must sign-extend its 11-bit offset"
+    );
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[2], 9, "backward B did not execute its target");
+}
