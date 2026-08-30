@@ -19,6 +19,11 @@ pub struct MemoryBus {
     /// `Dma::write_control` and needs `&mut MemoryBus`, which is the borrow
     /// the store is already holding. Same shape as `sound_writes`.
     dma_writes: Vec<usize>,
+    /// Timer register writes, same shape again. `Timer::set_control` and
+    /// `set_reload` had no caller outside the tests for the project's whole
+    /// history, so no timer a game started ever ran: no timer interrupt, and
+    /// no DMA sound, which is driven entirely by timer overflows.
+    timer_writes: Vec<(usize, bool, u16)>,
     prefetch_enabled: bool,
     prefetch_seq_count: u32,
     prefetch_cyc: u32,
@@ -43,6 +48,7 @@ impl MemoryBus {
             waitcnt: 0,
             sound_writes: Vec::new(),
             dma_writes: Vec::new(),
+            timer_writes: Vec::new(),
             prefetch_enabled: false,
             prefetch_seq_count: 0,
             prefetch_cyc: 0,
@@ -312,6 +318,16 @@ impl MemoryBus {
                     0xBB | 0xC7 | 0xD3 | 0xDF => {
                         self.dma_writes.push((offset - 0xBB) / 12);
                     }
+                    // High byte of TMxCNT_L (reload) or TMxCNT_H (control),
+                    // latched for the same reason as DMA's: it is the last
+                    // byte a 16-bit write touches.
+                    0x101 | 0x103 | 0x105 | 0x107 | 0x109 | 0x10B | 0x10D | 0x10F => {
+                        let timer = (offset - 0x100) / 4;
+                        let is_control = offset % 4 == 3;
+                        let base = offset & !1;
+                        let word = self.io_regs[base] as u16 | ((self.io_regs[base + 1] as u16) << 8);
+                        self.timer_writes.push((timer, is_control, word));
+                    }
                     _ => {}
                 }
             }
@@ -401,6 +417,10 @@ impl MemoryBus {
 
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
         std::mem::take(&mut self.sound_writes)
+    }
+
+    pub fn drain_timer_writes(&mut self) -> Vec<(usize, bool, u16)> {
+        std::mem::take(&mut self.timer_writes)
     }
 
     pub fn drain_dma_writes(&mut self) -> Vec<usize> {

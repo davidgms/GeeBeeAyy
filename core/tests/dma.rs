@@ -151,3 +151,61 @@ fn count_of_zero_means_the_maximum_length() {
     );
     assert_eq!(gba.bus.read16(0x0201_7FFE), 0x5678);
 }
+
+#[test]
+fn dma_sound_plays_at_the_rate_its_timer_overflows() {
+    // Direct Sound is a timer, a FIFO and a DMA channel working together:
+    // each timer overflow pops one byte from the FIFO into a latch the mixer
+    // holds until the next overflow, and the DMA tops the FIFO up when it
+    // falls half empty.
+    //
+    // `Apu::on_timer_overflow` used to be an empty stub while the mixer popped
+    // the FIFO itself, once per output sample. Sound then played at the output
+    // rate rather than the rate the game asked for, and drained far faster
+    // than it was refilled. Separately the timers were never wired to the bus
+    // at all, so nothing overflowed in the first place.
+    let mut gba = spinning_gba();
+
+    // Alternating +/- bytes: every FIFO byte flips the sign of the output, so
+    // counting sign changes counts FIFO pops.
+    for i in 0..0x800u32 {
+        gba.bus
+            .write8(0x0300_0000 + i, if i % 2 == 0 { 0x40 } else { 0xC0 });
+    }
+
+    // One overflow every 8 output samples: 8 * 964 cycles, prescaler 1.
+    let period = 8 * 964u32;
+    gba.bus.write16(0x0400_0100, (0x1_0000 - period) as u16);
+    gba.bus.write16(0x0400_0102, 0x0080);
+
+    // Master on; DMA A at full volume, both speakers, timer 0.
+    gba.bus.write16(0x0400_0084, 0x0080);
+    gba.bus.write16(0x0400_0082, 0x0304);
+
+    // DMA1 -> FIFO A, 32-bit, repeat, special timing.
+    gba.bus.write32(0x0400_00BC, 0x0300_0000);
+    gba.bus.write32(0x0400_00C0, 0x0400_00A0);
+    gba.bus.write16(0x0400_00C4, 4);
+    gba.bus.write16(0x0400_00C6, 0xB600);
+
+    gba.run_frame();
+    let samples = gba.apu_samples();
+    let non_zero = samples.iter().filter(|&&s| s != 0.0).count();
+    assert!(
+        non_zero > samples.len() * 9 / 10,
+        "the FIFO ran dry: only {non_zero} of {} samples carry signal",
+        samples.len()
+    );
+
+    let flips = samples
+        .windows(2)
+        .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+        .count();
+    // 280896 cycles a frame at one overflow per 7712 is ~36 pops. Popping per
+    // output sample instead would give ~291.
+    assert!(
+        (20..80).contains(&flips),
+        "DMA sound played at the output rate, not the timer's: {flips} sign changes in {} samples",
+        samples.len()
+    );
+}

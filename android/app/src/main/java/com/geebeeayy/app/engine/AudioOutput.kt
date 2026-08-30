@@ -88,7 +88,10 @@ class AudioOutput {
      */
     fun write(samples: FloatArray, count: Int): Boolean {
         val active = track ?: return false
-        if (count <= 0) return true
+        // No samples means nothing to block on, so the caller has to pace
+        // itself this frame. Returning true here let the emulation loop
+        // free-run at whatever speed the CPU allowed.
+        if (count <= 0) return false
         val written = active.write(samples, 0, count, AudioTrack.WRITE_BLOCKING)
         if (written < 0) {
             Log.e(TAG, "Audio write failed (code $written)")

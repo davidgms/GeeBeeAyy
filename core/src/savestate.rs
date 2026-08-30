@@ -11,7 +11,7 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// register file and the cartridge's battery save.
 /// v4 added the APU, so sound continues across a load instead of restarting
 /// from silence.
-const SAVE_VERSION: u32 = 4;
+const SAVE_VERSION: u32 = 5;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {

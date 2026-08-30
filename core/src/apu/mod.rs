@@ -147,6 +147,11 @@ pub struct Apu {
     envelope_tick_counter: u32,
     /// Timer that drives FIFO playback (0 or 1)
     pub fifo_timer: u8,
+    fifo_b_timer: u8,
+    /// The byte each FIFO's timer last popped. DMA sound holds that value
+    /// until the next overflow - the FIFO is not read at the output rate.
+    fifo_a_latch: i8,
+    fifo_b_latch: i8,
     /// Cycles accumulated for FIFO sample output
     fifo_cycles: u32,
     /// Whether FIFO A/B are enabled via SOUNDCNT_H
@@ -196,6 +201,9 @@ impl Apu {
             sound_out_mix: 0,
             envelope_tick_counter: 0,
             fifo_timer: 0,
+            fifo_b_timer: 0,
+            fifo_a_latch: 0,
+            fifo_b_latch: 0,
             fifo_cycles: 0,
             fifo_a_enabled: false,
             fifo_b_enabled: false,
@@ -205,8 +213,6 @@ impl Apu {
     pub fn write_soundcnt_l(&mut self, value: u16) {
         self.master_vol_left = (value & 0x07) as u8;
         self.master_vol_right = ((value >> 8) & 0x07) as u8;
-        self.sound1_vol = ((value >> 12) & 1) as u8;
-        self.sound2_vol = ((value >> 13) & 1) as u8;
     }
 
     pub fn write_soundcnt_h(&mut self, value: u16) {
@@ -220,12 +226,18 @@ impl Apu {
         if value & 0x0800 != 0 {
             self.fifo_a.reset();
         }
-        // FIFO A enable (bit 8) and volume A (bit 2)
-        self.fifo_a_enabled = value & 0x0100 != 0;
-        // FIFO B enable (bit 9) and volume B (bit 3)
-        self.fifo_b_enabled = value & 0x0200 != 0;
-        // Timer select for FIFO (bit 10): 0=Timer0, 1=Timer1
+        // GBATEK, SOUNDCNT_H: bit 2 is DMA sound A's volume and bit 3 is B's -
+        // they are not in SOUNDCNT_L, where this used to read them from bits
+        // 12 and 13, which are two of the PSG channel enables.
+        self.sound1_vol = ((value >> 2) & 1) as u8;
+        self.sound2_vol = ((value >> 3) & 1) as u8;
+        // A channel is enabled if it is routed to either speaker: bits 8 and 9
+        // for A, 12 and 13 for B.
+        self.fifo_a_enabled = value & 0x0300 != 0;
+        self.fifo_b_enabled = value & 0x3000 != 0;
+        // Each FIFO picks its own timer: bit 10 for A, bit 14 for B.
         self.fifo_timer = ((value >> 10) & 1) as u8;
+        self.fifo_b_timer = ((value >> 14) & 1) as u8;
     }
 
     /// SOUNDCNT_X (0x04000084). GBATEK: "Bit 7 R/W PSG/FIFO Master Enable
@@ -399,14 +411,25 @@ impl Apu {
         self.fifo_b.is_half_empty()
     }
 
-    /// Called when a timer overflows. If it's the FIFO timer, trigger FIFO playback.
+    /// A timer overflowed. This - and nothing else - advances DMA sound: each
+    /// FIFO pops one byte when its selected timer overflows, and the mixer
+    /// holds that byte until the next one.
+    ///
+    /// This used to be an empty stub while the mixer popped the FIFOs itself,
+    /// once per output sample. That drained them far faster than the game's
+    /// timer refilled them, so the sound came out as a burst every few frames
+    /// with silence in between - a thump, not music - and it played at the
+    /// output rate instead of the rate the game asked for.
     pub fn on_timer_overflow(&mut self, timer: u8) {
-        if !self.sound_on || timer != self.fifo_timer {
+        if !self.sound_on {
             return;
         }
-        // On real GBA, each timer overflow plays one sample from each enabled FIFO
-        // The sample rate depends on the timer's prescaler
-        // For now, we just output the current FIFO sample
+        if timer == self.fifo_timer && !self.fifo_a.is_empty() {
+            self.fifo_a_latch = self.fifo_a.pop();
+        }
+        if timer == self.fifo_b_timer && !self.fifo_b.is_empty() {
+            self.fifo_b_latch = self.fifo_b.pop();
+        }
     }
 
     fn duty_wave(duty: u8, idx: u32) -> f32 {
@@ -510,18 +533,16 @@ impl Apu {
                 sample += noise_sample * (self.ch4.volume_cur as f32 / 15.0) * 0.15;
             }
 
-            // FIFO A (Direct Sound A)
-            if !self.fifo_a.is_empty() {
-                let fifo_a_sample = self.fifo_a.pop() as f32 / 128.0;
-                let vol_a = if self.sound1_vol == 1 { 2.0 } else { 1.0 };
-                sample += fifo_a_sample * vol_a * 0.5;
+            // FIFO A (Direct Sound A). The held latch, not a fresh pop.
+            if self.fifo_a_enabled {
+                let vol_a = if self.sound1_vol == 1 { 1.0 } else { 0.5 };
+                sample += (self.fifo_a_latch as f32 / 128.0) * vol_a;
             }
 
             // FIFO B (Direct Sound B)
-            if !self.fifo_b.is_empty() {
-                let fifo_b_sample = self.fifo_b.pop() as f32 / 128.0;
-                let vol_b = if self.sound2_vol == 1 { 2.0 } else { 1.0 };
-                sample += fifo_b_sample * vol_b * 0.5;
+            if self.fifo_b_enabled {
+                let vol_b = if self.sound2_vol == 1 { 1.0 } else { 0.5 };
+                sample += (self.fifo_b_latch as f32 / 128.0) * vol_b;
             }
 
             self.sample_buffer.push(sample.clamp(-1.0, 1.0));
@@ -827,6 +848,9 @@ impl Apu {
         buf.extend_from_slice(&self.sound_out_mix.to_le_bytes());
         buf.extend_from_slice(&self.envelope_tick_counter.to_le_bytes());
         buf.extend_from_slice(&self.fifo_timer.to_le_bytes());
+        buf.extend_from_slice(&self.fifo_b_timer.to_le_bytes());
+        buf.extend_from_slice(&self.fifo_a_latch.to_le_bytes());
+        buf.extend_from_slice(&self.fifo_b_latch.to_le_bytes());
         buf.extend_from_slice(&self.fifo_cycles.to_le_bytes());
         buf.push(self.fifo_a_enabled as u8);
         buf.push(self.fifo_b_enabled as u8);
@@ -848,6 +872,9 @@ impl Apu {
         self.sound_out_mix = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
         self.envelope_tick_counter = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
         self.fifo_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.fifo_b_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.fifo_a_latch = i8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        self.fifo_b_latch = i8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
         self.fifo_cycles = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
         self.fifo_a_enabled = take(cur, 1)?[0] != 0;
         self.fifo_b_enabled = take(cur, 1)?[0] != 0;

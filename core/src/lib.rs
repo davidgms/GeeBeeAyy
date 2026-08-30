@@ -70,15 +70,20 @@ impl Gba {
             // the HBlank IRQ enabled - and that is most of every frame - was
             // getting one interrupt a frame instead of 228.
             let step = self.ppu.cycles_to_next_event();
+            self.apply_dma_writes();
+            self.apply_timer_writes();
             self.ppu.tick(step, &mut self.bus, &mut self.dma);
             self.timer.tick(step, &mut self.bus);
             self.apu.tick(step);
             self.cycles += step as u64;
 
-            // The PPU's pending flags have to reach IF here too. Routing them
-            // only on the running path meant a halted CPU never saw VBlank and
-            // could never be woken - which is every GBA game's main loop.
-            self.route_ppu_interrupts();
+            // The hardware does not stop for HALT, so neither can this. The
+            // sound FIFOs, the timer overflows that drain them and the PPU's
+            // interrupt flags all have to keep moving, and a game spends most
+            // of every frame halted: skipping this block here left the FIFOs
+            // starved except during the brief run between interrupts, which
+            // is audible as a thump once a frame instead of music.
+            self.post_tick();
 
             // GBATEK: HALT ends when an *enabled* interrupt occurs, judged on
             // IE & IF alone. IME gates whether the CPU jumps to the handler,
@@ -100,6 +105,7 @@ impl Gba {
         // configured in time for an HBlank or VBlank that lands in the same
         // step.
         self.apply_dma_writes();
+        self.apply_timer_writes();
         self.timer.tick(cycles as u32, &mut self.bus);
         self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
         self.apu.tick(cycles as u32);
@@ -108,39 +114,7 @@ impl Gba {
             self.bus.prefetch_tick();
         }
 
-        // DMA Sound. Either channel can feed either FIFO - the destination
-        // register decides, not the channel number. Keying FIFO A to DMA1 and
-        // B to DMA2 dropped the data of any game that wired them the other way
-        // round, *after* `do_sound_transfer` had already advanced the source.
-        for ch in [1usize, 2] {
-            let wanted = match self.dma.channels[ch].dest {
-                0x0400_00A0 => self.apu.fifo_a_half_empty(),
-                0x0400_00A4 => self.apu.fifo_b_half_empty(),
-                _ => false,
-            };
-            if !wanted { continue; }
-            if let Some((dest, data)) = self.dma.do_sound_transfer(ch, &mut self.bus) {
-                for &byte in &data {
-                    if dest == 0x0400_00A0 {
-                        self.apu.write_fifo_a(byte as i8);
-                    } else {
-                        self.apu.write_fifo_b(byte as i8);
-                    }
-                }
-            }
-        }
-
-        let overflows = self.timer.drain_overflows();
-        for (i, &overflow) in overflows.iter().enumerate() {
-            if overflow { self.apu.on_timer_overflow(i as u8); }
-        }
-
-        let writes = self.bus.drain_sound_writes();
-        for (offset, value) in writes {
-            self.apu_sound_write(offset, value);
-        }
-
-        self.route_ppu_interrupts();
+        self.post_tick();
 
         // Deliver IRQs to CPU
         if self.bus.io.interrupt_pending() {
@@ -203,6 +177,71 @@ impl Gba {
     ///
     /// Called from both the running and the halted path: a halted CPU is
     /// woken by IF, so skipping this while halted deadlocks the machine.
+    /// Work that follows every tick of the machine, whether the CPU executed
+    /// an instruction or was halted: refill the sound FIFOs, hand the timers'
+    /// overflows to the APU, apply queued sound-register writes, and route the
+    /// PPU's pending interrupts into IF.
+    /// Hand the timer register writes the bus queued to the timer unit.
+    /// A write to `TMxCNT_L` is a reload, one to `TMxCNT_H` is control.
+    fn apply_timer_writes(&mut self) {
+        for (timer, is_control, value) in self.bus.drain_timer_writes() {
+            if is_control {
+                self.timer.set_control(timer, value);
+            } else {
+                self.timer.set_reload(timer, value);
+            }
+        }
+    }
+
+    fn post_tick(&mut self) {
+        // DMA Sound. Either channel can feed either FIFO - the destination
+        // register decides, not the channel number. Keying FIFO A to DMA1 and
+        // B to DMA2 dropped the data of any game that wired them the other way
+        // round, *after* `do_sound_transfer` had already advanced the source.
+        for ch in [1usize, 2] {
+            let wanted = match self.dma.channels[ch].dest {
+                0x0400_00A0 => self.apu.fifo_a_half_empty(),
+                0x0400_00A4 => self.apu.fifo_b_half_empty(),
+                _ => false,
+            };
+            if !wanted {
+                continue;
+            }
+            if let Some((dest, data)) = self.dma.do_sound_transfer(ch, &mut self.bus) {
+                for &byte in &data {
+                    if dest == 0x0400_00A0 {
+                        self.apu.write_fifo_a(byte as i8);
+                    } else {
+                        self.apu.write_fifo_b(byte as i8);
+                    }
+                }
+            }
+        }
+
+        let overflows = self.timer.drain_overflows();
+        for (i, &count) in overflows.iter().enumerate() {
+            for _ in 0..count {
+                self.apu.on_timer_overflow(i as u8);
+            }
+        }
+        // TMxCNT_L reads the live counter, not the reload the game wrote
+        // there. Nothing published it before, so a game polling a timer saw
+        // its own reload value forever.
+        for (i, &c) in self.timer.counters().iter().enumerate() {
+            let base = 0x100 + i * 4;
+            let regs = self.bus.io_regs_data_mut();
+            regs[base] = c as u8;
+            regs[base + 1] = (c >> 8) as u8;
+        }
+
+        let writes = self.bus.drain_sound_writes();
+        for (offset, value) in writes {
+            self.apu_sound_write(offset, value);
+        }
+
+        self.route_ppu_interrupts();
+    }
+
     fn route_ppu_interrupts(&mut self) {
         if self.ppu.vblank_pending() {
             self.bus.io.request_interrupt(0x0001);

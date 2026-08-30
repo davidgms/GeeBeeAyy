@@ -458,3 +458,52 @@ fn the_bios_handler_leaves_if_for_the_game_to_acknowledge() {
         "the game handler must still see its own IF bit"
     );
 }
+
+#[test]
+fn writing_the_timer_registers_through_the_bus_starts_the_timer() {
+    // `Timer::set_control` and `set_reload` had no caller outside this file
+    // for the project's whole history: the bus stored TMxCNT into `io_regs`
+    // and the timer unit never heard about it. No timer a game started ever
+    // ran, so no timer interrupt fired and DMA sound - which is driven
+    // entirely by timer overflows - was dead.
+    use geebeeayy_core::Gba;
+    let mut gba = Gba::new();
+    let mut data = vec![0u8; 0x200];
+    data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&data).unwrap();
+
+    gba.bus.write16(0x0400_0100, 0xFF00); // TM0CNT_L: reload
+    gba.bus.write16(0x0400_0102, 0x00C0); // TM0CNT_H: enable + IRQ, prescaler 1
+    gba.bus.io.ie = 0x0008;
+
+    for _ in 0..200 {
+        gba.step();
+        if gba.bus.io.if_ & 0x0008 != 0 {
+            return;
+        }
+    }
+    panic!("timer 0 never overflowed after its registers were written through the bus");
+}
+
+#[test]
+fn tm_cnt_l_reads_the_running_counter_not_the_reload() {
+    // TMxCNT_L is write-reload, read-counter. Reads used to return whatever
+    // reload the game last wrote there, so a game timing anything off a timer
+    // read the same value forever.
+    use geebeeayy_core::Gba;
+    let mut gba = Gba::new();
+    let mut data = vec![0u8; 0x200];
+    data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&data).unwrap();
+
+    gba.bus.write16(0x0400_0100, 0x0000);
+    gba.bus.write16(0x0400_0102, 0x0080); // enable, prescaler 1
+    for _ in 0..50 {
+        gba.step();
+    }
+    assert_ne!(
+        gba.bus.read16(0x0400_0100),
+        0,
+        "TM0CNT_L still reads back the reload the game wrote"
+    );
+}

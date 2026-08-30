@@ -9,8 +9,11 @@ pub struct Timer {
     pub(crate) prescaler: [u32; 4],
     pub(crate) irq_enabled: [bool; 4],
     pub(crate) tick_counters: [u32; 4],
-    /// Tracks which timers overflowed this tick (for APU sound DMA)
-    pub overflow_flags: [bool; 4],
+    /// How many times each timer overflowed since the last drain. DMA sound
+    /// pops one FIFO byte per overflow, so this has to be a count: a bool
+    /// silently collapses the several overflows a single tick can produce at
+    /// a short reload, and the FIFO then drains slower than the game fills it.
+    pub overflow_flags: [u32; 4],
 }
 
 impl Timer {
@@ -24,7 +27,7 @@ impl Timer {
             prescaler: [1; 4],
             irq_enabled: [false; 4],
             tick_counters: [0; 4],
-            overflow_flags: [false; 4],
+            overflow_flags: [0; 4],
         }
     }
 
@@ -48,7 +51,7 @@ impl Timer {
                 // Timer overflow at 0x10000 (16-bit counter)
                 if self.counters[i] >= 0x10000 {
                     self.counters[i] = self.reloads[i];
-                    self.overflow_flags[i] = true;
+                    self.overflow_flags[i] += 1;
 
                     // Handle cascade to next timer
                     if i < 3 && self.cascaded[i + 1] {
@@ -100,10 +103,18 @@ impl Timer {
         }
     }
 
-    /// Drain overflow flags (returns which timers overflowed).
-    pub fn drain_overflows(&mut self) -> [bool; 4] {
-        let flags = self.overflow_flags;
-        self.overflow_flags = [false; 4];
-        flags
+    /// Drain the per-timer overflow counts since the last call.
+    pub fn drain_overflows(&mut self) -> [u32; 4] {
+        std::mem::take(&mut self.overflow_flags)
+    }
+
+    /// The live counter of each timer, for writing back into `TMxCNT_L`.
+    pub fn counters(&self) -> [u16; 4] {
+        [
+            self.counters[0] as u16,
+            self.counters[1] as u16,
+            self.counters[2] as u16,
+            self.counters[3] as u16,
+        ]
     }
 }
