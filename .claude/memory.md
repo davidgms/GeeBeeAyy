@@ -413,17 +413,74 @@ before touching anything the roadmap calls done - grep for a *caller*, not for
 a `pub fn`. Still unaudited by that standard: video-capture DMA (timing 3 on
 DMA3) is a `TODO` in `Dma::on_vcounter` and does nothing.
 
-### 2026-08-30 - Yggdra Union now derails in its task switcher, not in DMA
+### 2026-08-30 - Yggdra Union boots: four bugs between the DMA fix and the title screen
 
-With DMA wired, Yggdra Union clears the `0x08093030` poll loop, runs its boot
-decompression (DMA3, ROM -> EWRAM/IWRAM) and drives the full EEPROM serial
-protocol over DMA3 - 1024 read/write pairs of 17 and 68 halfwords, i.e. a scan
-of a 64 Kbit EEPROM, then 9 write commands. It then runs ~3.03M instructions
-before `mov pc, r0` at `0x080A3FC8` jumps to `0x98F005FC`.
+Superseded the earlier "derails in its task switcher" note - that derail was a
+symptom of the first bug below, not a task-switcher problem.
 
-That code is a task switcher restoring `sp` and `pc` from a control block
-(`ldr r3,[pc,#24]; add r3,r3,r7; ldr r3,[r3]; ...; mov sp,r2; mov pc,r0`),
-entered with `r7 == 0` so it reads an uninitialised table. DISPCNT is still 0
-at that point, so every frame is black. This is a **different, later bug** than
-the DMA hang and is not a DMA regression - no DMA transfer in the trace touches
-the stack or code. Next investigation starts at what leaves `r7` zero.
+The four, in the order they were found and each with a test that fails without
+the fix:
+
+1. **THUMB Format 18 (`B label`) never sign-extended its 11-bit offset.**
+   `core/src/cpu/thumb.rs` widened `instruction & 0x7FF` through `as i16`,
+   which is always positive, so **every backward unconditional branch landed
+   0x1000 above the branch instead of below it**. Yggdra's `__divsi3`
+   normalisation loop fell out of its own function into the C++ throw path,
+   which then hit `SWI 0xAB` (ARM semihosting `SYS_EXIT`) forever. Fixing it
+   also un-blacked `waimanu`, `jumpingbarnabe` and `powerpig`, which had all
+   rendered nothing since the project started. `jsmolka/gba-tests`' `thumb.gba`
+   passes with the bug present - the suite does not cover it.
+
+2. **The PPU rebuilt DISPSTAT every tick from cached enable bits** refreshed
+   only once per scanline, so a DISPSTAT write made mid-scanline was erased a
+   few cycles later. Bit 2 was also hard-wired to the VBlank range instead of
+   being the VCounter match against bits 8-15, and the VCounter IRQ was never
+   raised. Bits 3-15 are the game's and are now read back and preserved on
+   every tick.
+
+3. **A halted step advanced a whole scanline at once**, stepping straight over
+   HBlank, so a game halted with the HBlank IRQ enabled - most of every frame -
+   got one interrupt per frame instead of 228. `Ppu::cycles_to_next_event`
+   now bounds the step.
+
+4. **The synthetic BIOS IRQ handler acknowledged IF before calling the game's
+   handler.** The real BIOS handler does nothing but save r0-r3/r12/lr, jump to
+   `[0x03007FFC]` and return - it does *not* touch IF and does *not* update the
+   IntrWait flags at `0x03007FF8`; both are the game handler's job. Yggdra's
+   IWRAM dispatcher branches on `IE & IF`, read zero every time, fell through
+   its whole chain and called the wrong handler for every interrupt, so its
+   VBlank work - the only place DISPCNT is written - never ran. This was the
+   last thing between a black screen and the title screen.
+
+Related: HLE `IntrWait` now polls `[0x03007FF8]` and re-executes its own SWI
+until the wanted interrupt arrives, instead of testing IF once. IF is already
+cleared by the time the game's handler returns, so the old version let the
+first interrupt of any kind satisfy a `VBlankIntrWait`.
+
+**Application**: two of these four are cases where *our* HLE was doing the
+game's work for it. When an HLE stub is "helpful", check GBATEK for what the
+real BIOS actually does - a game that implements the hardware contract itself
+is broken by a stub that implements it too.
+
+### 2026-08-30 - A reference emulator is worth more than any amount of tracing
+
+Three of the four Yggdra bugs above came out of hand-tracing our own execution,
+and each took hours. The fourth - the one that actually mattered - took about
+ten minutes once mGBA was available to compare against: a write watchpoint on
+DISPCNT showed which function writes it, a breakpoint chain showed who calls
+that function, and `dis/a 0x03000000` showed the game's own IRQ dispatcher
+reading `IE & IF`.
+
+`mgba-sdl` is installable **without root**: `apt-get download` the package and
+its dependency closure, `dpkg-deb -x` each into one tree, and run it with
+`LD_LIBRARY_PATH` pointing at that tree. `temp/mgba/run.sh` does this and
+survives reboots because it lives in the project. Headless:
+`SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy temp/mgba/run.sh -d <rom>`, then
+feed the CLI debugger on stdin - `watch/w <addr>`, `b <addr>`, `c`, `i`,
+`dis/t`, `dis/a`, `trace N`.
+
+**Application**: reach for it *first* on "game X does not boot", before writing
+a single trace probe. Note mGBA boots through its own BIOS HLE from
+`0x00000350`, so instruction counts and early PCs do not line up with ours -
+compare behaviour at named addresses, not step numbers.
+

@@ -30,6 +30,10 @@ as unverified.
 | `rewind.rs` | ~80 | Bounded ring of save states; cadence left to the frontend. Not wired to any UI. |
 | `ios/` | ~750 | SwiftUI views and an engine wrapper. **No Xcode project - has never been compiled.** |
 
+**Verified on the host 2026-08-30**: *Yggdra Union* boots to its title screen,
+and `waimanu`, `jumpingbarnabe` and `powerpig` render. See Phase 0's exit
+criterion below for what was in the way. Not yet run on a device.
+
 **Verified on hardware 2026-08-30**: all ten GBA inputs reach the core -
 confirmed by 72 consecutive frames of `KEYINPUT=0x03F7` while Start was held.
 `stripes` and `shades` render correctly at integer 3x with nearest-neighbour
@@ -115,6 +119,17 @@ decoder and memory-map bugs that the hand-written tests had missed entirely.
 
 **Exit criterion:** a commercial ROM reaches its title screen with correct
 graphics, and `gba-suite`'s ARM and THUMB suites pass.
+
+**Met 2026-08-30.** *Yggdra Union: We'll Never Fight Alone* boots from a cold
+start through the health-and-safety screen to its title screen, artwork and
+all. `waimanu`, `jumpingbarnabe` and `powerpig` render too, having shown
+nothing at all before the same day's fixes. What stood between the suites
+passing and a game booting was four bugs `gba-suite` does not cover, recorded
+in [`.claude/memory.md`](.claude/memory.md): an unsigned THUMB `B` offset, a
+PPU that overwrote the game's DISPSTAT, a halted CPU that stepped over HBlank,
+and an HLE BIOS interrupt handler that acknowledged IF on the game's behalf.
+
+Verified on the host only. No commercial game has run on a device yet.
 
 ---
 

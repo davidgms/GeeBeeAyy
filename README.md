@@ -85,27 +85,33 @@ The hardware we need to emulate accurately:
 summary and has been wrong before - it claimed a complete CPU while every
 second instruction was being skipped. A box here means a test proves it.
 
+As of 2026-08-30 a commercial game boots: *Yggdra Union* reaches its title
+screen on the host, and the homebrew `waimanu`, `jumpingbarnabe` and
+`powerpig` render. No commercial game has run on a device yet.
+
 - [x] ARM7TDMI interpreter - passes jsmolka's `arm`, `thumb` and `memory` suites
 - [x] Memory bus + I/O register dispatch - region mirroring, 8-bit video and
       save-region write rules
 - [x] DMA controller (4 channels) - raises IF bits 8-11
 - [x] Timer system (4 timers) - raises IF bits 3-6
 - [x] ROM loading (.gba format)
-- [x] Save type detection, and SRAM/Flash wired to the bus - passes the `sram`,
-      `flash64`, `flash128` and `none` suites. **EEPROM is byte-addressed RAM,
-      not the serial protocol** - see `docs/save-data.md`
+- [x] Save type detection, and SRAM/Flash/EEPROM wired to the bus - passes the
+      `sram`, `flash64`, `flash128` and `none` suites. EEPROM is the real
+      serial protocol over DMA - see `docs/save-data.md`
 - [x] HLE BIOS - the common SWIs; `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are
       still stubs
-- [~] Scanline-based PPU - mode 0 verified against test ROMs; modes 1, 2, 4, 5,
-      sprites, windows, mosaic and blending are unverified
+- [~] Scanline-based PPU - mode 0 verified against test ROMs and against
+      *Yggdra Union*'s title screen; modes 1, 2, 4, 5, windows, mosaic and
+      blending are unverified
 - [~] Audio output - the PSG channels and FIFOs run and a channel can be
       triggered, but no game has ever driven them and no device has played them
 
 ### Phase 2 - Android Frontend
 
-**None of the Android code has ever been compiled** - there is no local SDK and
-CI has not yet run a successful build. Treat every item here as written but
-unverified.
+The Android app builds and runs: an APK has been installed on a Xiaomi Mi 10T
+Pro (Android 12), all ten inputs reach the core, and homebrew ROMs render. No
+commercial game has been tried on a device, and audio has not been verified
+there.
 
 - [x] Kotlin + Jetpack Compose UI
 - [x] On-screen touch controls, wired to the core
