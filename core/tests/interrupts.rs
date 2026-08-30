@@ -283,3 +283,49 @@ fn byte_writes_to_video_memory_follow_the_gba_rules() {
     bus.write8(0x0601_0040, 0xEE);
     assert_eq!(bus.read16(0x0601_0040), 0x0000, "OBJ VRAM must ignore byte stores");
 }
+
+#[test]
+fn a_halted_cpu_is_woken_by_vblank() {
+    // The halted path used to tick the PPU without routing its pending flags
+    // into IF, so the wake condition could never become true and every game
+    // that halts waiting for VBlank - the standard main loop - deadlocked.
+    //
+    // GBATEK, BIOS Halt Functions: "Halt mode is terminated when any enabled
+    // interrupts are requested, that is when (IE AND IF) is not zero... the
+    // state of CPUs IRQ disable bit in CPSR register, and the IME register are
+    // don't care".
+    use geebeeayy_core::Gba;
+    let mut gba = Gba::new();
+    let mut data = vec![0u8; 0x200];
+    data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&data).unwrap();
+
+    // DISPSTAT bit 3 is what makes the PPU raise a VBlank IRQ at all; IE then
+    // decides whether it counts as "enabled" for the halt wake-up.
+    gba.bus.write16(0x0400_0004, 0x0008);
+    gba.bus.io.ie = 0x0001;
+    gba.bus.io.ime = 0; // deliberately masked: it must not matter
+    gba.bus.io.halt = true;
+
+    for _ in 0..300 {
+        gba.step();
+        if !gba.bus.io.halt {
+            break;
+        }
+    }
+    assert!(!gba.bus.io.halt, "VBlank never woke the halted CPU");
+    assert_ne!(gba.bus.io.if_ & 1, 0, "the VBlank flag never reached IF");
+}
+
+#[test]
+fn intr_wait_forces_ime() {
+    // GBATEK, SWI 04h: "The function forcefully sets IME=1."
+    use geebeeayy_core::Gba;
+    let mut gba = Gba::new();
+    let mut data = vec![0u8; 0x200];
+    data[0..4].copy_from_slice(&0xEF05_0000u32.to_le_bytes()); // swi 5
+    gba.load_rom(&data).unwrap();
+    gba.bus.io.ime = 0;
+    gba.cpu.step(&mut gba.bus);
+    assert_eq!(gba.bus.io.ime, 1, "VBlankIntrWait must force IME=1");
+}

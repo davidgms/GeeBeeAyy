@@ -55,23 +55,31 @@ fn handle_halt(_cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 }
 
 /// SWI 0x04: IntrWait(r1=discardOldFlags, r2=IEFlags)
+/// SWI 04h. GBATEK: "Continues to wait in Halt state until one (or more) of
+/// the specified interrupt(s) do occur. **The function forcefully sets
+/// IME=1.**"
 fn handle_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let discard = cpu.reg(0) != 0;
-    let ie_flags = (cpu.reg(1) & 0xFFFF) as u16;
+    let wanted = (cpu.reg(1) & 0xFFFF) as u16;
+
+    // Forcing IME is not optional: a game may call this with interrupts
+    // globally masked and rely on the BIOS to enable them.
+    bus.io.ime = 1;
+
     if discard {
-        bus.io.if_ &= !ie_flags;
+        bus.io.if_ &= !wanted;
     }
-    // Spin until the requested interrupt fires
-    if bus.io.if_ & ie_flags == 0 {
+    if bus.io.if_ & wanted == 0 {
         bus.io.halt = true;
     }
     true
 }
 
 /// SWI 0x05: VBlankIntrWait — waits specifically for VBlank
+/// SWI 05h. GBATEK: "sets r0=1, r1=1, and then calls IntrWait".
 fn handle_vblank_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
-    cpu.set_reg(0, 1); // r1 = 1 (discard old flags)
-    cpu.set_reg(1, 0x0001); // r2 = VBlank IRQ bit
+    cpu.set_reg(0, 1);      // discard old flags
+    cpu.set_reg(1, 0x0001); // wait for VBlank
     handle_intr_wait(cpu, bus)
 }
 

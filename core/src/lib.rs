@@ -73,10 +73,21 @@ impl Gba {
             self.apu.tick(SCANLINE);
             self.cycles += SCANLINE as u64;
 
-            if self.bus.io.interrupt_pending() {
+            // The PPU's pending flags have to reach IF here too. Routing them
+            // only on the running path meant a halted CPU never saw VBlank and
+            // could never be woken - which is every GBA game's main loop.
+            self.route_ppu_interrupts();
+
+            // GBATEK: HALT ends when an *enabled* interrupt occurs, judged on
+            // IE & IF alone. IME gates whether the CPU jumps to the handler,
+            // not whether it wakes, so a game that halts with IME clear and
+            // polls IF still resumes.
+            if self.bus.io.ie & self.bus.io.if_ != 0 {
                 self.cpu.halted = false;
                 self.bus.io.halt = false;
-                self.cpu.handle_irq();
+                if self.bus.io.interrupt_pending() {
+                    self.cpu.handle_irq();
+                }
             }
             return (self.cycles - before) as u32;
         }
@@ -127,13 +138,7 @@ impl Gba {
             self.apu_sound_write(offset, value);
         }
 
-        // Route interrupts from PPU -> bus.io
-        if self.ppu.vblank_pending() {
-            self.bus.io.request_interrupt(0x0001);
-        }
-        if self.ppu.hblank_pending() {
-            self.bus.io.request_interrupt(0x0002);
-        }
+        self.route_ppu_interrupts();
 
         // Deliver IRQs to CPU
         if self.bus.io.interrupt_pending() {
@@ -192,6 +197,19 @@ impl Gba {
     /// of offsets and silently dropped the rest - roughly half the sound
     /// registers, including `0x65` where the channel-1 trigger bit lives, and
     /// all of wave RAM.
+    /// Move the PPU's pending VBlank/HBlank flags into IF.
+    ///
+    /// Called from both the running and the halted path: a halted CPU is
+    /// woken by IF, so skipping this while halted deadlocks the machine.
+    fn route_ppu_interrupts(&mut self) {
+        if self.ppu.vblank_pending() {
+            self.bus.io.request_interrupt(0x0001);
+        }
+        if self.ppu.hblank_pending() {
+            self.bus.io.request_interrupt(0x0002);
+        }
+    }
+
     fn apu_sound_write(&mut self, offset: u32, _value: u8) {
         let base = match offset {
             0x60..=0x81 | 0x84..=0x85 | 0x90..=0x9F => offset & !1,
