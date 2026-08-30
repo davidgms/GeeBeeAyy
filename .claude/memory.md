@@ -380,3 +380,50 @@ cycle accumulation, since 16777216/48000 is not an integer.
 
 Also worth knowing: the `ACDB-LOADER ... set parameters failed` errors in
 logcat are MIUI's own audio calibration, present for any app, not ours.
+
+### 2026-08-30 - DMA was never wired to the bus: the sixth "complete but unreachable" feature
+
+`Dma::write_sad`/`write_dad`/`write_count`/`write_control` (`core/src/dma.rs`)
+had **no caller outside `dma.rs` and `core/tests/interrupts.rs`** for the
+project's whole history. The bus stored DMA register values into `io_regs` and
+`Dma::channels[]` never learned about them, so no game-initiated transfer ever
+ran. Yggdra Union hung at `0x08093030` polling DMA3CNT_H bit 15 for a
+completion that could not happen.
+
+Fixed on 2026-08-30. `MemoryBus::store8` records the channel whose DMAxCNT_H
+high byte was written into a private `dma_writes` queue, and `Gba::step` drains
+it through `Gba::apply_dma_writes`, which reads SAD/DAD/CNT_L back out of
+`io_regs` and calls the existing setters. The bus cannot apply the write itself:
+`write_control` runs an immediate transfer inline and needs `&mut MemoryBus`,
+the borrow the store already holds. Same shape as the `sound_writes` queue.
+
+Making DMA live exposed three more bugs in code that had simply never executed:
+`decode_control` read the source and destination address-control fields
+backwards (GBATEK: bits 5-6 are **dest**, 7-8 are **source**); `write_count`
+truncated the "0 means maximum length" expansion back to 0 with an `as u16`, so
+every maximum-length transfer was a no-op; and `do_transfer` reloaded the
+*source* on repeat, which flattens a per-scanline HDMA table to one value.
+HBlank DMA is now also gated to visible scanlines in `ppu/mod.rs`, and DMA
+sound routes by destination register rather than assuming DMA1 feeds FIFO A.
+
+Covered by `core/tests/dma.rs` (5 cases, all failing before the change).
+
+**Application**: that is now six times. The rule stands and should be applied
+before touching anything the roadmap calls done - grep for a *caller*, not for
+a `pub fn`. Still unaudited by that standard: video-capture DMA (timing 3 on
+DMA3) is a `TODO` in `Dma::on_vcounter` and does nothing.
+
+### 2026-08-30 - Yggdra Union now derails in its task switcher, not in DMA
+
+With DMA wired, Yggdra Union clears the `0x08093030` poll loop, runs its boot
+decompression (DMA3, ROM -> EWRAM/IWRAM) and drives the full EEPROM serial
+protocol over DMA3 - 1024 read/write pairs of 17 and 68 halfwords, i.e. a scan
+of a 64 Kbit EEPROM, then 9 write commands. It then runs ~3.03M instructions
+before `mov pc, r0` at `0x080A3FC8` jumps to `0x98F005FC`.
+
+That code is a task switcher restoring `sp` and `pc` from a control block
+(`ldr r3,[pc,#24]; add r3,r3,r7; ldr r3,[r3]; ...; mov sp,r2; mov pc,r0`),
+entered with `r7 == 0` so it reads an uninitialised table. DISPCNT is still 0
+at that point, so every frame is black. This is a **different, later bug** than
+the DMA hang and is not a DMA regression - no DMA transfer in the trace touches
+the stack or code. Next investigation starts at what leaves `r7` zero.

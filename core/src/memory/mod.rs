@@ -14,6 +14,11 @@ pub struct MemoryBus {
     pub cart: super::cart::Cartridge,
     pub waitcnt: u16,
     pub sound_writes: Vec<(u32, u8)>,
+    /// Channels whose DMAxCNT_H was written since `Gba::step` last looked.
+    /// The bus cannot apply them itself: an immediate transfer runs inside
+    /// `Dma::write_control` and needs `&mut MemoryBus`, which is the borrow
+    /// the store is already holding. Same shape as `sound_writes`.
+    dma_writes: Vec<usize>,
     prefetch_enabled: bool,
     prefetch_seq_count: u32,
     prefetch_cyc: u32,
@@ -37,6 +42,7 @@ impl MemoryBus {
             cart: super::cart::Cartridge::empty(),
             waitcnt: 0,
             sound_writes: Vec::new(),
+            dma_writes: Vec::new(),
             prefetch_enabled: false,
             prefetch_seq_count: 0,
             prefetch_cyc: 0,
@@ -310,6 +316,13 @@ impl MemoryBus {
                     0x60..=0x7F | 0x80..=0x88 | 0x90..=0x9F | 0xA0..=0xA7 => {
                         self.sound_writes.push((offset as u32, value));
                     }
+                    // High byte of DMAxCNT_H (0x0BA + 12*x). It carries the
+                    // enable bit and is the last byte a 16- or 32-bit write
+                    // to the control register touches, so latching here
+                    // always sees a complete control word.
+                    0xBB | 0xC7 | 0xD3 | 0xDF => {
+                        self.dma_writes.push((offset - 0xBB) / 12);
+                    }
                     _ => {}
                 }
             }
@@ -399,6 +412,10 @@ impl MemoryBus {
 
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
         std::mem::take(&mut self.sound_writes)
+    }
+
+    pub fn drain_dma_writes(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.dma_writes)
     }
 
     /// Advance the gamepak prefetch buffer by one cycle.

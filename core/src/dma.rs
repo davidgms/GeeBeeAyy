@@ -1,3 +1,6 @@
+/// DMAxCNT_H offsets from 0x04000000, one per channel.
+const DMA_CNT_H: [usize; 4] = [0x0BA, 0x0C6, 0x0D2, 0x0DE];
+
 pub struct DmaChannel {
     pub source: u32,
     pub dest: u32,
@@ -77,7 +80,14 @@ impl Dma {
 
     pub fn write_count(&mut self, channel: usize, value: u16) {
         if channel < 4 {
-            self.channels[channel].count = if value == 0 { 0x10000 } else { value as u32 } as u16;
+            // GBATEK, GBA DMA Transfers: the unit count is 14 bits on DMA0-2
+            // and 16 on DMA3, and 0 means the maximum (0x4000 / 0x10000).
+            // The maximum does not fit the field, so `do_transfer` expands it
+            // - the old code computed 0x10000 and then truncated it back to 0
+            // with an `as u16`, which turned every maximum-length transfer
+            // into a no-op.
+            let mask = if channel == 3 { 0xFFFF } else { 0x3FFF };
+            self.channels[channel].count = value & mask;
         }
     }
 
@@ -92,8 +102,13 @@ impl Dma {
         // Must precede word_count: it used to be read one write stale.
         ch.transfer_type = value & 0x0400 != 0;
         ch.word_count = if ch.transfer_type { 4 } else { 2 };
-        ch.src_adj = ((value >> 5) & 3) as u8;
-        ch.dst_adj = ((value >> 7) & 3) as u8;
+        // GBATEK: bits 5-6 are the *destination* address control and bits 7-8
+        // the *source*. They were read the other way round, which inverts
+        // every transfer's addressing - a sound FIFO DMA (control 0xB640,
+        // dest fixed) would have walked the destination through I/O space
+        // while re-reading one source word.
+        ch.dst_adj = ((value >> 5) & 3) as u8;
+        ch.src_adj = ((value >> 7) & 3) as u8;
         ch.timing = ((value >> 12) & 3) as u8;
         ch.irq_on_end = value & 0x4000 != 0;
         ch.src_fixed = ch.src_adj == 2;
@@ -128,13 +143,15 @@ impl Dma {
     pub fn do_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) {
         if channel >= 4 { return; }
         let ch = &mut self.channels[channel];
-        let count = ch.count as u32;
-        if count == 0 { return; }
+        // A count of 0 in the register means the maximum length.
+        let count = if ch.count == 0 {
+            if channel == 3 { 0x1_0000 } else { 0x4000 }
+        } else {
+            ch.count as u32
+        };
         let word_size = ch.word_count;
-        let src_fixed = ch.src_fixed;
-        let dst_fixed = ch.dst_fixed;
-        let dst_reload = ch.dst_reload;
-        let src_save = ch.source;
+        let src_adj = ch.src_adj;
+        let dst_adj = ch.dst_adj;
         let dst_save = ch.dest;
 
         for _ in 0..count {
@@ -148,29 +165,28 @@ impl Dma {
                 bus.write16(ch.dest, val);
             }
 
-            // Source address adjustment
-            if !src_fixed {
-                ch.source = ch.source.wrapping_add(word_size);
+            // 0 = increment, 1 = decrement, 2 = fixed, 3 = increment/reload
+            // (destination only; prohibited on the source).
+            match src_adj {
+                1 => ch.source = ch.source.wrapping_sub(word_size),
+                2 => {}
+                _ => ch.source = ch.source.wrapping_add(word_size),
             }
-
-            // Destination address adjustment
-            if dst_fixed {
-                // Fixed: do nothing
-            } else if dst_reload {
-                // Increment-reload: increment but reload on repeat
-                ch.dest = ch.dest.wrapping_add(word_size);
-            } else {
-                ch.dest = ch.dest.wrapping_add(word_size);
+            match dst_adj {
+                1 => ch.dest = ch.dest.wrapping_sub(word_size),
+                2 => {}
+                _ => ch.dest = ch.dest.wrapping_add(word_size),
             }
         }
 
-        // Reload destination if not repeating
-        if !ch.repeat || dst_reload {
+        // On a repeat, only Increment/Reload restores the destination. The
+        // source is never reloaded: it used to be, which made every repeating
+        // HBlank DMA re-send the same words and flattened any per-scanline
+        // table into a single value. A non-repeating channel keeps its
+        // advanced addresses too - they are reloaded from SAD/DAD on the next
+        // enable edge, which is what hardware latches on.
+        if dst_adj == 3 {
             ch.dest = dst_save;
-        }
-        // Reload source if repeating
-        if ch.repeat {
-            ch.source = src_save;
         }
 
         // GBATEK, GBA Interrupt Control: IF bits 8,9,10,11 are DMA 0,1,2,3.
@@ -182,10 +198,20 @@ impl Dma {
         if !ch.repeat {
             ch.enabled = false;
             ch.control &= !0x8000;
+            // Clear the enable bit in the register the game actually reads.
+            // Clearing only the internal struct left DMAxCNT_H bit 15 set
+            // forever, and a game that starts a transfer and polls for it to
+            // finish - which Yggdra Union does during startup - never leaves
+            // that loop.
+            let offset = DMA_CNT_H[channel];
+            let regs = bus.io_regs_data_mut();
+            regs[offset + 1] &= 0x7F;
         }
     }
 
-    /// Called when HBlank occurs. Triggers HBlank-timed DMA channels.
+    /// Called when HBlank occurs, and only on a visible scanline: GBATEK notes
+    /// HBlank DMA is not performed during VBlank. The PPU applies that gate.
+    /// Triggers HBlank-timed DMA channels.
     pub fn on_hblank(&mut self, bus: &mut super::memory::MemoryBus) {
         self.hblank_fired = true;
         for i in 0..4 {

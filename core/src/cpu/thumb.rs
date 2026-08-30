@@ -87,40 +87,18 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
 
         // Format 3: MOV, CMP, ADD, SUB with an 8-bit immediate
+        // Format 3: MOV, CMP, ADD, SUB with an 8-bit immediate.
+        //
+        // This arm used to branch on `(instruction >> 11) & 3` and route the
+        // values 2 and 3 - which are ADD and SUB here - into a Format 2
+        // decoder. Format 2 is a different encoding (bits[15:11] = 00011,
+        // handled in the 0b0000|0b0001 arm), so those instructions read the
+        // wrong bit fields entirely: `add r5,#12` wrote to r4 and `sub r4,#1`
+        // wrote to r1. Yggdra Union's startup scans a table with exactly that
+        // pair and never terminated.
         0b0010 | 0b0011 => {
-            let op_type = (instruction >> 11) & 3;
-            match op_type {
-                // Format 2: ADD, SUB (3-register or immediate 3-bit)
-                0b010 | 0b011 => {
-                    let imm_flag = (instruction >> 10) & 1;
-                    let rn_offset = ((instruction >> 6) & 7) as usize;
-                    let rs = ((instruction >> 3) & 7) as usize;
-                    let rd = (instruction & 7) as usize;
-                    let rs_val = cpu.reg(rs);
-                    let operand = if imm_flag == 1 {
-                        rn_offset as u32
-                    } else {
-                        cpu.reg(rn_offset)
-                    };
-                    let is_sub = (instruction >> 9) & 1 == 1;
-
-                    if is_sub {
-                        let result = rs_val.wrapping_sub(operand);
-                        let carry = rs_val >= operand;
-                        let overflow = crate::cpu::arm::overflow_sub(rs_val, operand, result);
-                        cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
-                        cpu.set_reg(rd, result);
-                    } else {
-                        let result = rs_val.wrapping_add(operand);
-                        let carry = (rs_val as u64) + (operand as u64) > 0xFFFF_FFFF;
-                        let overflow = crate::cpu::arm::overflow_add(rs_val, operand, result);
-                        cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
-                        cpu.set_reg(rd, result);
-                    }
-                    1
-                }
-                // Format 3: ADD, SUB, MOV, CMP (immediate 8-bit)
-                _ => {
+            {
+                {
                     let op = (instruction >> 11) & 3;
                     let rd = ((instruction >> 8) & 7) as usize;
                     let imm8 = (instruction & 0xFF) as u32;

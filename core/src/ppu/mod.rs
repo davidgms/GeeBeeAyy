@@ -207,7 +207,12 @@ impl Ppu {
             if self.dispstat_hblank_ie {
                 self.hblank_irq_pending = true;
             }
-            dma.on_hblank(bus);
+            // GBATEK, GBA DMA Transfers: HBlank DMA is not performed during
+            // VBlank. Without this an enabled repeating HBlank channel fires
+            // 68 extra times a frame and runs off the end of its buffer.
+            if self.scanline < 160 {
+                dma.on_hblank(bus);
+            }
         } else if !new_hblank {
             self.hblank = false;
         }

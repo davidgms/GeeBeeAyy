@@ -461,3 +461,59 @@ _(This agent: add new discoveries, patterns and insights here during work.)_
   bytes-in entry point before the Kotlin side can be written. Do not add a
   path-taking FFI function instead: Android scoped storage hands out FDs and
   content URIs, not paths the core can `fs::write` to.
+
+### 2026-08-30 - DMA was the sixth "complete but unwired" subsystem, and it hid two decode bugs
+- **Context**: wiring `Dma` to `MemoryBus`; `write_sad`/`write_dad`/`write_count`/
+  `write_control` had no caller outside `dma.rs` and `core/tests/interrupts.rs`.
+- **Finding**: routing the writes was the easy half. Making DMA *live* exposed
+  two decode bugs in `core/src/dma.rs` that had been harmless only because
+  nothing ever ran:
+  1. `decode_control` read `src_adj` from bits 5-6 and `dst_adj` from bits 7-8.
+     GBATEK has them the other way round (5-6 dest, 7-8 source). Cross-check:
+     the canonical sound-FIFO control word is `0xB640` - enable | timing 3 |
+     32-bit | repeat | **dest fixed = bits 5-6 = 2**. With the swap, a FIFO DMA
+     would have walked the destination through I/O space while re-reading one
+     source word.
+  2. `write_count` did `if value == 0 { 0x10000 } else { value as u32 } as u16`.
+     The `as u16` truncates 0x10000 straight back to 0, and `do_transfer` then
+     returned early on `count == 0` - so every maximum-length transfer was a
+     no-op. The expansion has to happen at use, not at store: the maximum does
+     not fit the field.
+  Also wrong: `do_transfer` reloaded the **source** on repeat, which flattens
+  any per-scanline HDMA table to a single value. Hardware reloads only the
+  destination, and only in Increment/Reload mode.
+- **Application**: when you wire up a subsystem that has never executed, treat
+  its entire decode path as unreviewed code, not as working code that merely
+  lacked a caller. Budget for the bugs the wiring reveals.
+
+### 2026-08-30 - The bus cannot own a DMA write, and the reason is the borrow
+- **Context**: same task, deciding where the register writes should be applied.
+- **Finding**: `Dma::write_control` runs an immediate transfer inline and needs
+  `&mut MemoryBus` - exactly the borrow `MemoryBus::store8` is already holding.
+  So the bus cannot apply the write itself. `MemoryBus` now pushes the channel
+  index into a private `dma_writes: Vec<usize>` and `Gba::step` drains it via
+  `apply_dma_writes`, the same shape as the existing `sound_writes` queue.
+  Two details that make it correct rather than merely compiling: capture on the
+  **high byte** of DMAxCNT_H (`0xBB | 0xC7 | 0xD3 | 0xDF`, then
+  `(offset - 0xBB) / 12`), because `write16`/`write32` decompose into ascending
+  byte stores so the high byte is the last one and always sees a complete
+  control word; and drain **before** `ppu.tick`, so a channel enabled by this
+  instruction is configured for an HBlank or VBlank landing in the same step.
+  SAD/DAD/CNT_L latch only on the enable edge (`control & 0x8000 && !enabled`),
+  matching the hardware latch - otherwise rewriting CNT_H rewinds a running
+  channel's advanced address.
+- **Application**: the "bus records it, the owner applies it" queue is the
+  general answer in this codebase whenever a bus write needs the bus back.
+  Reach for it before trying to restructure ownership.
+
+### 2026-08-30 - `git checkout <file>` is blocked by the sandbox classifier
+- **Context**: trying the before/after trick from my 2026-08-28 entry (stash the
+  edited files, `git checkout` them, measure the baseline, restore).
+- **Finding**: `git checkout core/src/*.rs` is refused as destructive. It is
+  also genuinely unsafe here - another agent had uncommitted work in
+  `core/src/cpu/thumb.rs` in the same tree, and a careless path list would have
+  destroyed it.
+- **Application**: prove "the test failed first" by running the new test file
+  against the tree *before* editing any source, which costs one `cargo test`
+  and needs no revert. Keep the file-revert trick for reading only
+  (`git show HEAD:path`), never for mutating the working tree.

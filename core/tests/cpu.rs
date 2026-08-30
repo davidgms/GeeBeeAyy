@@ -508,3 +508,21 @@ fn arm_data_processing_without_s_preserves_flags() {
     assert!(cpu.flag_z(), "a non-S data processing op cleared Z");
     assert_eq!(cpu.registers[5], 1, "the EQ condition was destroyed");
 }
+
+#[test]
+fn thumb_add_and_sub_immediate_update_the_register() {
+    // Format 3: 001 op Rd imm8. Yggdra Union's startup scans a table with
+    // `add r5,#12` / `sub r4,#1` and loops while r4 != 0 - if these do not
+    // write back, the game never leaves its first loop.
+    let (mut cpu, mut bus) = setup_thumb(&[
+        0x2500, // mov r5, #0
+        0x350C, // add r5, #12
+        0x350C, // add r5, #12
+        0x2405, // mov r4, #5
+        0x3C01, // sub r4, #1
+        0x3C01, // sub r4, #1
+    ]);
+    steps(&mut cpu, &mut bus, 6);
+    assert_eq!(cpu.registers[5], 24, "add r5,#12 twice should give 24");
+    assert_eq!(cpu.registers[4], 3, "sub r4,#1 twice from 5 should give 3");
+}

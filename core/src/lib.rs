@@ -83,6 +83,10 @@ impl Gba {
 
         let cycles = self.cpu.step(&mut self.bus);
         self.cycles += cycles as u32 as u64;
+        // Before the PPU tick, so a channel enabled by this instruction is
+        // configured in time for an HBlank or VBlank that lands in the same
+        // step.
+        self.apply_dma_writes();
         self.timer.tick(cycles as u32, &mut self.bus);
         self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
         self.apu.tick(cycles as u32);
@@ -91,18 +95,24 @@ impl Gba {
             self.bus.prefetch_tick();
         }
 
-        // DMA Sound
-        if self.apu.fifo_a_half_empty() {
-            if let Some((dest, data)) = self.dma.do_sound_transfer(1, &mut self.bus) {
-                if dest == 0x0400_00A0 {
-                    for &byte in &data { self.apu.write_fifo_a(byte as i8); }
-                }
-            }
-        }
-        if self.apu.fifo_b_half_empty() {
-            if let Some((dest, data)) = self.dma.do_sound_transfer(2, &mut self.bus) {
-                if dest == 0x0400_00A4 {
-                    for &byte in &data { self.apu.write_fifo_b(byte as i8); }
+        // DMA Sound. Either channel can feed either FIFO - the destination
+        // register decides, not the channel number. Keying FIFO A to DMA1 and
+        // B to DMA2 dropped the data of any game that wired them the other way
+        // round, *after* `do_sound_transfer` had already advanced the source.
+        for ch in [1usize, 2] {
+            let wanted = match self.dma.channels[ch].dest {
+                0x0400_00A0 => self.apu.fifo_a_half_empty(),
+                0x0400_00A4 => self.apu.fifo_b_half_empty(),
+                _ => false,
+            };
+            if !wanted { continue; }
+            if let Some((dest, data)) = self.dma.do_sound_transfer(ch, &mut self.bus) {
+                for &byte in &data {
+                    if dest == 0x0400_00A0 {
+                        self.apu.write_fifo_a(byte as i8);
+                    } else {
+                        self.apu.write_fifo_b(byte as i8);
+                    }
                 }
             }
         }
@@ -137,6 +147,40 @@ impl Gba {
         let target = self.cycles + CYCLES_PER_FRAME;
         while self.cycles < target {
             self.step();
+        }
+    }
+
+    /// Apply the DMA register writes the bus captured this step.
+    ///
+    /// The bus records the channel rather than acting on it, because an
+    /// immediate transfer runs inside `Dma::write_control` and needs
+    /// `&mut MemoryBus` - the borrow the store is already holding. Same shape
+    /// as `sound_writes`, and the reason `write_sad`/`write_dad`/`write_count`/
+    /// `write_control` had no caller at all until now: nothing could reach
+    /// both halves.
+    fn apply_dma_writes(&mut self) {
+        for ch in self.bus.drain_dma_writes() {
+            let base = 0xB0 + ch * 12;
+            let regs = self.bus.io_regs_data();
+            let word = |o: usize| u32::from_le_bytes(regs[o..o + 4].try_into().unwrap());
+            let half = |o: usize| u16::from_le_bytes(regs[o..o + 2].try_into().unwrap());
+            let (sad, dad, count, control) =
+                (word(base), word(base + 4), half(base + 8), half(base + 10));
+
+            // SAD, DAD and CNT_L latch into the channel's internal registers
+            // on the enable edge only. A channel that is already running keeps
+            // the addresses it has advanced to, so rewriting CNT_H - to change
+            // the IRQ bit, say - must not rewind it.
+            if control & 0x8000 != 0 && !self.dma.channels[ch].enabled {
+                // GBATEK: DMA0 addresses internal memory only (27 bits); only
+                // DMA3's destination reaches the gamepak (28 bits).
+                let src_mask = if ch == 0 { 0x07FF_FFFF } else { 0x0FFF_FFFF };
+                let dst_mask = if ch == 3 { 0x0FFF_FFFF } else { 0x07FF_FFFF };
+                self.dma.write_sad(ch, sad & src_mask);
+                self.dma.write_dad(ch, dad & dst_mask);
+                self.dma.write_count(ch, count);
+            }
+            self.dma.write_control(ch, control, &mut self.bus);
         }
     }
 
