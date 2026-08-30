@@ -18,19 +18,24 @@ as unverified.
 |--------|-------|--------|
 | `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
 | `ppu/` | ~1040 | Mode 0 tiled output verified against three test ROMs. Modes 1, 2, 4, 5, sprites, windows, mosaic and blending remain unverified. |
-| `apu/` | ~800 | 4 PSG channels + FIFO A/B, and full save-state serialisation. **The register map is broken - no PSG channel can be triggered.** See Phase 1. |
+| `apu/` | ~800 | 4 PSG channels + FIFO A/B, full save-state serialisation, and a register map decoded at 16-bit granularity. A channel can be triggered and produces samples. Never driven by a real game. |
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~235 | 4 channels, immediate/HBlank/VBlank. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
 | `cart/` | ~480 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs, Flash chip ID, and EEPROM as the real serial protocol over DMA. |
-| `savestate.rs` | ~275 | Format v2 (adds the SVC/ABT/UND/User banks). Round-trips in a test. Not wired to any UI. |
-| `bios.rs` | ~275 | HLE SWIs. `CpuFastSet` (0x0C), `ArcTan` (0x09), `ArcTan2` (0x0A) and the diff unfilters are missing. |
-| `ffi.rs` | ~390 | C ABI + JNI, including `geebeeayy_set_keys`. |
-| `android/` | ~2100 | Compose UI, JNI bridge, audio output, touch overlay drawn but not connected. |
+| `savestate.rs` | ~330 | Format v4: register banks, timers, DMA derived state, the whole `io_regs` file, the APU and the cartridge save. A rejected restore rolls back. Wired to ten UI slots. |
+| `bios.rs` | ~450 | HLE SWIs including `CpuFastSet`, `ArcTan`/`ArcTan2` and the three diff unfilters. `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are still stubs; the sound-driver calls are absent. |
+| `ffi.rs` | ~560 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
+| `android/` | ~2900 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. **Builds, installs and emulates on a device.** |
+| `rewind.rs` | ~80 | Bounded ring of save states; cadence left to the frontend. Not wired to any UI. |
 | `ios/` | ~750 | SwiftUI views and an engine wrapper. **No Xcode project - has never been compiled.** |
 
-**No game has booted yet.** That is the honest headline, and Phase 0 exists to
-change it.
+**Verified on hardware 2026-08-29**: built for `arm64-v8a`/`armeabi-v7a`,
+installed on a Xiaomi Mi 10T Pro (Android 12), and ran jsmolka's `hello.gba` -
+"Hello world!" rendered correctly. The ROM browser scans and lists, the app
+launches without crashing, and `System.loadLibrary` finds the core. No
+*commercial* game has been tried, and the overlay is still missing Start,
+Select and the shoulder buttons, so most games are unreachable.
 
 ---
 
