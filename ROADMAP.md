@@ -182,9 +182,19 @@ graphics, and `gba-suite`'s ARM and THUMB suites pass.
       Verified by `a_psg_channel_can_actually_be_triggered` and
       `the_master_enable_silences_the_apu` - the first tests in this project's
       history that get audio out of the APU.
-- [ ] **Audio verified against a real game** - `kotlin-specialist`. The APU can
-      now be driven, but no game has driven it and no device has played it.
-      Needs hardware.
+- [x] **Audio verified on hardware** - a tone ROM drives PSG channel 1 and the
+      device reports `AudioPlaybackConfiguration ... state:started`, so samples
+      reach the audio HAL. Covered by `core/tests/tonerom.rs`. A *game* still
+      has not driven it.
+- [ ] **The low-latency audio path is denied** - `rust-engineer`. logcat shows
+      `AUDIO_OUTPUT_FLAG_FAST denied by server`, because our 17403 Hz rate
+      (`16777216 / 964` cycles per sample) does not match the device's native
+      48000 Hz, so the track goes through the resampler and the normal mixer
+      instead of the fast path. `PERFORMANCE_MODE_LOW_LATENCY` in
+      `AudioOutput` is therefore doing nothing. Fixing it means resampling to
+      48000 in the core, which needs fractional cycle accumulation rather than
+      an integer `CYCLES_PER_SAMPLE`. This is what the roadmap's "input latency
+      under 45 ms" blocker actually depends on.
 
 **Exit criterion:** a full game is playable start to finish, with sound, on a
 physical device, without losing progress.

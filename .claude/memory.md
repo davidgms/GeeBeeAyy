@@ -358,3 +358,25 @@ code: mine read `[r0, #0x130]` for KEYINPUT, but **halfword loads carry only an
 8-bit immediate offset**, so it silently encoded as `[r0, #0x10]` and read a
 write-only register. And `android_logger` is capped at `LevelFilter::Warn` in
 this project, so `log::info!`/`debug!` from Rust never appear in logcat.
+
+### 2026-08-30 - Audio reaches the device, but not the low-latency path
+
+A tone ROM (`temp/roms/tone.gba`, rebuilt by `core/tests/tonerom.rs`'s comment
+block) drives PSG channel 1, and `dumpsys audio` reports our track as
+`state:started` on a real device. That closes the last completely unverified
+subsystem.
+
+But logcat carries `createTrack_l(0): AUDIO_OUTPUT_FLAG_FAST denied by server`.
+The track is created correctly - `sampleRate 17403, format 0x5 (PCM_FLOAT),
+channelMask 0x1, frameCount 1400` - and the rate is the problem: Android grants
+the fast path only when the track's rate matches the device's native output
+rate, essentially always 48000 Hz. Ours is `16777216 / 964 = 17403`, so the
+track is resampled through the normal mixer and
+`PERFORMANCE_MODE_LOW_LATENCY` has no effect.
+
+**Application**: the roadmap's "input latency under 45 ms" target depends on
+this, not on the input path. Resampling to 48000 in the core needs fractional
+cycle accumulation, since 16777216/48000 is not an integer.
+
+Also worth knowing: the `ACDB-LOADER ... set parameters failed` errors in
+logcat are MIUI's own audio calibration, present for any app, not ours.
