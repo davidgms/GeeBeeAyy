@@ -362,3 +362,41 @@ fn a_halted_cpu_still_sees_hblank() {
         "expected an HBlank a scanline while halted, got {hblanks}"
     );
 }
+
+#[test]
+fn vblank_intr_wait_is_not_satisfied_by_an_hblank() {
+    // VBlankIntrWait used to test IF, which the BIOS handler has already
+    // cleared by the time the game's own handler returns. The first interrupt
+    // of any kind - an HBlank, 160 times a frame - therefore released a wait
+    // that should have run to line 160, and the game came back mid-frame.
+    use geebeeayy_core::Gba;
+    let mut gba = Gba::new();
+    let mut data = vec![0u8; 0x200];
+    data[0..4].copy_from_slice(&0xEF05_0000u32.to_le_bytes()); // swi 5
+    data[4..8].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&data).unwrap();
+
+    // A game IRQ handler that does nothing but return: the BIOS stub is what
+    // has to record the interrupt for IntrWait.
+    gba.bus.write32(0x0300_0000, 0xE12F_FF1E); // bx lr
+    gba.bus.write32(0x0300_7FFC, 0x0300_0000);
+    gba.bus.write16(0x0400_0004, 0x0018); // VBlank + HBlank IRQ enable
+    gba.bus.io.ie = 0x0003;
+
+    // The SWI sits at 0x08000000 and is re-executed for as long as the wait
+    // is unsatisfied, so leaving it means the wait returned.
+    let mut woke_at = None;
+    for _ in 0..40_000 {
+        gba.step();
+        let pc = gba.cpu.registers[15];
+        if !gba.bus.io.halt && (0x0800_0004..0x0800_0010).contains(&pc) {
+            woke_at = Some(gba.bus.read16(0x0400_0006));
+            break;
+        }
+    }
+    let line = woke_at.expect("VBlankIntrWait never returned");
+    assert!(
+        (160..228).contains(&line),
+        "VBlankIntrWait returned at line {line}, not in VBlank"
+    );
+}

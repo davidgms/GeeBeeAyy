@@ -89,13 +89,22 @@ impl MemoryBus {
         //   0x28: ldrh r2, [r12, #2]      ; IF
         //   0x2C: and r1, r1, r2          ; IE & IF
         //   0x30: strh r1, [r12, #2]      ; acknowledge IF
-        //   0x34: ldr r0, [pc, #12]       ; load 0x03007FFC from the literal pool
-        //   0x38: ldr r0, [r0]            ; deref -> game handler address
-        //   0x3C: blx r0                  ; call game handler
-        //   0x40: ldmia sp!, {r0-r3, r12, lr}
-        //   0x44: subs pc, lr, #4         ; return from IRQ, restoring CPSR
-        //   0x48: .word 0x03007FFC        ; literal: pointer to game's IRQ vector
-        let bios_irq_handler: [u32; 11] = [
+        //   0x34: ldr r0, [pc, #0x1C]     ; load 0x03007FF8 from the pool
+        //   0x38: ldrh r2, [r0]           ; BIOS IntrWait flags
+        //   0x3C: orr r2, r2, r1          ; |= what we just acknowledged
+        //   0x40: strh r2, [r0]
+        //   0x44: ldr r0, [pc, #0x10]     ; load 0x03007FFC from the pool
+        //   0x48: ldr r0, [r0]            ; deref -> game handler address
+        //   0x4C: blx r0                  ; call game handler
+        //   0x50: ldmia sp!, {r0-r3, r12, lr}
+        //   0x54: subs pc, lr, #4         ; return from IRQ, restoring CPSR
+        //   0x58: .word 0x03007FF8        ; literal: BIOS IntrWait flags
+        //   0x5C: .word 0x03007FFC        ; literal: pointer to game's IRQ vector
+        //
+        // The 0x03007FF8 store is what makes `IntrWait` work at all: IF is
+        // cleared here, so by the time the game's handler returns there is
+        // nothing left for a wait to test against.
+        let bios_irq_handler: [u32; 14] = [
             0xE92D500F, // stmdb sp!, {r0-r3, r12, lr}
             0xE3A0C301, // mov r12, #0x04000000
             0xE28CCC02, // add r12, r12, #0x200      ; 2 ROR 24 = 0x200
@@ -103,28 +112,33 @@ impl MemoryBus {
             0xE1DC20B2, // ldrh r2, [r12, #2]        ; r2 = IF
             0xE0011002, // and r1, r1, r2             ; r1 = IE & IF
             0xE1CC10B2, // strh r1, [r12, #2]        ; acknowledge IF (W1C)
-            0xE59F000C, // ldr r0, [pc, #12]         ; r0 -> literal at 0x48
+            0xE59F001C, // ldr r0, [pc, #0x1C]       ; r0 -> literal at 0x58
+            0xE1D020B0, // ldrh r2, [r0]
+            0xE1822001, // orr r2, r2, r1
+            0xE1C020B0, // strh r2, [r0]
+            0xE59F0010, // ldr r0, [pc, #0x10]       ; r0 -> literal at 0x5C
             0xE5900000, // ldr r0, [r0]              ; r0 = game handler addr
             0xE12FFF30, // blx r0                    ; call game handler
-            0xE8BD500F, // ldmia sp!, {r0-r3, r12, lr}
         ];
         // `subs pc, lr, #4` undoes the +4 the exception entry added to LR_irq
         // and restores CPSR from SPSR_irq in the same instruction. Entry and
         // exit have to agree: if one adds 4 and the other does not, every
         // interrupt returns one instruction off and it looks like a game bug.
-        let bios_irq_return: u32 = 0xE25EF004; // subs pc, lr, #4
-        let literal: u32 = 0x0300_7FFC;
+        let epilogue: [u32; 2] = [
+            0xE8BD500F, // ldmia sp!, {r0-r3, r12, lr}
+            0xE25EF004, // subs pc, lr, #4
+        ];
+        let literals: [u32; 2] = [0x0300_7FF8, 0x0300_7FFC];
 
         let offset = 0x18usize;
-        for (i, &word) in bios_irq_handler.iter().enumerate() {
+        let words = bios_irq_handler
+            .iter()
+            .chain(epilogue.iter())
+            .chain(literals.iter());
+        for (i, &word) in words.enumerate() {
             let addr = offset + i * 4;
-            let bytes = word.to_le_bytes();
-            self.bios[addr..addr + 4].copy_from_slice(&bytes);
+            self.bios[addr..addr + 4].copy_from_slice(&word.to_le_bytes());
         }
-        let ret_addr = offset + bios_irq_handler.len() * 4;
-        self.bios[ret_addr..ret_addr + 4].copy_from_slice(&bios_irq_return.to_le_bytes());
-        let lit_addr = ret_addr + 4;
-        self.bios[lit_addr..lit_addr + 4].copy_from_slice(&literal.to_le_bytes());
     }
 
     /// VRAM mirrors in 128 KB steps, but the region is 96 KB: the upper 32 KB

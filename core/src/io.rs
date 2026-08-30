@@ -163,6 +163,10 @@ pub struct IoHandler {
     pub if_: u16,
     pub ime: u16,
     pub halt: bool,
+    /// True while the HLE `IntrWait` is parked on its SWI. It stops the
+    /// re-executed SWI from discarding the very flags the IRQ handler just
+    /// set - `VBlankIntrWait` reloads r0=1 every time it runs.
+    pub intr_wait_active: bool,
 }
 
 impl IoHandler {
@@ -172,6 +176,7 @@ impl IoHandler {
             if_: 0,
             ime: 0,
             halt: false,
+            intr_wait_active: false,
         }
     }
 

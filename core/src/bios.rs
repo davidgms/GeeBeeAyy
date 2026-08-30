@@ -34,6 +34,10 @@ pub fn handle_swi(swi_num: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     }
 }
 
+/// The BIOS IRQ handler ORs the interrupts it acknowledged into this
+/// halfword, and `IntrWait` consumes them from it.
+const BIOS_INTR_FLAGS: u32 = 0x0300_7FF8;
+
 fn handle_soft_reset(_cpu: &mut Cpu, _bus: &mut MemoryBus) -> bool {
     true
 }
@@ -66,12 +70,31 @@ fn handle_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     // globally masked and rely on the BIOS to enable them.
     bus.io.ime = 1;
 
-    if discard {
-        bus.io.if_ &= !wanted;
+    // The BIOS does not watch IF. Its IRQ handler ORs whatever it acknowledged
+    // into the halfword at 0x03007FF8 and IntrWait polls *that*, because IF is
+    // already cleared by the time the game's handler returns. Waiting on IF
+    // instead meant the first interrupt of any kind - an HBlank, typically -
+    // satisfied a VBlankIntrWait.
+    if discard && !bus.io.intr_wait_active {
+        let flags = bus.read16(BIOS_INTR_FLAGS);
+        bus.write16(BIOS_INTR_FLAGS, flags & !wanted);
     }
-    if bus.io.if_ & wanted == 0 {
-        bus.io.halt = true;
+
+    let flags = bus.read16(BIOS_INTR_FLAGS);
+    if flags & wanted != 0 {
+        bus.write16(BIOS_INTR_FLAGS, flags & !wanted);
+        bus.io.intr_wait_active = false;
+        return true;
     }
+
+    // Not satisfied: halt, and rewind onto this SWI so it runs again when an
+    // interrupt wakes us. That is the BIOS's own loop, not an approximation
+    // of it, so a wait for VBlank keeps waiting through every other source.
+    bus.io.intr_wait_active = true;
+    bus.io.halt = true;
+    let pipeline = if cpu.cpsr & 0x20 != 0 { 4 } else { 8 };
+    let here = cpu.registers[15].wrapping_sub(pipeline);
+    cpu.set_reg(15, here);
     true
 }
 
