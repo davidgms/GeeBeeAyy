@@ -327,3 +327,34 @@ breeds - a 16-bit layout flattened into the low byte looks plausible and is
 wrong in a way no test catches until you ask for output. Decode whole
 registers. And note that downstream audio work (the `AudioTrack` path, buffer
 sizing, latency) has still never been exercised by real game audio.
+
+### 2026-08-30 - A press shorter than one frame used to be dropped
+
+`EmulationViewModel` samples `keyState` once per frame and hands it to
+`engine.setKeys`. A synthetic `adb input tap` presses for **3 ms**, so the
+loop never observed it - the log showed `setKey pressed=true` and
+`pressed=false` 3 ms apart with no `loop sees` in between. A human touch lasts
+50-200 ms so real play was unaffected, but the design silently lost any press
+shorter than ~16 ms.
+
+Fixed with a `transientPresses` AtomicInteger that latches every press and is
+drained by the loop, so a press reaches the core for at least one frame
+regardless of how brief it was.
+
+**Application**: when a consumer polls state on a fixed cadence, decide
+explicitly what happens to events shorter than the period. Polling `keyState`
+looked obviously correct and was not.
+
+### 2026-08-30 - Debugging on device: trust the log over the screen
+
+Chasing an input bug that did not exist cost several rounds because the
+verification was a single sampled pixel of an emulated frame, and the sample
+point kept landing in the letterbox. A one-line `log::warn!` inside the JNI
+function settled it immediately and unambiguously: `nativeSetKeys keys=0x8 ->
+KEYINPUT=0x03F7`, 72 frames running.
+
+Two traps also worth remembering. A hand-written test ROM is itself unverified
+code: mine read `[r0, #0x130]` for KEYINPUT, but **halfword loads carry only an
+8-bit immediate offset**, so it silently encoded as `[r0, #0x10]` and read a
+write-only register. And `android_logger` is capped at `LevelFilter::Warn` in
+this project, so `log::info!`/`debug!` from Rust never appear in logcat.

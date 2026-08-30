@@ -17,6 +17,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.io.FileOutputStream
 import kotlin.math.roundToLong
 
@@ -95,6 +96,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     @Volatile
     private var keyState = 0
 
+    /**
+     * Buttons pressed since the emulation loop last looked, whether or not they
+     * are still held. Cleared as it is consumed.
+     */
+    private val transientPresses = AtomicInteger(0)
+
     // --- Battery save persistence ------------------------------------------------
     //
     // The core exposes a dirty flag and raw bytes but does no I/O of its own
@@ -155,6 +162,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun setKey(key: Int, pressed: Boolean) {
         keyState = if (pressed) keyState or key else keyState and key.inv()
+        // Also latch the press. The loop samples `keyState` once per frame, so
+        // a press shorter than ~16 ms would otherwise be dropped entirely -
+        // measured at 3 ms for a synthetic tap. Latching guarantees every press
+        // reaches the core for at least one frame.
+        if (pressed) transientPresses.updateAndGet { it or key }
     }
 
     fun loadRomFromPath(filePath: String) {
@@ -266,7 +278,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 while (isActive) {
                     // Applied here so every call into the core happens on this
                     // one thread. See the note on `keyState`.
-                    engine.setKeys(keyState)
+                    // Held keys, plus anything pressed and released since the
+                    // last frame, which `keyState` alone has already forgotten.
+                    engine.setKeys(keyState or transientPresses.getAndSet(0))
 
                     pendingStateCommand?.let { cmd ->
                         pendingStateCommand = null

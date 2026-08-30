@@ -30,12 +30,19 @@ as unverified.
 | `rewind.rs` | ~80 | Bounded ring of save states; cadence left to the frontend. Not wired to any UI. |
 | `ios/` | ~750 | SwiftUI views and an engine wrapper. **No Xcode project - has never been compiled.** |
 
+**Verified on hardware 2026-08-30**: all ten GBA inputs reach the core -
+confirmed by 72 consecutive frames of `KEYINPUT=0x03F7` while Start was held.
+`stripes` and `shades` render correctly at integer 3x with nearest-neighbour
+filtering.
+
 **Verified on hardware 2026-08-29**: built for `arm64-v8a`/`armeabi-v7a`,
 installed on a Xiaomi Mi 10T Pro (Android 12), and ran jsmolka's `hello.gba` -
 "Hello world!" rendered correctly. The ROM browser scans and lists, the app
 launches without crashing, and `System.loadLibrary` finds the core. No
 *commercial* game has been tried, and the overlay is still missing Start,
 Select and the shoulder buttons, so most games are unreachable.
+
+*(Superseded 2026-08-30: Start, Select, L and R are now on the overlay.)*
 
 ---
 

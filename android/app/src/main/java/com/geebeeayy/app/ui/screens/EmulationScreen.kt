@@ -328,26 +328,96 @@ fun GameControls(
     onToggleFastForward: () -> Unit,
     onKeyChange: (Int, Boolean) -> Unit,
 ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Shoulder buttons sit above the rest, where the real hardware puts
+        // them: L on the far left, R on the far right.
+        ShoulderRow(onKeyChange = onKeyChange)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DPad(onKeyChange = onKeyChange)
+            ActionButtons(onKeyChange = onKeyChange)
+            TransportControls(
+                isPaused = isPaused,
+                isFastForward = isFastForward,
+                onTogglePause = onTogglePause,
+                onToggleFastForward = onToggleFastForward,
+            )
+        }
+
+        // Start and Select. Without these most games cannot get past a title
+        // screen, so they are not optional extras.
+        StartSelectRow(onKeyChange = onKeyChange)
+    }
+}
+
+/** L and R, pushed to the outer edges. */
+@Composable
+fun ShoulderRow(onKeyChange: (Int, Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // D-Pad (left side)
-        DPad(onKeyChange = onKeyChange)
+        PillButton("L", GbaEngine.KEY_L, onKeyChange)
+        PillButton("R", GbaEngine.KEY_R, onKeyChange)
+    }
+}
 
-        // Action buttons (right side)
-        ActionButtons(onKeyChange = onKeyChange)
+/** Start and Select, centred under the main controls. */
+@Composable
+fun StartSelectRow(onKeyChange: (Int, Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
+        Spacer(modifier = Modifier.width(24.dp))
+        PillButton("START", GbaEngine.KEY_START, onKeyChange)
+    }
+}
 
-        // Control buttons
-        TransportControls(
-            isPaused = isPaused,
-            isFastForward = isFastForward,
-            onTogglePause = onTogglePause,
-            onToggleFastForward = onToggleFastForward,
-        )
+/**
+ * A wide, short button for the controls that are pressed deliberately rather
+ * than held during play. Height stays at 48dp so the touch target clears the
+ * Android minimum even though the shape is not circular.
+ */
+@Composable
+fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
+    var isPressed by remember { mutableStateOf(false) }
+
+    Button(
+        onClick = { /* Handled via pointerInput; a tap needs press+release reported. */ },
+        modifier = Modifier
+            .height(48.dp)
+            .widthIn(min = 72.dp)
+            .pointerInput(key) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val down = event.changes.any { it.pressed }
+                        if (down != isPressed) {
+                            isPressed = down
+                            onKeyChange(key, down)
+                        }
+                    }
+                }
+            },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isPressed) AmberResin else HoneyDark,
+        ),
+        shape = RoundedCornerShape(24.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+    ) {
+        Text(label, color = PineGlowMist, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }
 
