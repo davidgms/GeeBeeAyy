@@ -70,71 +70,46 @@ impl MemoryBus {
         self.io_regs[super::io::IO_KEYINPUT + 1] = (raw >> 8) as u8;
     }
 
-    /// Populate BIOS memory with a minimal HLE IRQ handler.
-    /// At 0x18 (IRQ vector):
-    ///   - Save r0-r3, r12, lr on IRQ stack
-    ///   - Read IE & IF, acknowledge pending interrupts
-    ///   - Load game's IRQ handler pointer from [0x03007FFC]
-    ///   - Call it via blx
-    ///   - Restore registers and return from IRQ
+    /// Populate BIOS memory with the IRQ handler the real BIOS has at 0x18:
+    /// save r0-r3/r12/lr, call the game's handler from [0x03007FFC], restore,
+    /// and return with `SUBS PC, LR, #4`. Acknowledging IF and updating the
+    /// IntrWait flags at 0x03007FF8 are the game handler's responsibility on
+    /// hardware, and doing either here breaks games that read IF themselves.
     fn init_bios(&mut self) {
-        // BIOS IRQ handler at 0x18:
-        //   Save registers, acknowledge IE&IF, call game handler at [0x03007FFC], return
+        // BIOS IRQ handler at 0x18: save registers, call the game handler at
+        // [0x03007FFC], restore, return.
         //
         // Layout:
         //   0x18: stmdb sp!, {r0-r3, r12, lr}
         //   0x1C: mov r12, #0x04000000
-        //   0x20: add r12, r12, #0x200
-        //   0x24: ldrh r1, [r12]          ; IE
-        //   0x28: ldrh r2, [r12, #2]      ; IF
-        //   0x2C: and r1, r1, r2          ; IE & IF
-        //   0x30: strh r1, [r12, #2]      ; acknowledge IF
-        //   0x34: ldr r0, [pc, #0x1C]     ; load 0x03007FF8 from the pool
-        //   0x38: ldrh r2, [r0]           ; BIOS IntrWait flags
-        //   0x3C: orr r2, r2, r1          ; |= what we just acknowledged
-        //   0x40: strh r2, [r0]
-        //   0x44: ldr r0, [pc, #0x10]     ; load 0x03007FFC from the pool
-        //   0x48: ldr r0, [r0]            ; deref -> game handler address
-        //   0x4C: blx r0                  ; call game handler
-        //   0x50: ldmia sp!, {r0-r3, r12, lr}
-        //   0x54: subs pc, lr, #4         ; return from IRQ, restoring CPSR
-        //   0x58: .word 0x03007FF8        ; literal: BIOS IntrWait flags
-        //   0x5C: .word 0x03007FFC        ; literal: pointer to game's IRQ vector
+        //   0x20: ldr r0, [r12, #-4]     ; [0x03FFFFFC] = the game's handler
+        //   0x24: blx r0
+        //   0x28: ldmia sp!, {r0-r3, r12, lr}
+        //   0x2C: subs pc, lr, #4        ; return from IRQ, restoring CPSR
         //
-        // The 0x03007FF8 store is what makes `IntrWait` work at all: IF is
-        // cleared here, so by the time the game's handler returns there is
-        // nothing left for a wait to test against.
-        let bios_irq_handler: [u32; 14] = [
+        // That is all the real BIOS does, and the omissions are the point.
+        // It does **not** acknowledge IF, and it does **not** touch the
+        // IntrWait flags at 0x03007FF8 - both are the game handler's job.
+        // A stub that acknowledged IF first broke every game whose handler
+        // dispatches on `IE & IF`: Yggdra Union's IWRAM dispatcher read zero,
+        // fell through its whole chain and called the wrong handler for every
+        // interrupt, so its VBlank work - which is where DISPCNT is written -
+        // never ran at all.
+        let bios_irq_handler: [u32; 4] = [
             0xE92D500F, // stmdb sp!, {r0-r3, r12, lr}
+
             0xE3A0C301, // mov r12, #0x04000000
-            0xE28CCC02, // add r12, r12, #0x200      ; 2 ROR 24 = 0x200
-            0xE1DC10B0, // ldrh r1, [r12]            ; r1 = IE
-            0xE1DC20B2, // ldrh r2, [r12, #2]        ; r2 = IF
-            0xE0011002, // and r1, r1, r2             ; r1 = IE & IF
-            0xE1CC10B2, // strh r1, [r12, #2]        ; acknowledge IF (W1C)
-            0xE59F001C, // ldr r0, [pc, #0x1C]       ; r0 -> literal at 0x58
-            0xE1D020B0, // ldrh r2, [r0]
-            0xE1822001, // orr r2, r2, r1
-            0xE1C020B0, // strh r2, [r0]
-            0xE59F0010, // ldr r0, [pc, #0x10]       ; r0 -> literal at 0x5C
-            0xE5900000, // ldr r0, [r0]              ; r0 = game handler addr
+            0xE51C0004, // ldr r0, [r12, #-4]        ; r0 = [0x03FFFFFC]
             0xE12FFF30, // blx r0                    ; call game handler
         ];
-        // `subs pc, lr, #4` undoes the +4 the exception entry added to LR_irq
-        // and restores CPSR from SPSR_irq in the same instruction. Entry and
-        // exit have to agree: if one adds 4 and the other does not, every
-        // interrupt returns one instruction off and it looks like a game bug.
+
         let epilogue: [u32; 2] = [
             0xE8BD500F, // ldmia sp!, {r0-r3, r12, lr}
             0xE25EF004, // subs pc, lr, #4
         ];
-        let literals: [u32; 2] = [0x0300_7FF8, 0x0300_7FFC];
 
         let offset = 0x18usize;
-        let words = bios_irq_handler
-            .iter()
-            .chain(epilogue.iter())
-            .chain(literals.iter());
+        let words = bios_irq_handler.iter().chain(epilogue.iter());
         for (i, &word) in words.enumerate() {
             let addr = offset + i * 4;
             self.bios[addr..addr + 4].copy_from_slice(&word.to_le_bytes());

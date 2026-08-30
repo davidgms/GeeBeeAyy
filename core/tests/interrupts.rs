@@ -186,9 +186,15 @@ fn irq_entry_leaves_the_user_stack_pointer_untouched() {
 fn irq_returns_to_the_interrupted_instruction() {
     let mut bus = MemoryBus::new();
 
-    // Game IRQ handler: mov r5, #0x42 ; bx lr
-    bus.write32(0x0300_1000, 0xE3A0_5042);
-    bus.write32(0x0300_1004, 0xE12F_FF1E);
+    // Game IRQ handler: mov r5, #0x42 ; acknowledge IF ; bx lr. The
+    // acknowledge is the handler's job on hardware - the BIOS never touches
+    // IF - so the test handler does what a real one does.
+    bus.write32(0x0300_1000, 0xE3A0_5042); // mov r5, #0x42
+    bus.write32(0x0300_1004, 0xE3A0_0301); // mov r0, #0x04000000
+    bus.write32(0x0300_1008, 0xE2800C02); // add r0, r0, #0x200
+    bus.write32(0x0300_100C, 0xE1D010B2); // ldrh r1, [r0, #2]
+    bus.write32(0x0300_1010, 0xE1C010B2); // strh r1, [r0, #2]
+    bus.write32(0x0300_1014, 0xE12F_FF1E); // bx lr
     bus.write32(0x0300_7FFC, 0x0300_1000);
 
     // Interrupted code: mov r0, #1 ; mov r1, #2
@@ -222,7 +228,7 @@ fn irq_returns_to_the_interrupted_instruction() {
     );
     assert_eq!(cpu.cpsr, cpsr_before, "CPSR was not restored from SPSR_irq");
     assert_eq!(cpu.registers[13], 0x0300_7F00, "sp_sys was clobbered");
-    assert_eq!(bus.io.if_, 0, "the HLE handler must acknowledge IF");
+    assert_eq!(bus.io.if_, 0, "the game handler's IF acknowledge was lost");
 
     // And the interrupted instruction stream resumes correctly.
     cpu.step(&mut bus);
@@ -376,9 +382,27 @@ fn vblank_intr_wait_is_not_satisfied_by_an_hblank() {
     data[4..8].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
     gba.load_rom(&data).unwrap();
 
-    // A game IRQ handler that does nothing but return: the BIOS stub is what
-    // has to record the interrupt for IntrWait.
-    gba.bus.write32(0x0300_0000, 0xE12F_FF1E); // bx lr
+    // A game IRQ handler doing exactly what hardware requires of one:
+    // acknowledge IF and OR the handled bits into the BIOS IntrWait flags.
+    for (i, w) in [
+        0xE3A0_0301u32, // mov r0, #0x04000000
+        0xE280_0C02,    // add r0, r0, #0x200
+        0xE1D0_10B0,    // ldrh r1, [r0]        ; IE
+        0xE1D0_20B2,    // ldrh r2, [r0, #2]    ; IF
+        0xE001_1002,    // and r1, r1, r2
+        0xE1C0_10B2,    // strh r1, [r0, #2]    ; acknowledge
+        0xE59F_000C,    // ldr r0, [pc, #12]    ; 0x03007FF8
+        0xE1D0_20B0,    // ldrh r2, [r0]
+        0xE182_2001,    // orr r2, r2, r1
+        0xE1C0_20B0,    // strh r2, [r0]
+        0xE12F_FF1E,    // bx lr
+        0x0300_7FF8,    // literal
+    ]
+    .iter()
+    .enumerate()
+    {
+        gba.bus.write32(0x0300_0000 + i as u32 * 4, *w);
+    }
     gba.bus.write32(0x0300_7FFC, 0x0300_0000);
     gba.bus.write16(0x0400_0004, 0x0018); // VBlank + HBlank IRQ enable
     gba.bus.io.ie = 0x0003;
@@ -398,5 +422,39 @@ fn vblank_intr_wait_is_not_satisfied_by_an_hblank() {
     assert!(
         (160..228).contains(&line),
         "VBlankIntrWait returned at line {line}, not in VBlank"
+    );
+}
+
+#[test]
+fn the_bios_handler_leaves_if_for_the_game_to_acknowledge() {
+    // The real BIOS IRQ handler saves registers, calls [0x03007FFC] and
+    // returns - nothing else. A stub that acknowledged IF first handed every
+    // game whose own dispatcher branches on `IE & IF` a zero, and those
+    // dispatchers then run whatever their fall-through case is.
+    let mut bus = MemoryBus::new();
+    // Game handler: r6 = IF as the handler sees it, then bx lr.
+    bus.write32(0x0300_1000, 0xE3A0_0301); // mov r0, #0x04000000
+    bus.write32(0x0300_1004, 0xE280_0C02); // add r0, r0, #0x200
+    bus.write32(0x0300_1008, 0xE1D0_60B2); // ldrh r6, [r0, #2]
+    bus.write32(0x0300_100C, 0xE12F_FF1E); // bx lr
+    bus.write32(0x0300_7FFC, 0x0300_1000);
+    bus.write32(BASE, 0xE320_F000); // nop
+
+    let mut cpu = Cpu::new();
+    cpu.boot();
+    cpu.registers[15] = BASE;
+    bus.io.ie = 0x0001;
+    bus.io.ime = 1;
+    bus.io.request_interrupt(0x0001);
+    cpu.handle_irq();
+    for _ in 0..64 {
+        if cpu.mode() == Mode::System {
+            break;
+        }
+        cpu.step(&mut bus);
+    }
+    assert_eq!(
+        cpu.registers[6], 0x0001,
+        "the game handler must still see its own IF bit"
     );
 }
