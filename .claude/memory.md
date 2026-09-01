@@ -484,3 +484,64 @@ a single trace probe. Note mGBA boots through its own BIOS HLE from
 `0x00000350`, so instruction counts and early PCs do not line up with ours -
 compare behaviour at named addresses, not step numbers.
 
+
+### 2026-08-31 - The timers were never wired either, and that is what made the sound a thump
+
+Device testing of the newly-booting Yggdra Union turned up "the screen is
+really bugged and the audio keeps doing a tum tum infinitely". Three separate
+faults, all found on the host with `mgba` as the reference:
+
+1. **`Timer::set_control` and `set_reload` had no caller outside the tests** -
+   the seventh instance of this repository's standing pattern. The bus stored
+   `TMxCNT` into `io_regs` and the timer unit never heard about it, so no timer
+   a game started ever ran: no timer interrupt, and no DMA sound, which is
+   driven entirely by timer overflows. Fixed with a `timer_writes` queue on the
+   bus, the same shape as `dma_writes` and `sound_writes`, latched on the high
+   byte of each register. `TMxCNT_L` also now reads back the live counter
+   rather than the reload the game wrote there.
+
+2. **`Apu::on_timer_overflow` was an empty stub** and the mixer popped the
+   FIFOs itself, once per output sample. Sound therefore played at our output
+   rate rather than the rate the game asked for, and drained far faster than
+   the DMA refilled it. With the source pointer running off the end of the
+   game's mix buffer into unrelated IWRAM, the result was a burst of garbage
+   every six frames - the thump. DMA sound is now: timer overflow pops one byte
+   into a latch, the mixer holds that latch, the DMA tops the FIFO up at half
+   empty. `overflow_flags` became a count rather than a bool, because one tick
+   can span several overflows at a short reload.
+   Also fixed while there: the DMA sound volumes are SOUNDCNT_**H** bits 2 and
+   3, not SOUNDCNT_L bits 12 and 13 (those are PSG channel enables), and each
+   FIFO picks its own timer (H bit 10 for A, bit 14 for B).
+
+3. **`Ppu::apply_alpha_blend` was an empty stub**, and the whole colour-effect
+   path was gated on `bldcnt & 0x20` - which selects the *backdrop* as a first
+   target, not whether an effect runs. Yggdra's title screen alpha-blends a
+   band across the artwork; we drew it flat opaque, which is the grey bar the
+   user saw. Mode 0 now composites the top two layers per pixel and applies the
+   effect there, because blending cannot be done after the fact from a single
+   frame buffer. The other modes still use the old scanline-wide
+   approximation.
+
+Separately, `Gba::step`'s halted branch skipped the entire post-instruction
+block - FIFO refill, timer overflows, queued sound-register writes, DMA
+register application. A game is halted for most of every frame, so all of it
+has to run there too; it is now a shared `post_tick`.
+
+**Application**: the "grep for a caller, not a `pub fn`" rule has now paid out
+seven times. Two of the three faults above were *stubs with a plausible name
+and a comment saying what they would do* - `on_timer_overflow` even documented
+the hardware behaviour it did not implement. Treat a function whose body is a
+comment as a missing feature, not a simplification, and check the callers of
+anything the roadmap calls done.
+
+### 2026-08-31 - Android: no wake lock, and integer scaling was losing a whole step to padding
+
+Two frontend faults found on the device, both one-liners.
+`android/app/src/main/java/com/geebeeayy/app/ui/screens/EmulationScreen.kt` had
+no `keepScreenOn` anywhere, so the display slept mid-play while the emulator
+kept running behind it. And the portrait `ScreenContainer` used
+`padding(horizontal = 24.dp)`, which leaves 948 px of a 1080 px screen -
+integer scaling rounds that to 3x. At 8.dp it clears 960 px, which is exactly
+4x. `AudioOutput.write` also returned `true` for a zero-sample write, so a
+frame that produced no audio left the emulation loop with nothing to block on
+and nothing to sleep on; it now returns `false` and the caller paces itself.

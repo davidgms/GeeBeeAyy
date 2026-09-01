@@ -93,7 +93,8 @@ screen on the host, and the homebrew `waimanu`, `jumpingbarnabe` and
 - [x] Memory bus + I/O register dispatch - region mirroring, 8-bit video and
       save-region write rules
 - [x] DMA controller (4 channels) - raises IF bits 8-11
-- [x] Timer system (4 timers) - raises IF bits 3-6
+- [x] Timer system (4 timers) - wired to the bus, raises IF bits 3-6, and
+      drives DMA sound
 - [x] ROM loading (.gba format)
 - [x] Save type detection, and SRAM/Flash/EEPROM wired to the bus - passes the
       `sram`, `flash64`, `flash128` and `none` suites. EEPROM is the real
@@ -101,10 +102,12 @@ screen on the host, and the homebrew `waimanu`, `jumpingbarnabe` and
 - [x] HLE BIOS - the common SWIs; `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are
       still stubs
 - [~] Scanline-based PPU - mode 0 verified against test ROMs and against
-      *Yggdra Union*'s title screen; modes 1, 2, 4, 5, windows, mosaic and
-      blending are unverified
-- [~] Audio output - the PSG channels and FIFOs run and a channel can be
-      triggered, but no game has ever driven them and no device has played them
+      *Yggdra Union*'s title screen, including alpha blending; modes 1, 2, 4, 5,
+      windows and mosaic are unverified, and colour effects outside mode 0 are
+      still a scanline-wide approximation
+- [~] Audio output - DMA sound is driven by timer overflows and plays
+      continuously under *Yggdra Union*; the PSG channels are unverified against
+      a game, and nothing has been checked by ear on a device
 
 ### Phase 2 - Android Frontend
 
