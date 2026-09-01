@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -50,6 +51,14 @@ fun EmulationScreen(
 
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // A game is watched, not touched: without this the display times out
+    // mid-play and the emulator keeps running behind a black screen.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
 
     Box(
         modifier = Modifier
@@ -149,7 +158,10 @@ fun EmulationScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                        // 24.dp a side left only 948 px of a 1080 px screen,
+                        // and integer scaling rounds that down to 3x. 8.dp
+                        // clears 960 px, which is exactly 4x.
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
                 )
 
                 GameControls(

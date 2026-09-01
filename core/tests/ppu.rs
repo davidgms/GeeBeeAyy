@@ -134,3 +134,43 @@ fn vcount_match_sets_bit_2_and_requests_its_interrupt() {
         "VCounter match did not request its interrupt"
     );
 }
+
+/// BLDCNT's alpha blend used to be an empty stub, and the whole colour-effect
+/// path was gated on bit 5 - which selects the backdrop as a first target, not
+/// whether an effect runs. A layer the game asked to be blended came out flat
+/// and opaque: in Yggdra Union, a grey bar across the title screen.
+#[test]
+fn alpha_blend_mixes_the_top_layer_with_the_one_under_it() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // Backdrop white, BG0's colour 1 pure red.
+    gba.bus.write16(0x0500_0000, 0x7FFF);
+    gba.bus.write16(0x0500_0002, 0x001F);
+    // One tile of solid colour 1, and a map that uses it everywhere.
+    for i in 0..32u32 {
+        gba.bus.write8(0x0600_0000 + i, 0x11);
+    }
+    for i in 0..32u32 * 32 {
+        gba.bus.write16(0x0600_F800 + i * 2, 0);
+    }
+    // BG0: char base 0, screen base 0x1F, 16-colour.
+    gba.bus.write16(0x0400_0008, 0x1F00);
+    gba.bus.write16(0x0400_0000, 0x0100); // mode 0, BG0 on
+
+    // No effect yet: the pixel is the flat red.
+    gba.run_frame();
+    let flat = gba.frame_buffer()[0..3].to_vec();
+    assert_eq!(flat, vec![0xF8, 0x00, 0x00], "BG0 should draw its own colour");
+
+    // Alpha blend BG0 (1st target) over the backdrop (2nd target), half each.
+    gba.bus.write16(0x0400_0050, 0x2041); // effect 1 (bits 6-7), 1st = BG0, 2nd = BD
+    gba.bus.write16(0x0400_0052, 0x0808); // EVA = EVB = 8/16
+    gba.run_frame();
+    let blended = gba.frame_buffer()[0..3].to_vec();
+    assert_ne!(blended, flat, "the blend never ran");
+    assert!(
+        blended[1] > 0x60 && blended[2] > 0x60,
+        "the white backdrop should have bled into the red: {blended:02X?}"
+    );
+}

@@ -2,6 +2,10 @@ const SCREEN_WIDTH: usize = 240;
 const SCREEN_HEIGHT: usize = 160;
 const FRAME_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
 
+/// BLDCNT's target bits are ordered BG0, BG1, BG2, BG3, OBJ, BD.
+const LAYER_OBJ: usize = 4;
+const LAYER_BD: usize = 5;
+
 pub struct Ppu {
     frame_buffer: [u8; FRAME_SIZE],
     pub scanline: u16,
@@ -12,6 +16,9 @@ pub struct Ppu {
     hblank_irq_pending: bool,
     vcount_irq_pending: bool,
     vcount_match: bool,
+    /// Which pixels of the current scanline a sprite drew. Per-scanline
+    /// scratch, so it is deliberately not part of a save state.
+    obj_covered: [bool; SCREEN_WIDTH],
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
@@ -96,6 +103,7 @@ impl Ppu {
             hblank_irq_pending: false,
             vcount_irq_pending: false,
             vcount_match: false,
+            obj_covered: [false; SCREEN_WIDTH],
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
@@ -489,9 +497,10 @@ impl Ppu {
             }
         }
 
-        // Apply color effects
-        if self.bldcnt & 0x0020 != 0 {
-            // Color special effect on 1st target
+        // Mode 0 applies colour effects per pixel while it composites, which
+        // is the only way to know which layer is under the top one. The other
+        // modes still use the scanline-wide approximation below.
+        if self.bg_mode != 0 && self.bldcnt & 0x0020 != 0 {
             self.apply_color_effects(y);
         }
     }
@@ -513,6 +522,20 @@ impl Ppu {
         }
 
         for x in 0..SCREEN_WIDTH {
+            let idx = (y * SCREEN_WIDTH + x) * 3;
+            // Whatever is already here is the sprite pass, or the backdrop
+            // where no sprite drew. It is the bottom of the stack either way.
+            let under = (
+                self.frame_buffer[idx],
+                self.frame_buffer[idx + 1],
+                self.frame_buffer[idx + 2],
+            );
+            let under_layer = if self.obj_covered[x] { LAYER_OBJ } else { LAYER_BD };
+
+            // Colour effects need the layer *below* the top one, so collect
+            // the first two opaque backgrounds rather than stopping at one.
+            let mut hit: [Option<((u8, u8, u8), usize)>; 2] = [None, None];
+            let mut found = 0usize;
             for &(_, bg) in &bg_list {
                 let (mx, my) = self.mosaic_bg(x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
@@ -534,15 +557,81 @@ impl Ppu {
                     bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
                 };
 
-                let r = ((color & 0x001F) as u8) << 3;
-                let g = (((color >> 5) & 0x001F) as u8) << 3;
-                let b = (((color >> 10) & 0x001F) as u8) << 3;
-                let idx = (y * SCREEN_WIDTH + x) * 3;
-                self.frame_buffer[idx] = r;
-                self.frame_buffer[idx + 1] = g;
-                self.frame_buffer[idx + 2] = b;
-                break;
+                let rgb = (
+                    ((color & 0x001F) as u8) << 3,
+                    (((color >> 5) & 0x001F) as u8) << 3,
+                    (((color >> 10) & 0x001F) as u8) << 3,
+                );
+                hit[found] = Some((rgb, bg));
+                found += 1;
+                if found == 2 {
+                    break;
+                }
             }
+
+            let (top, top_layer) = match hit[0] {
+                Some((rgb, bg)) => (rgb, bg),
+                None => (under, under_layer),
+            };
+            let (second, second_layer) = match hit[0] {
+                // The top pixel is a background, so what is under it is either
+                // the next background down or the sprite/backdrop pixel.
+                Some(_) => match hit[1] {
+                    Some((rgb, bg)) => (rgb, bg),
+                    None => (under, under_layer),
+                },
+                None => (under, under_layer),
+            };
+
+            let out = self.blend(top, top_layer, second, second_layer);
+            self.frame_buffer[idx] = out.0;
+            self.frame_buffer[idx + 1] = out.1;
+            self.frame_buffer[idx + 2] = out.2;
+        }
+    }
+
+    /// Apply BLDCNT's colour special effect to one composited pixel.
+    ///
+    /// `apply_alpha_blend` used to be an empty stub, and the effect was gated
+    /// on BLDCNT bit 5 - which selects the *backdrop* as a first target, not
+    /// whether an effect runs at all. A game that alpha-blended a layer got it
+    /// drawn flat and opaque instead: in Yggdra Union that is the grey bar
+    /// across the title screen, which should be a translucent band.
+    fn blend(
+        &self,
+        top: (u8, u8, u8),
+        top_layer: usize,
+        second: (u8, u8, u8),
+        second_layer: usize,
+    ) -> (u8, u8, u8) {
+        let effect = (self.bldcnt >> 6) & 3;
+        if effect == 0 || self.bldcnt & (1 << top_layer) == 0 {
+            return top;
+        }
+        match effect {
+            1 => {
+                if self.bldcnt & (0x0100 << second_layer) == 0 {
+                    return top;
+                }
+                // GBATEK: I = min(31, A*EVA/16 + B*EVB/16), EVA/EVB capped at 16.
+                let eva = (self.bldalpha & 0x1F).min(16) as u32;
+                let evb = ((self.bldalpha >> 8) & 0x1F).min(16) as u32;
+                let mix = |a: u8, b: u8| {
+                    ((a as u32 * eva + b as u32 * evb) / 16).min(255) as u8
+                };
+                (mix(top.0, second.0), mix(top.1, second.1), mix(top.2, second.2))
+            }
+            2 => {
+                let ey = (self.bldy & 0x1F).min(16) as u32;
+                let up = |a: u8| (a as u32 + (255 - a as u32) * ey / 16).min(255) as u8;
+                (up(top.0), up(top.1), up(top.2))
+            }
+            3 => {
+                let ey = (self.bldy & 0x1F).min(16) as u32;
+                let down = |a: u8| (a as u32 - a as u32 * ey / 16) as u8;
+                (down(top.0), down(top.1), down(top.2))
+            }
+            _ => top,
         }
     }
 
@@ -687,6 +776,7 @@ impl Ppu {
     // ========================================================================
 
     fn render_obj_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
+        self.obj_covered = [false; SCREEN_WIDTH];
         for sprite in 0..128u16 {
             let oam_addr = 0x0700_0000 + (sprite as u32) * 8;
             let attr0 = bus.read16(oam_addr);
@@ -796,6 +886,7 @@ impl Ppu {
                         let b = (((color >> 10) & 0x001F) as u8) << 3;
 
                         let idx = (y * SCREEN_WIDTH + draw_x as usize) * 3;
+                        self.obj_covered[draw_x as usize] = true;
                         self.frame_buffer[idx] = r;
                         self.frame_buffer[idx + 1] = g;
                         self.frame_buffer[idx + 2] = b;
@@ -855,6 +946,7 @@ impl Ppu {
                         let b = (((color >> 10) & 0x001F) as u8) << 3;
 
                         let idx = (y * SCREEN_WIDTH + px as usize) * 3;
+                        self.obj_covered[px as usize] = true;
                         self.frame_buffer[idx] = r;
                         self.frame_buffer[idx + 1] = g;
                         self.frame_buffer[idx + 2] = b;
