@@ -102,9 +102,10 @@ screen on the host, and the homebrew `waimanu`, `jumpingbarnabe` and
 - [x] HLE BIOS - the common SWIs; `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are
       still stubs
 - [~] Scanline-based PPU - mode 0 verified against test ROMs and against
-      *Yggdra Union*'s title screen, including alpha blending; modes 1, 2, 4, 5,
-      windows and mosaic are unverified, and colour effects outside mode 0 are
-      still a scanline-wide approximation
+      *Yggdra Union*'s opening and title screen, including sprites and alpha
+      blending; modes 1, 2, 4, 5, windows and semi-transparent sprites are
+      unverified, sprite priority against backgrounds is not implemented, and
+      colour effects outside mode 0 are still a scanline-wide approximation
 - [~] Audio output - DMA sound is driven by timer overflows and plays
       continuously under *Yggdra Union*; the PSG channels are unverified against
       a game, and nothing has been checked by ear on a device

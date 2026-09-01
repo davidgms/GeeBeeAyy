@@ -545,3 +545,46 @@ integer scaling rounds that to 3x. At 8.dp it clears 960 px, which is exactly
 4x. `AudioOutput.write` also returned `true` for a zero-sample write, so a
 frame that produced no audio left the emulation loop with nothing to block on
 and nothing to sleep on; it now returns `false` and the caller paces itself.
+
+### 2026-08-31 - Sprites had never rendered: the OBJ tile base was BG VRAM
+
+The user's "pile of pink and green pixels" during Yggdra Union's opening was
+the sprite renderer. Four faults in `render_obj_scanline`, and the first alone
+means **no sprite this emulator ever drew was correct**:
+
+1. **OBJ tile data was read from `0x06000000`.** It lives at `0x06010000`
+   (`0x06014000` in the bitmap modes). Every sprite was textured with whatever
+   background tiles happened to sit at the same offset - which is exactly what
+   noise made of BG art looks like. Yggdra's opening is drawn entirely with
+   sprites, so the whole sequence was bands of garbage.
+2. **The colour-depth bit was read from attr0 bit 7**, which is part of the Y
+   coordinate. GBATEK: bit 13 is the depth, bits 10-11 the OBJ mode. Any
+   sprite at Y >= 128 was decoded as 256-colour. There was also a
+   `bitmap_mode` flag taken from bit 13 that does not exist.
+3. **Tile numbers step in 32-byte units, always.** A 256-colour tile occupies
+   two of them, so an 8bpp sprite's tiles advance by two - in 1D *and* 2D
+   mapping, and 2D mapping is a fixed 32-unit-wide grid whatever the sprite's
+   width. The old code multiplied the tile number by 64 for 8bpp instead.
+4. **X and Y were sign-extended.** They are unsigned (9-bit and 8-bit) and
+   *wrap*: a sprite near the bottom reappears at the top. Sign-extending put
+   every sprite at Y >= 128 off the top of the screen. Horizontal and vertical
+   flip (attr1 bits 12-13) were not implemented at all, and sprites drew in
+   ascending OAM order so a higher-numbered sprite overwrote a lower-numbered
+   one - backwards.
+
+The affine path additionally read PA/PB/PC/PD at `0x07000000 + (0x07000006 +
+group*32)`, adding the OAM base twice, so every scaled sprite was transformed
+by whatever the **cartridge save chip** returned from `0x0E0000xx`.
+
+**Application**: none of this showed up in `gba-suite`, in the three homebrew
+ROMs, or in 40,000 frames of Yggdra's attract loop, because all of those are
+background-only. A whole subsystem can be completely broken and still look
+fine if nothing under test exercises it - "the screens I checked render
+correctly" is not evidence that a feature works. When a report says a specific
+sequence is broken, reproduce *that* sequence rather than sampling elsewhere.
+
+Method note: the layer-isolation probe settled this in one step. Render one
+frame with each of BG0-3 and OBJ forced off in DISPCNT (re-forcing it every
+step, because the game rewrites DISPCNT in VBlank), then diff the frame
+buffers: the garbage band changed only when OBJ was disabled, so nothing but
+the sprite path could be responsible.
