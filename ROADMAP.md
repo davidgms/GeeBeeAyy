@@ -129,7 +129,10 @@ in [`.claude/memory.md`](.claude/memory.md): an unsigned THUMB `B` offset, a
 PPU that overwrote the game's DISPSTAT, a halted CPU that stepped over HBlank,
 and an HLE BIOS interrupt handler that acknowledged IF on the game's behalf.
 
-Verified on the host only. No commercial game has run on a device yet.
+Verified on a device 2026-08-31: *Yggdra Union* boots, plays its opening and reaches the title screen on a Xiaomi Mi 10T Pro, with music. The
+opening only became correct once the sprite renderer was fixed - it had
+been reading OBJ tiles from BG VRAM, so no sprite this emulator ever drew
+was correct.
 
 ---
 
@@ -146,7 +149,13 @@ Verified on the host only. No commercial game has run on a device yet.
       `HuffUnComp` (0x13), the sound driver calls (0x1A-0x24, 0x28-0x2A),
       `MultiBoot` (0x25) and `HardReset`/`CustomHalt` (0x26/0x27). `BgAffineSet`
       and `ObjAffineSet` (0x0E/0x0F) are still stubs that write an identity
-      matrix and ignore the requested angle.
+      matrix and ignore the requested angle, and `BitUnPack` (0x10) is worse
+      than a stub - it copies bytes until it reads a zero, so a game that calls
+      it gets corrupted memory instead of nothing.
+      Two decompressor bugs were fixed on 2026-08-31: `LZ77UnCompVram` and
+      `RLUnCompVram` wrote their output a byte at a time, and VRAM turns a byte
+      store into two copies of that byte across the halfword - which is the
+      whole reason those Vram variants exist.
 - [x] **Save state FFI is now bytes, not an opaque handle** - `state_size`,
       `state_read`, `state_write` replace `save_state_create`/`load_state`/
       `save_state_destroy`. States were previously not exportable to a file at
@@ -214,6 +223,13 @@ Verified on the host only. No commercial game has run on a device yet.
 **Exit criterion:** a full game is playable start to finish, with sound, on a
 physical device, without losing progress.
 
+**Status 2026-08-31:** *Yggdra Union* runs on a device through its opening to
+the title screen with music playing, but nobody has yet pressed Start into the
+game proper. Everything verified so far is the opening and the attract loop -
+both of which turned out to be background-only until the sprite fix, which is
+precisely why the sprite renderer stayed broken for so long. The next crop of
+bugs is behind that Start press.
+
 ---
 
 ## Phase 2 - Quality
@@ -225,8 +241,10 @@ physical device, without losing progress.
       Stretch (the old fill-everything behaviour); default is Integer.
       Persisted in `DisplaySettings` (plain `SharedPreferences`, matching
       `RomFolderManager`'s pattern - no DataStore dependency exists in this
-      project) and changed from `SettingsScreen.kt`. Unverified: not compiled,
-      no device test.
+      project) and changed from `SettingsScreen.kt`. Verified on a device
+      2026-08-31, after the portrait padding was cut from 24.dp to 8.dp -
+      24.dp left 948 px of a 1080 px screen and integer scaling rounds that
+      down to 3x, where 8.dp clears 960 px and gets 4x.
 - [x] **Pixel-perfect filtering** - `drawImage`'s `filterQuality` is set to
       `FilterQuality.None` explicitly rather than left at the bilinear
       default, so a 240x160 frame scaled up keeps hard pixel edges. 2xSaI and
@@ -296,15 +314,39 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 
 - No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
 - No BIOS execute permission checks.
+- **Sprite priority is not implemented.** OAM attr2 bits 10-11 are never read,
+  and sprites are composited before the backgrounds so any opaque background
+  pixel overwrites them. A sprite that belongs in front of a background is
+  drawn behind it.
+- **Windows are decoded but not applied.** `get_window` and
+  `window_layer_visible` are dead code and `render_scanline`'s windowing loop
+  computes its flags and discards them. `fantasy-knight.gba` renders black
+  because of it.
+- **Affine backgrounds are half-implemented.** `render_mode1_scanline`'s affine
+  path handles 8bpp only and says so in its own comment; 4bpp affine draws
+  nothing.
+- **Colour effects outside mode 0 are a scanline-wide approximation.** Mode 0
+  composites the top two layers per pixel and blends correctly; every other
+  mode still applies brightness to the whole line and cannot alpha-blend at
+  all. Semi-transparent sprites (OBJ mode 1) are not blended in any mode.
+- **`BitUnPack` (SWI 0x10) is not a stub, it is wrong.** It copies bytes until
+  it hits a zero, which is nothing like the real call - the real one expands
+  1/2/4/8-bit source units into wider destination units using a five-byte
+  parameter block. A game that uses it gets silently corrupted memory rather
+  than a no-op.
 - The exact cycle on which a timer or DMA raises its IF bit is not modelled;
   the flag is set when the overflow or the transfer completes. GBATEK does not
   document the sub-cycle behaviour, so settling it needs a hardware capture or
   a timing test ROM rather than more reading.
-- `Gba::step` charges a whole scanline (1232 cycles) while halted, so HALT
-  wake-up granularity is one scanline rather than one cycle.
-- The PPU, the APU and DMA timing have no test-ROM coverage at all. gba-suite
-  exercises the CPU and the memory bus; everything those two subsystems do is
-  still unverified.
+- HALT wake-up granularity is one PPU event (HBlank start or the end of a
+  scanline), not one cycle. It used to be a whole scanline, which stepped
+  straight over HBlank and gave a halted game one interrupt a frame
+  instead of 228.
+- PPU and APU *timing* still have no test-ROM coverage. gba-suite exercises
+  the CPU and the memory bus only. Rendering now has some: jsmolka's ppu
+  ROMs, the 240p Test Suite and Celeste Classic in `core/tests/ppu.rs`,
+  plus `core/tests/dma.rs` and `core/tests/tonerom.rs`. None of them check
+  *when* anything happens, only what comes out.
 
 ---
 

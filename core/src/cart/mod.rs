@@ -42,6 +42,20 @@ pub struct Cartridge {
     eeprom_state: EepromState,
 }
 
+/// The header's complement check, per GBATEK: subtract every byte from 0xA0 to
+/// 0xBC, then subtract 0x19. The result is what byte 0xBD must hold.
+///
+/// Public so the range itself is testable - it was wrong (starting at 0x0A,
+/// which swept in the Nintendo logo and the entry point) and nothing but a
+/// warning on stderr said so.
+pub fn header_checksum(data: &[u8]) -> u8 {
+    let mut sum: u8 = 0;
+    for &byte in &data[0xA0..=0xBC] {
+        sum = sum.wrapping_sub(byte);
+    }
+    sum.wrapping_sub(0x19)
+}
+
 impl Cartridge {
     pub fn empty() -> Self {
         Self {
@@ -64,14 +78,17 @@ impl Cartridge {
             return Err(CartError::InvalidSize(data.len()));
         }
 
-        // Verify header checksum (at 0xBD)
-        let mut checksum: u8 = 0;
-        for i in 0x0A..0xBD {
-            checksum = checksum.wrapping_sub(data[i]);
-        }
-        checksum = checksum.wrapping_sub(0x19);
+        // GBATEK, GBA Cartridge Header: the complement check at 0xBD covers
+        // bytes 0xA0 through 0xBC inclusive - the title, game code, maker
+        // code and the fields beside them. The range used to start at 0x0A,
+        // which swept in the Nintendo logo and the entry point and made every
+        // commercial ROM report a bad checksum on load.
+        let checksum = header_checksum(data);
         if checksum != data[0xBD] {
-            eprintln!("Warning: bad header checksum (got 0x{:02X}, expected 0x{:02X})", checksum, data[0xBD]);
+            log::warn!(
+                "bad header checksum (got 0x{checksum:02X}, expected 0x{:02X})",
+                data[0xBD]
+            );
         }
 
         let title_bytes = &data[0xA0..0xAC];

@@ -371,3 +371,40 @@ fn eeprom_marker_is_detected() {
         "the EEPROM_V marker was not detected, so the save type is wrong"
     );
 }
+
+/// GBATEK, GBA Cartridge Header: the complement check at 0xBD covers bytes
+/// 0xA0 through 0xBC. The range used to start at 0x0A, sweeping in the
+/// Nintendo logo and the entry point, so every commercial ROM reported a bad
+/// checksum on load - which is only a warning, so nothing but this test says
+/// the range is right.
+#[test]
+fn the_header_checksum_covers_only_0xa0_to_0xbc() {
+    let mut rom = vec![0u8; 0x200];
+    rom[0xA0..0xAC].copy_from_slice(b"CHECKSUMTEST");
+    let before = geebeeayy_core::cart::header_checksum(&rom);
+
+    // Junk anywhere below 0xA0 is outside the checked range and must not
+    // change the answer.
+    for (i, b) in rom[0x00..0xA0].iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(7).wrapping_add(3);
+    }
+    assert_eq!(
+        geebeeayy_core::cart::header_checksum(&rom),
+        before,
+        "bytes below 0xA0 must not be part of the header checksum"
+    );
+
+    // A byte inside the range must.
+    rom[0xB0] = 0x5A;
+    assert_ne!(
+        geebeeayy_core::cart::header_checksum(&rom),
+        before,
+        "bytes in 0xA0..=0xBC must be part of the header checksum"
+    );
+
+    // And a header whose complement matches loads without complaint.
+    rom[0xBD] = geebeeayy_core::cart::header_checksum(&rom);
+    let mut gba = Gba::new();
+    gba.load_rom(&rom).expect("ROM should load");
+    assert_eq!(gba.cartridge().title(), "CHECKSUMTEST");
+}
