@@ -6,6 +6,10 @@ use std::ffi::c_void;
 /// Opaque handle to Gba instance for FFI consumers.
 pub struct GbaHandle {
     inner: Gba,
+    /// Bounded ring of snapshots for rewind. Empty until the frontend gives
+    /// it a capacity, because a state is around 500 KB and the core has no
+    /// business guessing how much of the device's memory it may have.
+    rewind: crate::rewind::Rewind,
 }
 
 /// Create a new GBA emulator instance.
@@ -20,7 +24,10 @@ pub extern "C" fn geebeeayy_create() -> *mut c_void {
         );
     }
     eprintln!("[GeeBeeAyy] === Creating new GBA instance ===");
-    let handle = Box::new(GbaHandle { inner: Gba::new() });
+    let handle = Box::new(GbaHandle {
+        inner: Gba::new(),
+        rewind: crate::rewind::Rewind::new(0),
+    });
     eprintln!("[GeeBeeAyy] Created, handle={:p}", handle.as_ref());
     Box::into_raw(handle) as *mut c_void
 }
@@ -300,6 +307,88 @@ pub unsafe extern "C" fn geebeeayy_state_size(ptr: *mut c_void) -> usize {
 ///
 /// # Safety
 /// `ptr` must be a valid handle and `out` must have room for `max_len` bytes.
+/// Set how many rewind snapshots to keep, and drop any already held.
+///
+/// A snapshot is about 500 KB, so a depth of 20 costs roughly 10 MB. The
+/// frontend decides the cadence as well as the depth - the core has no clock,
+/// the same reason it does not decide when to flush a battery save.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_configure(ptr: *mut c_void, capacity: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.rewind = crate::rewind::Rewind::new(capacity);
+}
+
+/// Snapshot the machine into the rewind ring, discarding the oldest entry if
+/// it is full. A no-op while the capacity is zero.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_push(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    if handle.rewind.capacity() == 0 {
+        return;
+    }
+    handle.rewind.push(&handle.inner);
+}
+
+/// Restore the most recent snapshot and drop it, so repeated calls walk
+/// backwards. Returns 1 on success, 0 when the ring is empty, -1 if the
+/// snapshot was rejected - in which case the machine is unchanged, because
+/// `SaveState::restore` rolls back on failure.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_pop(ptr: *mut c_void) -> i32 {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    let GbaHandle { inner, rewind } = handle;
+    match rewind.pop(inner) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Bytes the rewind ring is holding right now, so a frontend can size its
+/// depth against the device instead of guessing.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_memory(ptr: *mut c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    handle.rewind.memory_bytes()
+}
+
+/// Drop every snapshot, for a ROM change or a save-state load.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_clear(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.rewind.clear();
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn geebeeayy_state_read(
     ptr: *mut c_void,
@@ -549,6 +638,56 @@ pub mod android {
     }
 
     #[no_mangle]
+    /// Rewind: configure the ring's depth, take a snapshot, step back one.
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindConfigure(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        capacity: jint,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        unsafe { geebeeayy_rewind_configure(handle as *mut c_void, capacity.max(0) as usize) };
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindPush(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        unsafe { geebeeayy_rewind_push(handle as *mut c_void) };
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindPop(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
+        if handle == 0 {
+            return 0;
+        }
+        unsafe { geebeeayy_rewind_pop(handle as *mut c_void) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindClear(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        unsafe { geebeeayy_rewind_clear(handle as *mut c_void) };
+    }
+
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeStateWrite(
         mut env: JNIEnv,
         _class: JClass,

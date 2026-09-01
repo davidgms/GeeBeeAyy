@@ -91,3 +91,56 @@ fn memory_cost_is_reported_so_a_caller_can_size_itself() {
     assert_eq!(rewind.memory_bytes(), 0);
 }
 
+
+/// The FFI's rewind ring: a frontend configures a depth, pushes snapshots on
+/// its own cadence and pops to walk backwards. The core had the ring since
+/// 2026-08 but nothing could reach it - there was no FFI at all.
+#[test]
+fn the_rewind_ffi_walks_backwards_and_stops_when_empty() {
+    use std::ffi::c_void;
+
+    unsafe {
+        let handle = geebeeayy_core::ffi::geebeeayy_create();
+        assert!(!handle.is_null());
+
+        let mut rom = vec![0u8; 0x200];
+        // `b .` so the machine advances its clock and nothing else.
+        rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+        geebeeayy_core::ffi::geebeeayy_load_rom(handle, rom.as_ptr(), rom.len());
+
+        // Zero capacity is the default, so a push does nothing and a pop has
+        // nothing to give.
+        geebeeayy_core::ffi::geebeeayy_rewind_push(handle);
+        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_pop(handle), 0);
+        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_memory(handle), 0);
+
+        geebeeayy_core::ffi::geebeeayy_rewind_configure(handle, 3);
+        for _ in 0..5 {
+            geebeeayy_core::ffi::geebeeayy_run_frame(handle);
+            geebeeayy_core::ffi::geebeeayy_rewind_push(handle);
+        }
+        // The ring is bounded: five pushes into a depth of three keep three.
+        assert!(geebeeayy_core::ffi::geebeeayy_rewind_memory(handle) > 0);
+        for step in 0..3 {
+            assert_eq!(
+                geebeeayy_core::ffi::geebeeayy_rewind_pop(handle),
+                1,
+                "pop {step} should have restored a snapshot"
+            );
+        }
+        assert_eq!(
+            geebeeayy_core::ffi::geebeeayy_rewind_pop(handle),
+            0,
+            "a fourth pop must report the ring empty"
+        );
+        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_memory(handle), 0);
+
+        geebeeayy_core::ffi::geebeeayy_rewind_configure(handle, 2);
+        geebeeayy_core::ffi::geebeeayy_rewind_push(handle);
+        geebeeayy_core::ffi::geebeeayy_rewind_clear(handle);
+        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_pop(handle), 0);
+
+        geebeeayy_core::ffi::geebeeayy_destroy(handle);
+        let _: *mut c_void = std::ptr::null_mut();
+    }
+}

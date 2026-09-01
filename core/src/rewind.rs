@@ -26,17 +26,21 @@ pub struct Rewind {
 
 impl Rewind {
     /// A ring holding at most `capacity` snapshots. Pushing past that discards
-    /// the oldest, so the buffer never grows without bound.
+    /// the oldest, so the buffer never grows without bound. A capacity of zero
+    /// disables rewind, which is the default until a frontend asks for it.
     pub fn new(capacity: usize) -> Self {
         Self {
             states: VecDeque::with_capacity(capacity.min(64)),
-            capacity: capacity.max(1),
+            capacity,
         }
     }
 
     /// Snapshot the machine now.
     pub fn push(&mut self, gba: &Gba) {
-        if self.states.len() == self.capacity {
+        if self.capacity == 0 {
+            return;
+        }
+        while self.states.len() >= self.capacity {
             self.states.pop_front();
         }
         self.states.push_back(gba.save_state().data);
@@ -53,6 +57,11 @@ impl Rewind {
         };
         SaveState { data }.restore(gba)?;
         Ok(true)
+    }
+
+    /// How many snapshots this ring will hold before discarding the oldest.
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Snapshots currently held.

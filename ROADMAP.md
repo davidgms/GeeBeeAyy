@@ -309,11 +309,16 @@ The iOS target has never been compiled. Owned by `swift-expert`, with
 
 ## Phase 4 - Advanced
 
-- [x] **Rewind (core side)** - `core/src/rewind.rs`, a bounded ring of save
-      states with the snapshot cadence left to the frontend, same as save
-      flushing. A state measures 512,128 bytes, so `Rewind::memory_bytes`
-      reports the live cost and a caller sizes itself against the device
-      instead of guessing. Not yet wired to any UI.
+- [x] **Rewind** - `core/src/rewind.rs` is a bounded ring of save states with
+      the cadence left to the frontend, same as save flushing. A state
+      measures 512,128 bytes, so `Rewind::memory_bytes` reports the live cost
+      and a caller sizes itself against the device instead of guessing.
+      Wired end to end 2026-09-01: five FFI functions
+      (`rewind_configure`/`push`/`pop`/`memory`/`clear`) plus JNI, a snapshot
+      every 30 frames into a depth of 20 - about ten seconds of history for
+      roughly 10 MB - and a hold-to-rewind button in the transport column.
+      Loading a save state clears the ring, since that history belongs to the
+      timeline you just left. Verified on a device.
 - [ ] Cheat codes (GameShark / CodeBreaker).
 - [ ] Link cable over local WiFi.
 - [ ] JIT recompilation, ARM host only. Only after the interpreter is correct -

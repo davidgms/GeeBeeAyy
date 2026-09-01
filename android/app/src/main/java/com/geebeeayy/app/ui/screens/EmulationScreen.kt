@@ -3,6 +3,7 @@ package com.geebeeayy.app.ui.screens
 import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +42,8 @@ fun EmulationScreen(
     onBack: () -> Unit,
     onPause: () -> Unit,
     onFastForward: () -> Unit,
+    isRewinding: Boolean = false,
+    onRewind: (Boolean) -> Unit = {},
     onSaveState: (Int) -> Unit,
     onLoadState: (Int) -> Unit,
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
@@ -137,6 +140,8 @@ fun EmulationScreen(
                         TransportControls(
                             isPaused = isPaused,
                             isFastForward = isFastForward,
+                            isRewinding = isRewinding,
+                            onRewind = onRewind,
                             onTogglePause = {
                                 isPaused = !isPaused
                                 onPause()
@@ -167,6 +172,8 @@ fun EmulationScreen(
                 GameControls(
                     isPaused = isPaused,
                     isFastForward = isFastForward,
+                    isRewinding = isRewinding,
+                    onRewind = onRewind,
                     onTogglePause = {
                         isPaused = !isPaused
                         onPause()
@@ -336,8 +343,10 @@ fun GbaScreen(frameBuffer: ByteArray, scaleMode: ScaleMode = ScaleMode.INTEGER) 
 fun GameControls(
     isPaused: Boolean,
     isFastForward: Boolean,
+    isRewinding: Boolean,
     onTogglePause: () -> Unit,
     onToggleFastForward: () -> Unit,
+    onRewind: (Boolean) -> Unit,
     onKeyChange: (Int, Boolean) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -357,8 +366,10 @@ fun GameControls(
             TransportControls(
                 isPaused = isPaused,
                 isFastForward = isFastForward,
+                isRewinding = isRewinding,
                 onTogglePause = onTogglePause,
                 onToggleFastForward = onToggleFastForward,
+                onRewind = onRewind,
             )
         }
 
@@ -438,8 +449,10 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
 fun TransportControls(
     isPaused: Boolean,
     isFastForward: Boolean,
+    isRewinding: Boolean,
     onTogglePause: () -> Unit,
     onToggleFastForward: () -> Unit,
+    onRewind: (Boolean) -> Unit,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -481,6 +494,31 @@ fun TransportControls(
                 // PineGlowMist on HoneyMid is 7.52:1 and BurntRoot on
                 // GoldenSaplight is 12.33:1.
                 tint = if (isFastForward) BurntRoot else PineGlowMist,
+            )
+        }
+
+        // Rewind. Held rather than toggled: you hold it until the mistake is
+        // undone and let go, the way every emulator that has this does it.
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(if (isRewinding) GoldenSaplight else HoneyMid)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            onRewind(true)
+                            tryAwaitRelease()
+                            onRewind(false)
+                        },
+                    )
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.FastRewind,
+                contentDescription = "Rewind",
+                tint = if (isRewinding) BurntRoot else PineGlowMist,
             )
         }
     }

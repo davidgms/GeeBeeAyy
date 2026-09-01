@@ -165,6 +165,7 @@ fun GeeBeeAyyNavHost() {
             val isLoading by viewModel.isLoading.collectAsState()
             val errorMessage by viewModel.errorMessage.collectAsState()
             val stateMessage by viewModel.stateMessage.collectAsState()
+            val isRewinding by viewModel.isRewinding.collectAsState()
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -200,6 +201,8 @@ fun GeeBeeAyyNavHost() {
                 },
                 onPause = { viewModel.togglePause() },
                 onFastForward = { viewModel.toggleFastForward() },
+                isRewinding = isRewinding,
+                onRewind = { active -> viewModel.setRewinding(active) },
                 onSaveState = { slot -> viewModel.saveState(slot) },
                 onLoadState = { slot -> viewModel.loadState(slot) },
                 onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },

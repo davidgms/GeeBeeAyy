@@ -30,6 +30,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         const val STATE_SLOT_COUNT = 10
 
         /**
+         * Rewind depth and cadence.
+         *
+         * A snapshot is around 500 KB, so 20 of them is roughly 10 MB - the
+         * whole budget for this feature. At one every 30 frames that buys
+         * about ten seconds of history, which is the useful range for undoing
+         * a mistake without turning the emulator into a memory hog.
+         */
+        const val REWIND_DEPTH = 20
+        const val REWIND_INTERVAL_FRAMES = 30
+
+        /**
          * A game saving touches thousands of bytes across many CPU cycles;
          * waiting this long after the last dirty flag before writing avoids a
          * file write per byte.
@@ -67,6 +78,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _isFastForward = MutableStateFlow(false)
     val isFastForward: StateFlow<Boolean> = _isFastForward
+
+    /** True while the player is holding the rewind button. */
+    private val _isRewinding = MutableStateFlow(false)
+    val isRewinding: StateFlow<Boolean> = _isRewinding
+
+    /** Frames between rewind snapshots, and how many the core keeps. */
+    private var rewindFrameCounter = 0
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -190,6 +208,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 val success = engine.loadRom(data)
                 if (success) {
                     romLoaded = true
+                    // A fresh ROM means a fresh history; the ring is allocated
+                    // here rather than at create() so a cold handle costs
+                    // nothing.
+                    engine.rewindConfigure(REWIND_DEPTH)
+                    rewindFrameCounter = 0
                     resolveSavePaths(file, data)
                     loadExistingSave()
                     _isLoading.value = false
@@ -286,7 +309,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         pendingStateCommand = null
                         when (cmd) {
                             is StateCommand.Save -> performSaveState(cmd.slot)
-                            is StateCommand.LoadBytes -> applyStateBytes(cmd.bytes)
+                            is StateCommand.LoadBytes -> {
+                applyStateBytes(cmd.bytes)
+                // The history belongs to the timeline we just left.
+                engine.rewindClear()
+                rewindFrameCounter = 0
+            }
                         }
                     }
 
@@ -299,12 +327,35 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     if (!isActive) continue
 
                     val fastForward = isFastForward.value
+                    val rewinding = isRewinding.value
+
+                    if (rewinding) {
+                        // Walking back through the ring: each step is a whole
+                        // snapshot, so this runs at the snapshot cadence
+                        // rather than the frame rate, and stops at the oldest
+                        // one rather than doing nothing visible.
+                        if (!engine.rewindPop()) {
+                            _isRewinding.value = false
+                        }
+                        _frameBuffer.value = engine.getFrameBuffer().copyOf()
+                        delay(frameIntervalMs)
+                        continue
+                    }
+
                     if (fastForward) {
                         engine.runFrames(4)
                     } else {
                         engine.runFrame()
                     }
                     _frameBuffer.value = engine.getFrameBuffer().copyOf()
+
+                    // Snapshot on a cadence, not every frame: a state is about
+                    // 500 KB, so REWIND_DEPTH * REWIND_INTERVAL decides both
+                    // the memory cost and how far back the player can go.
+                    if (++rewindFrameCounter >= REWIND_INTERVAL_FRAMES) {
+                        rewindFrameCounter = 0
+                        engine.rewindPush()
+                    }
 
                     checkSaveDirty()
 
@@ -425,6 +476,18 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun toggleFastForward() {
         _isFastForward.value = !_isFastForward.value
+    }
+
+    /**
+     * Hold to walk backwards through the rewind ring; release to resume.
+     *
+     * Rewinding while fast-forwarding makes no sense, so this cancels it.
+     */
+    fun setRewinding(active: Boolean) {
+        if (active) {
+            _isFastForward.value = false
+        }
+        _isRewinding.value = active
     }
 
     private fun stateFile(slot: Int): File = File(statesDir, "${romStateKey}_slot$slot.state")

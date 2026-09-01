@@ -175,6 +175,40 @@ class GbaEngine {
         return nativeStateWrite(handle, data) == 0
     }
 
+    /**
+     * Set how many rewind snapshots the core keeps, and drop any it holds.
+     *
+     * A snapshot is around 500 KB, so the depth is a memory budget: 20 costs
+     * roughly 10 MB. Zero disables rewind, which is the default.
+     */
+    fun rewindConfigure(capacity: Int) {
+        ensureHandle()
+        nativeRewindConfigure(handle, capacity)
+    }
+
+    /** Snapshot the machine into the rewind ring. */
+    fun rewindPush() {
+        ensureHandle()
+        nativeRewindPush(handle)
+    }
+
+    /**
+     * Step back one snapshot.
+     *
+     * @return true if the machine moved back, false if the ring was empty. A
+     *   rejected snapshot leaves the machine untouched and also returns false.
+     */
+    fun rewindPop(): Boolean {
+        ensureHandle()
+        return nativeRewindPop(handle) == 1
+    }
+
+    /** Drop every snapshot, for a ROM change or a save-state load. */
+    fun rewindClear() {
+        ensureHandle()
+        nativeRewindClear(handle)
+    }
+
     private fun ensureHandle() {
         check(handle != 0L) { "GbaEngine not created. Call create() first." }
     }
@@ -193,4 +227,8 @@ class GbaEngine {
     private external fun nativeSaveWrite(handle: Long, data: ByteArray): Int
     private external fun nativeStateRead(handle: Long): ByteArray
     private external fun nativeStateWrite(handle: Long, data: ByteArray): Int
+    private external fun nativeRewindConfigure(handle: Long, capacity: Int)
+    private external fun nativeRewindPush(handle: Long)
+    private external fun nativeRewindPop(handle: Long): Int
+    private external fun nativeRewindClear(handle: Long)
 }
