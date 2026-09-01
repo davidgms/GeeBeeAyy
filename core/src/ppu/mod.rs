@@ -71,7 +71,6 @@ pub struct Ppu {
     mosaic_bg_vsize: u8,
     mosaic_obj_hsize: u8,
     mosaic_obj_vsize: u8,
-    mosaic_bg_enabled: bool,
     mosaic_obj_enabled: bool,
     // Windows
     win0h_left: u8,
@@ -148,7 +147,6 @@ impl Ppu {
             mosaic_bg_vsize: 0,
             mosaic_obj_hsize: 0,
             mosaic_obj_vsize: 0,
-            mosaic_bg_enabled: false,
             mosaic_obj_enabled: false,
             win0h_left: 0,
             win0h_right: 0,
@@ -317,8 +315,10 @@ impl Ppu {
         self.mosaic_obj_vsize = ((mosaic >> 12) & 0x000F) as u8;
 
         // Mosaic enable flags (from BLDCNT/MOSAIC interaction)
-        self.mosaic_bg_enabled = self.dispcnt & 0x0040 != 0;
-        self.mosaic_obj_enabled = self.dispcnt & 0x0040 != 0;
+        // Mosaic is per layer, and DISPCNT bit 6 is OBJ character mapping -
+        // not a mosaic enable. Reading it here mosaiced every background
+        // whenever a game set 1D sprite mapping, which is most of them.
+        self.mosaic_obj_enabled = true;
 
         // Window registers
         self.win0h_left = bus.read8(0x0400_0040);
@@ -396,8 +396,15 @@ impl Ppu {
     // ========================================================================
 
     /// Apply mosaic to an (x, y) coordinate for BG tiles.
-    fn mosaic_bg(&self, x: usize, y: usize) -> (usize, usize) {
-        if !self.mosaic_bg_enabled || (self.mosaic_bg_hsize == 0 && self.mosaic_bg_vsize == 0) {
+    fn mosaic_bg(&self, bg: usize, x: usize, y: usize) -> (usize, usize) {
+        let cnt = match bg {
+            0 => self.bg0cnt,
+            1 => self.bg1cnt,
+            2 => self.bg2cnt,
+            _ => self.bg3cnt,
+        };
+        // BGxCNT bit 6 is this background's own mosaic enable.
+        if cnt & 0x0040 == 0 || (self.mosaic_bg_hsize == 0 && self.mosaic_bg_vsize == 0) {
             return (x, y);
         }
         let h = self.mosaic_bg_hsize as usize + 1;
@@ -537,7 +544,7 @@ impl Ppu {
             let mut hit: [Option<((u8, u8, u8), usize)>; 2] = [None, None];
             let mut found = 0usize;
             for &(_, bg) in &bg_list {
-                let (mx, my) = self.mosaic_bg(x, y);
+                let (mx, my) = self.mosaic_bg(bg, x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
 
@@ -652,7 +659,7 @@ impl Ppu {
 
         for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
-                let (mx, my) = self.mosaic_bg(x, y);
+                let (mx, my) = self.mosaic_bg(bg, x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
 

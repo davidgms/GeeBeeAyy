@@ -174,3 +174,42 @@ fn alpha_blend_mixes_the_top_layer_with_the_one_under_it() {
         "the white backdrop should have bled into the red: {blended:02X?}"
     );
 }
+
+/// Mosaic is per layer: BGxCNT bit 6 enables it for that background. It used
+/// to be read from DISPCNT bit 6, which is OBJ character mapping - so any game
+/// using 1D sprite mapping, which is most of them, had every background
+/// mosaiced the moment it set a non-zero MOSAIC for one layer.
+#[test]
+fn mosaic_only_applies_to_the_backgrounds_that_asked_for_it() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // Two colours, and a tile whose left half is colour 1 and right half 2.
+    gba.bus.write16(0x0500_0002, 0x001F); // red
+    gba.bus.write16(0x0500_0004, 0x03E0); // green
+    for row in 0..8u32 {
+        // 4bpp: two pixels per byte, four bytes per row.
+        gba.bus.write8(0x0600_0000 + row * 4, 0x11);
+        gba.bus.write8(0x0600_0000 + row * 4 + 1, 0x11);
+        gba.bus.write8(0x0600_0000 + row * 4 + 2, 0x22);
+        gba.bus.write8(0x0600_0000 + row * 4 + 3, 0x22);
+    }
+    for i in 0..32u32 * 32 {
+        gba.bus.write16(0x0600_F800 + i * 2, 0);
+    }
+
+    // BG0 at screen base 0x1F, mosaic *off*, and a large mosaic size set.
+    gba.bus.write16(0x0400_0008, 0x1F00);
+    gba.bus.write16(0x0400_004C, 0x0077); // 8x8 mosaic
+    gba.bus.write16(0x0400_0000, 0x0140); // mode 0, BG0 on, OBJ 1D mapping
+
+    gba.run_frame();
+    // Pixel 4 is the second half of the tile: green, unless a mosaic it never
+    // asked for smeared pixel 0's red across the whole 8-pixel block.
+    let px = &gba.frame_buffer()[4 * 3..4 * 3 + 3];
+    assert_eq!(
+        px,
+        [0x00, 0xF8, 0x00],
+        "BG0 was mosaiced without BGxCNT bit 6 set"
+    );
+}
