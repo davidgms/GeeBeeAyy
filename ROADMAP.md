@@ -322,7 +322,8 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 - **Windows are decoded but not applied.** `get_window` and
   `window_layer_visible` are dead code and `render_scanline`'s windowing loop
   computes its flags and discards them. `fantasy-knight.gba` renders black
-  because of it.
+  because of it. *Yggdra Union* never enables one - every DISPCNT it uses has
+  bits 13-15 clear - so this is not what blocks that game.
 - Affine backgrounds render, as of 2026-09-01, but their per-pixel path is not
   cycle-shaped: PB and PD are accumulated once per scanline rather than being
   applied inside the line, which is right for the ordinary case and wrong for

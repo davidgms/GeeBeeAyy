@@ -692,3 +692,30 @@ gameplay showed they mattered", and one scripted playthrough answered it in
 minutes - mode 1, no windows. Reaching real gameplay is worth more than
 reasoning about which gap to close next; the opening and the attract loop of a
 game can exercise a completely different quarter of the PPU than the game does.
+
+### 2026-09-01 - What Yggdra's gameplay actually exercises, and a snapshot to iterate from
+
+Drove *Yggdra Union* into real gameplay with a scripted key sequence and then
+random input, and looked at every screen it reached: the title menu, the
+Tutorial Mode prompt, the "Fall of Castle Paltina" story sequence, the
+"Thieves' Stronghold" dialogue, CARD SELECT, the CHARACTER sheet, the
+victory/defeat conditions screen and the morale/items menu. **All of them
+render correctly** after the affine fix. No new rendering defect surfaced.
+
+Two findings worth keeping:
+
+- **Yggdra never enables a window.** Every DISPCNT value seen across the whole
+  playthrough - 0x1040, 0x1240, 0x1761, 0x1B60, 0x1C40, 0x1E40, 0x1F40,
+  0x1F60 - has bits 13, 14 and 15 clear. So the unimplemented window logic is
+  not what is holding this game back, and the only ROM here that needs it is
+  `fantasy-knight.gba` (DISPCNT 0xF641). Mode 1 appears exactly once, in the
+  dialogue scene, which is what made the affine bug matter.
+- **`A` does nothing on CARD SELECT** while Start, Right, Down, L and R all
+  work from the same probe, so it is game logic (a card cannot be confirmed in
+  that state), not a stuck input. Worth remembering before chasing it as an
+  input bug.
+
+`temp/probes/play.rs` grew `SNAP=<frame>:<file>` and `LOAD=<file>`, which turn
+a four-minute run-up into a three-second one. `temp/cardselect.state` is a
+snapshot sitting on CARD SELECT; note it is a v5 save state and will be
+rejected the moment the format changes again.
