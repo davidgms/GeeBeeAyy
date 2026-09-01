@@ -620,3 +620,40 @@ affine path only handles 8bpp and is marked "not fully handled yet") nor
 windows are implemented: `get_window` and `window_layer_visible` are dead code
 and the windowing loop in `render_scanline` computes its flags and discards
 them. That is the next real PPU gap, and it will hit commercial games.
+
+### 2026-09-01 - Sprite priority, and the three ordering rules worth not guessing
+
+Sprites were composited into the frame buffer *before* the backgrounds, and
+OAM attr2 bits 10-11 - the sprite's priority - were never read, so any opaque
+background pixel covered a sprite whatever its priority said. The sprite pass
+now records `(colour, priority)` per pixel into `Ppu::obj_pixel` and mode 0's
+compositor merges that into the layer ordering.
+
+`search-specialist` was asked for the rules before the code was written, and
+returned three that are each easy to get backwards:
+
+1. **A sprite wins a tie with a background.** GBATEK, LCD OBJ - OAM
+   Attributes: "In case that the Priority relative to BG is the same than the
+   priority of one of the background layers, then the OBJ becomes higher
+   priority."
+2. **Between backgrounds, the lower BG number wins a tie** (BGxCNT bits 0-1) -
+   which a stable sort on priority alone already gives.
+3. **Between two sprites the OAM index decides on its own.** A sprite's
+   priority field is *never* compared against another sprite. GBATEK's
+   "Caution" example under OAM Attributes shows this, and VisualBoyAdvance bug
+   #130 was closed after a hardware test confirmed it. **TONC's regobj page
+   says the opposite** ("for sprites of the same priority, the higher
+   OBJ_ATTRs are drawn first") and is the outlier - the agent recorded that in
+   its own `## Discoveries`, verified in the diff.
+
+Still not implemented, with the rules now written down in that agent's report:
+semi-transparent sprites (OBJ mode 1) are always a 1st target and always alpha
+blend regardless of BLDCNT bits 4 and 6-7, but the 2nd-target bits 8-13 still
+decide what they blend with and a non-target underneath means no blend at all.
+OBJ-window sprites (mode 2) must still be decoded for their mask shape even
+though nothing is drawn, and DISPCNT bits 12 *and* 15 both gate that.
+
+**Application**: this is the first time in the project that a hardware
+question went to `search-specialist` before the fix rather than after, and it
+paid: two of the three rules are coin-flip cases that would have looked
+plausible either way, and one has a widely-read source stating it backwards.

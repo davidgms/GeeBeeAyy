@@ -326,3 +326,111 @@ fn the_240p_suite_draws_its_front_page() {
         counts.len()
     );
 }
+
+/// Build a machine with BG0 drawing solid colour 1 everywhere and one 8x8
+/// sprite at the origin drawing colour 1 from OBJ palette 0.
+fn bg_and_sprite(bg_priority: u16, obj_priority: u16) -> Gba {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // BG tile 0: colour index 1. Sprite tile 0 in OBJ VRAM: colour index 1.
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + i, 0x1111);
+        gba.bus.write16(0x0601_0000 + i, 0x1111);
+    }
+    for i in 0..32u32 * 32 {
+        gba.bus.write16(0x0600_F800 + i * 2, 0);
+    }
+    gba.bus.write16(0x0500_0002, 0x001F); // BG palette 0, colour 1: red
+    gba.bus.write16(0x0500_0202, 0x03E0); // OBJ palette 0, colour 1: green
+
+    // BG0: screen base 0x1F, char base 0, 16-colour, given priority.
+    gba.bus.write16(0x0400_0008, 0x1F00 | bg_priority);
+
+    gba.bus.write16(0x0700_0000, 0x0000); // y = 0, 8x8, 4bpp
+    gba.bus.write16(0x0700_0002, 0x0000); // x = 0
+    gba.bus.write16(0x0700_0004, obj_priority << 10);
+    for s in 1..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200); // disabled
+    }
+
+    gba.bus.write16(0x0400_0000, 0x1140); // mode 0, BG0 + OBJ, 1D mapping
+    gba
+}
+
+/// OAM attribute 2 bits 10-11 are the sprite's priority, and they were never
+/// read: sprites were composited before the backgrounds, so any opaque
+/// background pixel covered them whatever their priority said.
+#[test]
+fn a_low_priority_sprite_goes_behind_the_background() {
+    let mut gba = bg_and_sprite(0, 3);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "a priority-3 sprite must not cover a priority-0 background"
+    );
+}
+
+#[test]
+fn a_high_priority_sprite_goes_in_front_of_the_background() {
+    let mut gba = bg_and_sprite(3, 0);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0xF8, 0x00],
+        "a priority-0 sprite must cover a priority-3 background"
+    );
+}
+
+/// GBATEK: sprites are drawn in front of a background of the *same* priority.
+#[test]
+fn a_sprite_wins_a_priority_tie_with_a_background() {
+    let mut gba = bg_and_sprite(1, 1);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0xF8, 0x00],
+        "an equal-priority sprite must be in front of the background"
+    );
+}
+
+/// Between two overlapping sprites the OAM index decides on its own: a
+/// sprite's priority field is only ever compared against the backgrounds.
+/// GBATEK's "Caution" example under OAM Attributes spells this out, and it was
+/// confirmed on hardware in VisualBoyAdvance bug #130 - so sprite 0 wins even
+/// when sprite 1 carries the better priority.
+#[test]
+fn between_two_sprites_the_oam_index_decides_not_the_priority() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // Two OBJ tiles: tile 0 is colour 1, tile 1 is colour 2.
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0601_0000 + i, 0x1111);
+        gba.bus.write16(0x0601_0020 + i, 0x2222);
+    }
+    gba.bus.write16(0x0500_0202, 0x001F); // colour 1: red
+    gba.bus.write16(0x0500_0204, 0x03E0); // colour 2: green
+
+    // Sprite 0 uses tile 0 and the *worse* priority; sprite 1 uses tile 1 and
+    // the better one. They sit on top of each other.
+    gba.bus.write16(0x0700_0000, 0x0000);
+    gba.bus.write16(0x0700_0002, 0x0000);
+    gba.bus.write16(0x0700_0004, (3 << 10) | 0);
+    gba.bus.write16(0x0700_0008, 0x0000);
+    gba.bus.write16(0x0700_000A, 0x0000);
+    gba.bus.write16(0x0700_000C, (0 << 10) | 1);
+    for s in 2..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
+    }
+
+    gba.bus.write16(0x0400_0000, 0x1040); // mode 0, OBJ on, 1D mapping
+    gba.run_frame();
+
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "sprite 0 must win the overlap even though sprite 1 has a better priority"
+    );
+}

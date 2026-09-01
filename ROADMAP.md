@@ -314,10 +314,11 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 
 - No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
 - No BIOS execute permission checks.
-- **Sprite priority is not implemented.** OAM attr2 bits 10-11 are never read,
-  and sprites are composited before the backgrounds so any opaque background
-  pixel overwrites them. A sprite that belongs in front of a background is
-  drawn behind it.
+- Sprite priority against backgrounds is correct in **mode 0 only**. The other
+  modes lay sprites on top of everything instead of ordering them, which is
+  wrong when a background outranks the sprite - but it is what makes sprites
+  appear in the bitmap modes at all, since modes 3-5 never ran the sprite pass
+  before 2026-09-01.
 - **Windows are decoded but not applied.** `get_window` and
   `window_layer_visible` are dead code and `render_scanline`'s windowing loop
   computes its flags and discards them. `fantasy-knight.gba` renders black

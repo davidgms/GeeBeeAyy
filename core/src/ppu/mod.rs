@@ -16,9 +16,15 @@ pub struct Ppu {
     hblank_irq_pending: bool,
     vcount_irq_pending: bool,
     vcount_match: bool,
-    /// Which pixels of the current scanline a sprite drew. Per-scanline
-    /// scratch, so it is deliberately not part of a save state.
-    obj_covered: [bool; SCREEN_WIDTH],
+    /// The sprite pixel on the current scanline, as (colour, priority), and
+    /// `None` where no sprite drew. Per-scanline scratch, so it is
+    /// deliberately not part of a save state.
+    ///
+    /// Sprites used to be painted straight into the frame buffer before the
+    /// backgrounds, which meant any opaque background pixel covered them
+    /// whatever their priority said. Holding them here instead lets the
+    /// compositor order them against the backgrounds properly.
+    obj_pixel: [Option<((u8, u8, u8), u8)>; SCREEN_WIDTH],
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
@@ -102,7 +108,7 @@ impl Ppu {
             hblank_irq_pending: false,
             vcount_irq_pending: false,
             vcount_match: false,
-            obj_covered: [false; SCREEN_WIDTH],
+            obj_pixel: [None; SCREEN_WIDTH],
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
@@ -473,6 +479,24 @@ impl Ppu {
             _ => {}
         }
 
+        // Mode 0 orders sprites against its backgrounds by priority while it
+        // composites. The other modes get them laid on top instead - wrong
+        // when a background outranks the sprite, but the same approximation
+        // their colour effects already make, and it is what makes sprites
+        // appear in the bitmap modes at all: those three never ran the sprite
+        // pass before.
+        if self.bg_mode != 0 && self.obj_enable {
+            self.render_obj_scanline(y, bus);
+            for x in 0..SCREEN_WIDTH {
+                if let Some((rgb, _)) = self.obj_pixel[x] {
+                    let idx = (y * SCREEN_WIDTH + x) * 3;
+                    self.frame_buffer[idx] = rgb.0;
+                    self.frame_buffer[idx + 1] = rgb.1;
+                    self.frame_buffer[idx + 2] = rgb.2;
+                }
+            }
+        }
+
         // Apply windowing (mask pixels outside active windows)
         let win0_en = self.dispcnt & 0x2000 != 0;
         let win1_en = self.dispcnt & 0x4000 != 0;
@@ -522,28 +546,31 @@ impl Ppu {
         if self.bg1_enable { bg_list.push(((self.bg1cnt & 3) as u8, 1)); }
         if self.bg2_enable { bg_list.push(((self.bg2cnt & 3) as u8, 2)); }
         if self.bg3_enable { bg_list.push(((self.bg3cnt & 3) as u8, 3)); }
+        // A stable sort on priority alone leaves equal priorities in BG-number
+        // order, and the lower-numbered background is the one in front.
         bg_list.sort_by_key(|&(p, _)| p);
 
         if self.obj_enable {
             self.render_obj_scanline(y, bus);
         }
 
-        for x in 0..SCREEN_WIDTH {
-            let idx = (y * SCREEN_WIDTH + x) * 3;
-            // Whatever is already here is the sprite pass, or the backdrop
-            // where no sprite drew. It is the bottom of the stack either way.
-            let under = (
+        let backdrop = {
+            let idx = (y * SCREEN_WIDTH) * 3;
+            (
                 self.frame_buffer[idx],
                 self.frame_buffer[idx + 1],
                 self.frame_buffer[idx + 2],
-            );
-            let under_layer = if self.obj_covered[x] { LAYER_OBJ } else { LAYER_BD };
+            )
+        };
+
+        for x in 0..SCREEN_WIDTH {
+            let idx = (y * SCREEN_WIDTH + x) * 3;
 
             // Colour effects need the layer *below* the top one, so collect
             // the first two opaque backgrounds rather than stopping at one.
-            let mut hit: [Option<((u8, u8, u8), usize)>; 2] = [None, None];
+            let mut hit: [Option<((u8, u8, u8), usize, u8)>; 2] = [None, None];
             let mut found = 0usize;
-            for &(_, bg) in &bg_list {
+            for &(bg_priority, bg) in &bg_list {
                 let (mx, my) = self.mosaic_bg(bg, x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
@@ -569,26 +596,42 @@ impl Ppu {
                     (((color >> 5) & 0x001F) as u8) << 3,
                     (((color >> 10) & 0x001F) as u8) << 3,
                 );
-                hit[found] = Some((rgb, bg));
+                hit[found] = Some((rgb, bg, bg_priority));
                 found += 1;
                 if found == 2 {
                     break;
                 }
             }
 
-            let (top, top_layer) = match hit[0] {
-                Some((rgb, bg)) => (rgb, bg),
-                None => (under, under_layer),
-            };
-            let (second, second_layer) = match hit[0] {
-                // The top pixel is a background, so what is under it is either
-                // the next background down or the sprite/backdrop pixel.
-                Some(_) => match hit[1] {
-                    Some((rgb, bg)) => (rgb, bg),
-                    None => (under, under_layer),
-                },
-                None => (under, under_layer),
-            };
+            // Merge the sprite into the ordering at its own priority. GBATEK,
+            // LCD OBJ - OAM Attributes: "In case that the Priority relative to
+            // BG is the same than the priority of one of the background
+            // layers, then the OBJ becomes higher priority" - so the sprite
+            // goes ahead of the first background it ties with.
+            let mut stack: Vec<((u8, u8, u8), usize)> = Vec::with_capacity(3);
+            let obj = self.obj_pixel[x];
+            let mut obj_placed = obj.is_none();
+            for entry in hit.iter().flatten() {
+                let &(rgb, bg, bg_priority) = entry;
+                if let Some((obj_rgb, obj_priority)) = obj {
+                    if !obj_placed && obj_priority <= bg_priority {
+                        stack.push((obj_rgb, LAYER_OBJ));
+                        obj_placed = true;
+                    }
+                }
+                stack.push((rgb, bg));
+            }
+            if let Some((obj_rgb, _)) = obj {
+                if !obj_placed {
+                    stack.push((obj_rgb, LAYER_OBJ));
+                }
+            }
+            stack.push((backdrop, LAYER_BD));
+
+            let (top, top_layer) = stack[0];
+            // With nothing but the backdrop there is no second layer; the
+            // backdrop stands in for itself, which is what hardware blends.
+            let (second, second_layer) = stack.get(1).copied().unwrap_or(stack[0]);
 
             let out = self.blend(top, top_layer, second, second_layer);
             self.frame_buffer[idx] = out.0;
@@ -647,9 +690,6 @@ impl Ppu {
     // ========================================================================
 
     fn render_mode1_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-        if self.obj_enable {
-            self.render_obj_scanline(y, bus);
-        }
 
         // BG0 and BG1: standard tiled (like Mode 0)
         let mut bg_list: Vec<(u8, usize)> = Vec::new();
@@ -701,9 +741,6 @@ impl Ppu {
     // ========================================================================
 
     fn render_mode2_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-        if self.obj_enable {
-            self.render_obj_scanline(y, bus);
-        }
 
         for x in 0..SCREEN_WIDTH {
             if self.bg2_enable {
@@ -815,7 +852,7 @@ impl Ppu {
     }
 
     fn render_obj_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-        self.obj_covered = [false; SCREEN_WIDTH];
+        self.obj_pixel = [None; SCREEN_WIDTH];
         for sprite in 0..128u32 {
             let oam_addr = 0x0700_0000 + sprite * 8;
             let attr0 = bus.read16(oam_addr);
@@ -862,6 +899,7 @@ impl Ppu {
 
             let palette = ((attr2 >> 12) & 0xF) as usize;
             let tile_num = (attr2 & 0x03FF) as usize;
+            let priority = ((attr2 >> 10) & 3) as u8;
 
             // Affine sprites take their transform from one of 32 parameter
             // groups interleaved through OAM at +6, +14, +22, +30.
@@ -885,8 +923,15 @@ impl Ppu {
                     continue;
                 }
                 let screen_x = screen_x as usize;
-                if self.obj_covered[screen_x] {
-                    continue; // a lower-numbered sprite already owns this pixel
+                if self.obj_pixel[screen_x].is_some() {
+                    // Between two overlapping sprites the OAM index decides,
+                    // on its own - a sprite's priority field is only ever
+                    // compared against the backgrounds, never against another
+                    // sprite. GBATEK's "Caution" example under OAM Attributes
+                    // spells this out, and it was confirmed on hardware in
+                    // VisualBoyAdvance bug #130. TONC's regobj page says the
+                    // opposite in passing; it is the outlier.
+                    continue;
                 }
 
                 let (tex_x, tex_y) = if is_affine {
@@ -927,12 +972,14 @@ impl Ppu {
                     0x0500_0200 + palette * 32 + color_index as usize * 2
                 };
                 let color = bus.read16(palette_addr as u32);
-
-                let idx = (y * SCREEN_WIDTH + screen_x) * 3;
-                self.obj_covered[screen_x] = true;
-                self.frame_buffer[idx] = ((color & 0x001F) as u8) << 3;
-                self.frame_buffer[idx + 1] = (((color >> 5) & 0x001F) as u8) << 3;
-                self.frame_buffer[idx + 2] = (((color >> 10) & 0x001F) as u8) << 3;
+                self.obj_pixel[screen_x] = Some((
+                    (
+                        ((color & 0x001F) as u8) << 3,
+                        (((color >> 5) & 0x001F) as u8) << 3,
+                        (((color >> 10) & 0x001F) as u8) << 3,
+                    ),
+                    priority,
+                ));
             }
         }
     }
