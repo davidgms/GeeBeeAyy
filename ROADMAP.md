@@ -167,7 +167,9 @@ was correct.
       command-mailbox pattern as `keyState`; a rejected load (bad version,
       truncated file) stops emulation and surfaces a message rather than
       running on the hybrid state `SaveState::restore` can leave behind.
-      Unverified: not compiled, no device test.
+      Verified on a device 2026-09-01: saved a state, force-stopped the app,
+      relaunched, reloaded the ROM and restored it -
+      `files/states/FANTASY_KNIT_FKNT_slot0.state`, 512,135 bytes.
 - [x] **Battery saves: cart wired to the bus** - the cartridge now lives in
       `MemoryBus`, the 0x0E000000 region is mapped with its 8-bit databus
       semantics, Flash gained chip erase and the two-stage erase unlock, and
@@ -178,7 +180,9 @@ was correct.
       `<romfile>.sav` next to the ROM, loaded before the first frame runs;
       falls back to app-private storage if that write fails. Flush is
       debounced 2s off the core's dirty flag, plus an unconditional flush on
-      pause, stop and `onCleared`. Unverified: not compiled, no device test.
+      pause, stop and `onCleared`. Verified on a device 2026-09-01:
+      `sram.gba` wrote a 32 KB `sram.sav` next to the ROM and *Yggdra Union*
+      an 8 KB `.sav` - its 64 Kbit EEPROM - both in the ROM folder.
 - [x] **Flash chip ID reads** - `0x90` enters ID mode and `0xF0` leaves it;
       reads return Panasonic `1B32h` for 64K and Sanyo `1362h` for 128K, per
       GBATEK's device table. Games probe this before writing and a wrong answer
@@ -228,12 +232,12 @@ was correct.
 **Exit criterion:** a full game is playable start to finish, with sound, on a
 physical device, without losing progress.
 
-**Status 2026-08-31:** *Yggdra Union* runs on a device through its opening to
-the title screen with music playing, but nobody has yet pressed Start into the
-game proper. Everything verified so far is the opening and the attract loop -
-both of which turned out to be background-only until the sprite fix, which is
-precisely why the sprite renderer stayed broken for so long. The next crop of
-bugs is behind that Start press.
+**Status 2026-09-01:** everything in this phase is done except playing a game
+to its end. *Yggdra Union* runs on a device with music, and on the host it
+reaches the battle map through the story sequence, CARD SELECT, the character
+sheet and the objectives screen, all rendering correctly. Save states survive a
+process kill and battery saves reach the disk, both checked on hardware. What
+is left is literally finishing the game, which needs a person playing it.
 
 ---
 

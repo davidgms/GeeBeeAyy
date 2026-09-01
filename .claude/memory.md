@@ -782,3 +782,20 @@ affine background, the missing windows, and this bit. Fixing the first two
 changed nothing visible, which is exactly the situation where it is tempting to
 conclude the fix did not work. Check what a register bit *is* before trusting a
 field named after what someone assumed it meant.
+
+### 2026-09-01 - Saves verified on hardware, and the last PPU features landed
+
+Phase 1's remaining unknowns are closed. On the device: a save state written,
+the app force-stopped, relaunched, the ROM reloaded and the state restored -
+`files/states/FANTASY_KNIT_FKNT_slot0.state`, 512,135 bytes, keyed by ROM title
+and game code. Battery saves reach the disk too: `sram.gba` produced a 32 KB
+`sram.sav` beside the ROM and *Yggdra Union* an 8 KB one, its 64 Kbit EEPROM.
+
+Also confirmed incidentally: jsmolka's `arm.gba` prints "All tests passed" on
+the device, not just in `cargo test`.
+
+The PPU is now feature-complete for the 2D path: windows, the OBJ window,
+semi-transparent sprites, sprite priority, affine backgrounds, alpha blending
+and brightness. `fantasy-knight.gba` - black since it was added - renders its
+synthwave scene on hardware. What is left approximate is colour effects outside
+mode 0, which still apply per scanline rather than per pixel.
