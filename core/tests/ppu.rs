@@ -591,3 +591,66 @@ fn win0_takes_precedence_over_win1() {
     assert_eq!(at(10, 10), vec![0x00, 0xF8, 0x00], "WIN0 must win the overlap");
     assert_eq!(at(100, 100), vec![0xF8, 0x00, 0x00], "WIN1 alone shows BG0");
 }
+
+/// GBATEK, Color Special Effects: "OBJs defined as Semi-Transparent in OAM
+/// memory are always selected as 1st Target (regardless of BLDCNT Bit 4), and
+/// are always using Alpha Blending mode (regardless of BLDCNT Bit 6-7)." Only
+/// the 2nd-target bits still matter, and a layer that is not one means the
+/// sprite is drawn unblended.
+#[test]
+fn a_semi_transparent_sprite_blends_without_bldcnt_asking() {
+    let mut gba = bg_over_backdrop();
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0601_0000 + i, 0x1111);
+    }
+    gba.bus.write16(0x0500_0202, 0x7C00); // OBJ colour 1: blue
+
+    // Sprite 0, 8x8 at the origin, OBJ mode 1 (semi-transparent).
+    gba.bus.write16(0x0700_0000, 0x0400);
+    gba.bus.write16(0x0700_0002, 0x0000);
+    gba.bus.write16(0x0700_0004, 0x0000);
+    for s in 1..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
+    }
+
+    // BLDCNT selects no first target and no effect at all - only BG0 as a
+    // second target. The sprite must still blend with the red background.
+    gba.bus.write16(0x0400_0050, 0x0100);
+    gba.bus.write16(0x0400_0052, 0x0808); // half and half
+    gba.bus.write16(0x0400_0000, 0x1100); // mode 0, BG0 + OBJ
+
+    gba.run_frame();
+    let px = &gba.frame_buffer()[0..3];
+    assert!(
+        px[0] > 0x40 && px[2] > 0x40,
+        "expected a mix of the red background and the blue sprite, got {px:02X?}"
+    );
+}
+
+/// The same sprite over a layer that is *not* a selected 2nd target is drawn
+/// at full strength.
+#[test]
+fn a_semi_transparent_sprite_over_a_non_target_is_not_blended() {
+    let mut gba = bg_over_backdrop();
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0601_0000 + i, 0x1111);
+    }
+    gba.bus.write16(0x0500_0202, 0x7C00);
+    gba.bus.write16(0x0700_0000, 0x0400);
+    gba.bus.write16(0x0700_0002, 0x0000);
+    gba.bus.write16(0x0700_0004, 0x0000);
+    for s in 1..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
+    }
+
+    gba.bus.write16(0x0400_0050, 0x0000); // nothing is a second target
+    gba.bus.write16(0x0400_0052, 0x0808);
+    gba.bus.write16(0x0400_0000, 0x1100);
+
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0x00, 0xF8],
+        "with no second target the sprite must be drawn unblended"
+    );
+}

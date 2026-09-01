@@ -24,7 +24,8 @@ pub struct Ppu {
     /// backgrounds, which meant any opaque background pixel covered them
     /// whatever their priority said. Holding them here instead lets the
     /// compositor order them against the backgrounds properly.
-    obj_pixel: [Option<((u8, u8, u8), u8)>; SCREEN_WIDTH],
+    /// Colour, priority, and whether the sprite was semi-transparent.
+    obj_pixel: [Option<((u8, u8, u8), u8, bool)>; SCREEN_WIDTH],
     /// Pixels covered by an OBJ-window sprite (OAM mode 2). Those sprites are
     /// never drawn; their non-transparent dots shape a window instead.
     obj_window: [bool; SCREEN_WIDTH],
@@ -537,7 +538,7 @@ impl Ppu {
                 if self.window[x] & 0x10 == 0 {
                     continue;
                 }
-                if let Some((rgb, _)) = self.obj_pixel[x] {
+                if let Some((rgb, _, _)) = self.obj_pixel[x] {
                     let idx = (y * SCREEN_WIDTH + x) * 3;
                     self.frame_buffer[idx] = rgb.0;
                     self.frame_buffer[idx + 1] = rgb.1;
@@ -662,7 +663,7 @@ impl Ppu {
             let mut obj_placed = obj.is_none();
             for entry in hit.iter().flatten() {
                 let &(rgb, bg, bg_priority) = entry;
-                if let Some((obj_rgb, obj_priority)) = obj {
+                if let Some((obj_rgb, obj_priority, _)) = obj {
                     if !obj_placed && obj_priority <= bg_priority {
                         stack.push((obj_rgb, LAYER_OBJ));
                         obj_placed = true;
@@ -670,7 +671,7 @@ impl Ppu {
                 }
                 stack.push((rgb, bg));
             }
-            if let Some((obj_rgb, _)) = obj {
+            if let Some((obj_rgb, _, _)) = obj {
                 if !obj_placed {
                     stack.push((obj_rgb, LAYER_OBJ));
                 }
@@ -684,7 +685,14 @@ impl Ppu {
 
             // WININ/WINOUT bit 5 is the colour special effect's own enable
             // for that region.
-            let out = if allow & 0x20 != 0 {
+            // GBATEK, Color Special Effects: a semi-transparent OBJ is
+            // always a 1st target and always alpha-blends, whatever BLDCNT
+            // bits 4 and 6-7 say. The 2nd-target bits still decide what it
+            // blends with, and a layer that is not one means no blend at all.
+            let semi = matches!(obj, Some((_, _, true))) && top_layer == LAYER_OBJ;
+            let out = if semi {
+                self.alpha_blend(top, second, second_layer)
+            } else if allow & 0x20 != 0 {
                 self.blend(top, top_layer, second, second_layer)
             } else {
                 top
@@ -702,6 +710,28 @@ impl Ppu {
     /// whether an effect runs at all. A game that alpha-blended a layer got it
     /// drawn flat and opaque instead: in Yggdra Union that is the grey bar
     /// across the title screen, which should be a translucent band.
+    /// GBATEK: `I = min(31, I1st*EVA/16 + I2nd*EVB/16)` per channel, with EVA
+    /// and EVB capped at 16. A second layer that is not a selected 2nd target
+    /// means the top pixel is shown unblended.
+    fn alpha_blend(
+        &self,
+        top: (u8, u8, u8),
+        second: (u8, u8, u8),
+        second_layer: usize,
+    ) -> (u8, u8, u8) {
+        if self.bldcnt & (0x0100 << second_layer) == 0 {
+            return top;
+        }
+        let eva = (self.bldalpha & 0x1F).min(16) as u32;
+        let evb = ((self.bldalpha >> 8) & 0x1F).min(16) as u32;
+        let mix = |a: u8, b: u8| ((a as u32 * eva + b as u32 * evb) / 16).min(255) as u8;
+        (
+            mix(top.0, second.0),
+            mix(top.1, second.1),
+            mix(top.2, second.2),
+        )
+    }
+
     fn blend(
         &self,
         top: (u8, u8, u8),
@@ -714,18 +744,7 @@ impl Ppu {
             return top;
         }
         match effect {
-            1 => {
-                if self.bldcnt & (0x0100 << second_layer) == 0 {
-                    return top;
-                }
-                // GBATEK: I = min(31, A*EVA/16 + B*EVB/16), EVA/EVB capped at 16.
-                let eva = (self.bldalpha & 0x1F).min(16) as u32;
-                let evb = ((self.bldalpha >> 8) & 0x1F).min(16) as u32;
-                let mix = |a: u8, b: u8| {
-                    ((a as u32 * eva + b as u32 * evb) / 16).min(255) as u8
-                };
-                (mix(top.0, second.0), mix(top.1, second.1), mix(top.2, second.2))
-            }
+            1 => self.alpha_blend(top, second, second_layer),
             2 => {
                 let ey = (self.bldy & 0x1F).min(16) as u32;
                 let up = |a: u8| (a as u32 + (255 - a as u32) * ey / 16).min(255) as u8;
@@ -950,6 +969,7 @@ impl Ppu {
             // non-transparent dots still have to be decoded because they are
             // what shapes the window.
             let is_obj_window = (attr0 >> 10) & 3 == 2;
+            let is_semi_transparent = (attr0 >> 10) & 3 == 1;
 
             let shape = (attr0 >> 14) & 3;
             let size = (attr1 >> 14) & 3;
@@ -1062,6 +1082,7 @@ impl Ppu {
                         (((color >> 10) & 0x001F) as u8) << 3,
                     ),
                     priority,
+                    is_semi_transparent,
                 ));
             }
         }
