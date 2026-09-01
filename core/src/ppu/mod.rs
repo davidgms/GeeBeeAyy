@@ -179,6 +179,17 @@ impl Ppu {
             self.cycle_counter -= 1232;
             self.sync_from_bus(bus);
             self.render_scanline(bus);
+            // The affine reference point is *accumulated* down the frame: each
+            // visible line adds PB/PD to it. Reloading it from BGxX/BGxY every
+            // line, as this used to, throws PB and PD away entirely, so a
+            // rotated background has no vertical component and a scrolling one
+            // never moves.
+            if self.scanline < 160 {
+                self.bg2x_internal = self.bg2x_internal.wrapping_add(self.bg2pb as i32);
+                self.bg2y_internal = self.bg2y_internal.wrapping_add(self.bg2pd as i32);
+                self.bg3x_internal = self.bg3x_internal.wrapping_add(self.bg3pb as i32);
+                self.bg3y_internal = self.bg3y_internal.wrapping_add(self.bg3pd as i32);
+            }
             self.scanline += 1;
 
             // VBlank start
@@ -196,14 +207,9 @@ impl Ppu {
                 dma.on_vcounter(bus);
             }
 
-            // Affine reference point update at HBlank
-            if self.hblank {
-                if self.scanline >= 2 && self.scanline <= 161 {
-                    self.bg2x_internal = self.bg2x;
-                    self.bg2y_internal = self.bg2y;
-                    self.bg3x_internal = self.bg3x;
-                    self.bg3y_internal = self.bg3y;
-                }
+            // A new frame reloads the reference point from the registers.
+            if self.scanline == 0 {
+                self.reload_affine_reference();
             }
         }
 
@@ -280,23 +286,33 @@ impl Ppu {
         self.bg3hofs = bus.read16(0x0400_001C);
         self.bg3vofs = bus.read16(0x0400_001E);
 
-        // Affine reference points (BG2)
-        let bg2x_lo = bus.read16(0x0400_0028) as u32;
-        let bg2x_hi = bus.read16(0x0400_002A) as u32;
-        self.bg2x = ((bg2x_hi << 16) | bg2x_lo) as i32;
-
-        let bg2y_lo = bus.read16(0x0400_002C) as u32;
-        let bg2y_hi = bus.read16(0x0400_002E) as u32;
-        self.bg2y = ((bg2y_hi << 16) | bg2y_lo) as i32;
-
-        // Affine reference points (BG3)
-        let bg3x_lo = bus.read16(0x0400_0038) as u32;
-        let bg3x_hi = bus.read16(0x0400_003A) as u32;
-        self.bg3x = ((bg3x_hi << 16) | bg3x_lo) as i32;
-
-        let bg3y_lo = bus.read16(0x0400_003C) as u32;
-        let bg3y_hi = bus.read16(0x0400_003E) as u32;
-        self.bg3y = ((bg3y_hi << 16) | bg3y_lo) as i32;
+        // Affine reference points. GBATEK, LCD I/O BG Rotation/Scaling: these
+        // are 28 bits - 19 integer, 8 fractional, sign in bit 27. Taking all
+        // 32 bits left the sign unextended, so any negative reference point
+        // came out as a huge positive one.
+        let signed28 = |lo: u16, hi: u16| -> i32 {
+            let raw = ((hi as u32) << 16) | lo as u32;
+            ((raw << 4) as i32) >> 4
+        };
+        let (bg2x, bg2y) = (
+            signed28(bus.read16(0x0400_0028), bus.read16(0x0400_002A)),
+            signed28(bus.read16(0x0400_002C), bus.read16(0x0400_002E)),
+        );
+        let (bg3x, bg3y) = (
+            signed28(bus.read16(0x0400_0038), bus.read16(0x0400_003A)),
+            signed28(bus.read16(0x0400_003C), bus.read16(0x0400_003E)),
+        );
+        // Writing BGxX or BGxY mid-frame reloads the internal accumulator on
+        // hardware, which is how a game restarts an effect part-way down the
+        // screen.
+        let changed = (bg2x, bg2y, bg3x, bg3y) != (self.bg2x, self.bg2y, self.bg3x, self.bg3y);
+        self.bg2x = bg2x;
+        self.bg2y = bg2y;
+        self.bg3x = bg3x;
+        self.bg3y = bg3y;
+        if changed {
+            self.reload_affine_reference();
+        }
 
         // Affine parameters
         self.bg2pa = bus.read16(0x0400_0020) as i16;
@@ -756,63 +772,81 @@ impl Ppu {
     // Affine BG renderer (used by Mode 1 BG2, Mode 2 BG2/BG3)
     // ========================================================================
 
-    fn render_affine_bg_pixel(&mut self, bg: usize, screen_x: usize, y: usize, bus: &mut super::memory::MemoryBus) {
+    /// One pixel of an affine (rotation/scaling) background.
+    ///
+    /// This used to never read the tilemap at all: it took the map *index* as
+    /// the tile number and multiplied it by 8, so the background came out as a
+    /// linear walk through character memory - a striped pattern that looks
+    /// deliberate at a glance. It also skipped the whole layer unless BGxCNT
+    /// bit 7 was set, though affine backgrounds are always 256-colour and that
+    /// bit means nothing for them.
+    fn reload_affine_reference(&mut self) {
+        self.bg2x_internal = self.bg2x;
+        self.bg2y_internal = self.bg2y;
+        self.bg3x_internal = self.bg3x;
+        self.bg3y_internal = self.bg3y;
+    }
+
+    fn render_affine_bg_pixel(
+        &mut self,
+        bg: usize,
+        screen_x: usize,
+        y: usize,
+        bus: &mut super::memory::MemoryBus,
+    ) {
         let (cnt, ref_x, ref_y, pa, pb, pc, pd) = match bg {
-            2 => (self.bg2cnt, self.bg2x_internal, self.bg2y_internal,
-                  self.bg2pa as i32, self.bg2pb as i32, self.bg2pc as i32, self.bg2pd as i32),
-            3 => (self.bg3cnt, self.bg3x_internal, self.bg3y_internal,
-                  self.bg3pa as i32, self.bg3pb as i32, self.bg3pc as i32, self.bg3pd as i32),
+            2 => (
+                self.bg2cnt, self.bg2x_internal, self.bg2y_internal,
+                self.bg2pa as i32, self.bg2pb as i32, self.bg2pc as i32, self.bg2pd as i32,
+            ),
+            3 => (
+                self.bg3cnt, self.bg3x_internal, self.bg3y_internal,
+                self.bg3pa as i32, self.bg3pb as i32, self.bg3pc as i32, self.bg3pd as i32,
+            ),
             _ => return,
         };
 
-        let screen_size = (cnt >> 14) & 3;
-        let is_8bpp = cnt & 0x0080 != 0;
+        // Screen size 0-3 is 16x16, 32x32, 64x64 or 128x128 tiles.
+        let map_pixels: i32 = 128 << ((cnt >> 14) & 3);
+        let map_tiles = (map_pixels / 8) as usize;
 
-        // Calculate texture coordinates using affine matrix
-        let texture_x = ref_x + pa * screen_x as i32 + pb * y as i32;
-        let texture_y = ref_y + pc * screen_x as i32 + pd * y as i32;
+        // The reference point is per-scanline; pa/pc step it across the line.
+        let mut tx = (ref_x + pa * screen_x as i32) >> 8;
+        let mut ty = (ref_y + pc * screen_x as i32) >> 8;
+        let _ = (pb, pd); // applied when the reference point advances per line
 
-        // Convert from 20.8 fixed point to integer
-        let tx = (texture_x >> 8) as i32;
-        let ty = (texture_y >> 8) as i32;
+        // BGxCNT bit 13 is Display Area Overflow: 0 leaves the area outside
+        // the map transparent, 1 wraps it.
+        if cnt & 0x2000 != 0 {
+            tx = tx.rem_euclid(map_pixels);
+            ty = ty.rem_euclid(map_pixels);
+        } else if tx < 0 || tx >= map_pixels || ty < 0 || ty >= map_pixels {
+            return;
+        }
 
-        // Wrap based on screen size (affine BGs wrap at 128/256 pixels)
-        let wrap_size: i32 = match screen_size {
-            0 => 128,
-            1 => 256,
-            2 => 512,
-            3 => 1024,
-            _ => 128,
-        };
-
-        let tx = tx.rem_euclid(wrap_size);
-        let ty = ty.rem_euclid(wrap_size);
-
-        let tile_x = tx / 8;
-        let tile_y = ty / 8;
-
-        // Screen base from BGxCNT bits 8-12
         let screen_base = ((cnt >> 8) & 0x1F) as usize * 0x800;
-        let screen_entry_addr = 0x0600_0000 + screen_base + (tile_y as usize * wrap_size as usize / 8 + tile_x as usize);
+        let char_base = ((cnt >> 2) & 3) as usize * 0x4000;
 
-        let color_index = if is_8bpp {
-            let char_base = ((cnt >> 2) & 3) as usize * 0x4000;
-            let tile_data_addr = 0x0600_0000 + char_base + (screen_entry_addr - 0x0600_0000 - screen_base) * 8;
-            bus.read8(tile_data_addr as u32 + (ty % 8) as u32 * 8 + (tx % 8) as u32)
-        } else {
-            0 // Simplified: 4bpp affine not fully handled yet
-        };
+        // An affine map entry is a single byte: the tile number, with no flip
+        // or palette bits.
+        let map_index = (ty as usize / 8) * map_tiles + (tx as usize / 8);
+        let tile = bus.read8((0x0600_0000 + screen_base + map_index) as u32) as usize;
 
-        if color_index == 0 { return; }
+        let addr = 0x0600_0000
+            + char_base
+            + tile * 64
+            + (ty as usize % 8) * 8
+            + (tx as usize % 8);
+        let color_index = bus.read8(addr as u32);
+        if color_index == 0 {
+            return;
+        }
 
-        let color = bus.read16((0x0500_0000 + color_index as usize * 2) as u32);
-        let r = ((color & 0x001F) as u8) << 3;
-        let g = (((color >> 5) & 0x001F) as u8) << 3;
-        let b = (((color >> 10) & 0x001F) as u8) << 3;
+        let color = bus.read16(0x0500_0000 + color_index as u32 * 2);
         let idx = (y * SCREEN_WIDTH + screen_x) * 3;
-        self.frame_buffer[idx] = r;
-        self.frame_buffer[idx + 1] = g;
-        self.frame_buffer[idx + 2] = b;
+        self.frame_buffer[idx] = ((color & 0x001F) as u8) << 3;
+        self.frame_buffer[idx + 1] = (((color >> 5) & 0x001F) as u8) << 3;
+        self.frame_buffer[idx + 2] = (((color >> 10) & 0x001F) as u8) << 3;
     }
 
     // ========================================================================

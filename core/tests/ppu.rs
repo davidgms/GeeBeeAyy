@@ -434,3 +434,82 @@ fn between_two_sprites_the_oam_index_decides_not_the_priority() {
         "sprite 0 must win the overlap even though sprite 1 has a better priority"
     );
 }
+
+/// Affine backgrounds are always 256-colour and their map entry is a single
+/// byte holding the tile number. The renderer used to take the map *index* as
+/// the tile number and multiply it by 8 - never reading the map at all - so
+/// the layer came out as a linear walk through character memory. It also
+/// skipped the layer entirely unless BGxCNT bit 7 was set, which means nothing
+/// for an affine background.
+#[test]
+fn an_affine_background_reads_its_tilemap() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // Tile 5 is solid colour index 3; every other tile is blank.
+    for i in (0..64u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + 5 * 64 + i, 0x0303);
+    }
+    gba.bus.write16(0x0500_0006, 0x001F); // colour 3: red
+
+    // A 16x16-tile map at screen base 0x10, every entry pointing at tile 5.
+    for i in (0..16 * 16u32).step_by(2) {
+        gba.bus.write16(0x0600_8000 + i, 0x0505);
+    }
+
+    // BG2: char base 0, screen base 0x10, size 0 (16x16 tiles), wraparound on.
+    gba.bus.write16(0x0400_000C, 0x2000 | (0x10 << 8));
+    // Identity matrix, reference point at the origin.
+    gba.bus.write16(0x0400_0020, 0x0100); // PA = 1.0
+    gba.bus.write16(0x0400_0022, 0x0000);
+    gba.bus.write16(0x0400_0024, 0x0000);
+    gba.bus.write16(0x0400_0026, 0x0100); // PD = 1.0
+    gba.bus.write32(0x0400_0028, 0);
+    gba.bus.write32(0x0400_002C, 0);
+
+    gba.bus.write16(0x0400_0000, 0x0402); // mode 2, BG2 on
+    gba.run_frame();
+
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "the affine background did not read tile 5 out of its map"
+    );
+}
+
+/// BGxCNT bit 13 is Display Area Overflow: clear means the area outside the
+/// map is transparent, set means it wraps. The renderer used to wrap
+/// unconditionally.
+#[test]
+fn an_affine_background_without_overflow_is_transparent_outside_its_map() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    for i in (0..64u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + 5 * 64 + i, 0x0303);
+    }
+    gba.bus.write16(0x0500_0000, 0x03E0); // backdrop: green
+    gba.bus.write16(0x0500_0006, 0x001F); // colour 3: red
+    for i in (0..16 * 16u32).step_by(2) {
+        gba.bus.write16(0x0600_8000 + i, 0x0505);
+    }
+
+    // Same as above but with overflow off, and the reference point pushed one
+    // whole map (128 pixels) to the right so screen x=0 lands outside it.
+    gba.bus.write16(0x0400_000C, 0x10 << 8);
+    gba.bus.write16(0x0400_0020, 0x0100);
+    gba.bus.write16(0x0400_0022, 0x0000);
+    gba.bus.write16(0x0400_0024, 0x0000);
+    gba.bus.write16(0x0400_0026, 0x0100);
+    gba.bus.write32(0x0400_0028, 128 << 8);
+    gba.bus.write32(0x0400_002C, 0);
+
+    gba.bus.write16(0x0400_0000, 0x0402);
+    gba.run_frame();
+
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0xF8, 0x00],
+        "outside the map with overflow off the backdrop must show through"
+    );
+}

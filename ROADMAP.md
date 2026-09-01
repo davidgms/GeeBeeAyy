@@ -323,9 +323,10 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
   `window_layer_visible` are dead code and `render_scanline`'s windowing loop
   computes its flags and discards them. `fantasy-knight.gba` renders black
   because of it.
-- **Affine backgrounds are half-implemented.** `render_mode1_scanline`'s affine
-  path handles 8bpp only and says so in its own comment; 4bpp affine draws
-  nothing.
+- Affine backgrounds render, as of 2026-09-01, but their per-pixel path is not
+  cycle-shaped: PB and PD are accumulated once per scanline rather than being
+  applied inside the line, which is right for the ordinary case and wrong for
+  a game that rewrites the matrix mid-line.
 - **Colour effects outside mode 0 are a scanline-wide approximation.** Mode 0
   composites the top two layers per pixel and blends correctly; every other
   mode still applies brightness to the whole line and cannot alpha-blend at

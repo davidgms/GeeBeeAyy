@@ -657,3 +657,38 @@ though nothing is drawn, and DISPCNT bits 12 *and* 15 both gate that.
 question went to `search-specialist` before the fix rather than after, and it
 paid: two of the three rules are coin-flip cases that would have looked
 plausible either way, and one has a widely-read source stating it backwards.
+
+### 2026-09-01 - Affine backgrounds never read their tilemap, and Yggdra's gameplay is mode 1
+
+Driving *Yggdra Union* past the title with a scripted key sequence
+(`temp/probes/play.rs`: Start, A, tutorial "No", then A every 250 frames) gets
+to the first scene, "Thieves' Stronghold", in about 16,000 frames. **DISPCNT
+there is 0x1761 - BG mode 1**, so the affine path matters after all; the
+attract loop and the whole opening are mode 0, which is why it had never been
+exercised.
+
+`render_affine_bg_pixel` was wrong in four ways at once:
+
+1. **It never read the tilemap.** It took the map *index* as the tile number
+   and multiplied it by 8, so the background was a linear walk through
+   character memory. On screen that is a plausible-looking striped pattern,
+   not obvious garbage.
+2. **It skipped the layer entirely unless BGxCNT bit 7 was set** - "4bpp affine
+   not fully handled yet" in its own comment. Affine backgrounds are *always*
+   256-colour; that bit means nothing for them.
+3. **It always wrapped.** BGxCNT bit 13 is Display Area Overflow: clear means
+   the area outside the map is transparent.
+4. **The reference point was reloaded from BGxX/BGxY every scanline**, which
+   throws PB and PD away - the accumulation *is* the vertical component. It is
+   now loaded at the top of the frame, advanced by PB/PD per visible line, and
+   reloaded when the game writes the register mid-frame.
+
+Also fixed alongside: BGxX/BGxY are 28-bit signed (19.8, sign in bit 27) and
+were being taken as full 32-bit values, so every negative reference point came
+out as a large positive one.
+
+**Application**: the plan was to fix windows and affine backgrounds only "if
+gameplay showed they mattered", and one scripted playthrough answered it in
+minutes - mode 1, no windows. Reaching real gameplay is worth more than
+reasoning about which gap to close next; the opening and the attract loop of a
+game can exercise a completely different quarter of the PPU than the game does.
