@@ -33,8 +33,18 @@ class AudioOutput {
         /** Samples the core produces per video frame, at ~59.73 Hz. */
         const val SAMPLES_PER_FRAME = SAMPLE_RATE / 60
 
-        /** Buffer depth in frames. Below three, brief scheduling hiccups underrun. */
-        private const val BUFFERED_FRAMES = 3
+        /**
+         * Buffer depth, in emulated video frames.
+         *
+         * Audio is the timing master here - the emulation loop advances at
+         * whatever rate the device drains the track - so this buffer *is* the
+         * floor on input latency. `getMinBufferSize` reported 3844 frames on
+         * a Mi 10T Pro, which is 80 ms; two emulated frames is 1600, or 33 ms.
+         * The fast mixer's own period is 4 ms, so there is room below this,
+         * but two frames leaves the loop a whole frame of slack against a
+         * scheduling hiccup and measured zero underruns.
+         */
+        private const val BUFFERED_FRAMES = 2
     }
 
     private var track: AudioTrack? = null
@@ -54,7 +64,12 @@ class AudioOutput {
             Log.e(TAG, "AudioTrack rejected ${SAMPLE_RATE}Hz mono float (code $minBytes)")
             return
         }
-        val bufferBytes = maxOf(minBytes, BUFFERED_FRAMES * SAMPLES_PER_FRAME * Float.SIZE_BYTES)
+        // Deliberately *not* clamped up to `minBytes`: that figure is the
+        // safe size for the normal mixer, and taking it costs 80 ms of
+        // latency on a device whose fast mixer runs a 4 ms period. Ask for
+        // the smaller buffer and let the framework raise it if it must.
+        val wanted = BUFFERED_FRAMES * SAMPLES_PER_FRAME * Float.SIZE_BYTES
+        val bufferBytes = wanted
 
         track = try {
             AudioTrack.Builder()

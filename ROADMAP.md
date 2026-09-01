@@ -273,7 +273,19 @@ is left is literally finishing the game, which needs a person playing it.
       depends on `android:configChanges="orientation|..."` actually keeping
       Compose's `LocalConfiguration` live without recreating the Activity -
       that is documented Compose behaviour, not something exercised here.
-- [ ] Input latency measured and driven under 45 ms; consider runahead.
+- [~] **Audio latency measured and halved** - `AudioTrack.getMinBufferSize`
+      reported 3844 frames on a Mi 10T Pro, and `AudioOutput` was clamping up
+      to it: 80 ms of buffer, and since audio is the timing master that buffer
+      *is* the floor on input latency. That figure is the safe size for the
+      normal mixer, not the fast one, whose period here is 4 ms. Asking for
+      two emulated frames instead gets 1600 frames - 33 ms - with the fast
+      path still granted (`AUDIO_OUTPUT_FLAG_FAST successful; frameCount
+      1600`) and zero underruns. AudioFlinger's reported track latency went
+      from 96 ms to 54 ms.
+      Still open: that is the *audio* path only. The full touch-to-photon
+      figure has not been measured, and doing it honestly needs a high-speed
+      camera or a hardware loopback rather than more `dumpsys`. Runahead
+      remains unconsidered.
 - [ ] Icon and store asset set - `visual-asset-generator`.
 
 ---
