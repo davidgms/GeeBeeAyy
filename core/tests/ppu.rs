@@ -213,3 +213,78 @@ fn mosaic_only_applies_to_the_backgrounds_that_asked_for_it() {
         "BG0 was mosaiced without BGxCNT bit 6 set"
     );
 }
+
+/// Sprite tile data starts at 0x06010000. The OBJ renderer read it from
+/// 0x06000000 - BG VRAM - so every sprite was textured with whatever
+/// background tiles happened to sit there. It is what turned Yggdra Union's
+/// opening, which is drawn entirely with sprites, into bands of noise.
+#[test]
+fn sprites_read_their_tiles_from_obj_vram() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // BG VRAM at tile 0: colour index 1 everywhere. OBJ VRAM at tile 0:
+    // colour index 2. A sprite must pick up the second.
+    // Byte writes to OBJ VRAM are ignored on hardware, so these go in as
+    // halfwords.
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + i, 0x1111);
+        gba.bus.write16(0x0601_0000 + i, 0x2222);
+    }
+    gba.bus.write16(0x0500_0202, 0x001F); // OBJ palette 0, colour 1: red
+    gba.bus.write16(0x0500_0204, 0x03E0); // colour 2: green
+
+    // Sprite 0: 8x8, 4bpp, at (0, 0), tile 0.
+    gba.bus.write16(0x0700_0000, 0x0000);
+    gba.bus.write16(0x0700_0002, 0x0000);
+    gba.bus.write16(0x0700_0004, 0x0000);
+    // Every other sprite off.
+    for s in 1..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
+    }
+
+    gba.bus.write16(0x0400_0000, 0x1040); // mode 0, OBJ on, 1D mapping
+    gba.run_frame();
+
+    let px = &gba.frame_buffer()[0..3];
+    assert_eq!(
+        px,
+        [0x00, 0xF8, 0x00],
+        "the sprite drew BG VRAM's colour instead of OBJ VRAM's"
+    );
+}
+
+/// OBJ attribute 0 bit 13 is the colour depth. It used to be read from bit 7,
+/// which belongs to the Y coordinate: a sprite at any Y of 128 or more was
+/// silently treated as 256-colour.
+#[test]
+fn sprite_colour_depth_comes_from_attr0_bit_13() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // 4bpp tile 0 in OBJ VRAM: colour index 1.
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0601_0000 + i, 0x1111);
+    }
+    gba.bus.write16(0x0500_0202, 0x001F); // 16-colour palette 0, colour 1
+
+    // Sprite 0 at y = 0x80, which sets bit 7 of attr0 and used to be read as
+    // "256 colours". 4bpp is what it actually is.
+    gba.bus.write16(0x0700_0000, 0x0080);
+    gba.bus.write16(0x0700_0002, 0x0000);
+    gba.bus.write16(0x0700_0004, 0x0000);
+    for s in 1..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
+    }
+
+    gba.bus.write16(0x0400_0000, 0x1040);
+    gba.run_frame();
+
+    let idx = (128 * 240) * 3;
+    let px = &gba.frame_buffer()[idx..idx + 3];
+    assert_eq!(
+        px,
+        [0xF8, 0x00, 0x00],
+        "a sprite at y=0x80 was decoded as 256-colour"
+    );
+}

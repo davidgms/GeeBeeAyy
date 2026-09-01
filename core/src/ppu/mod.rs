@@ -782,183 +782,157 @@ impl Ppu {
     // OBJ sprite renderer
     // ========================================================================
 
+    /// Address of an OBJ tile.
+    ///
+    /// OBJ tile data starts at 0x06010000, not at 0x06000000 - that is BG
+    /// VRAM, and reading sprites from it textured every sprite with whatever
+    /// background happened to live there. In the bitmap modes the first
+    /// 0x4000 of OBJ VRAM belongs to the frame buffer, so tiles below 512 are
+    /// not displayed at all.
+    ///
+    /// Tile numbers are always counted in 32-byte units. A 256-colour tile is
+    /// 64 bytes, so it occupies two of them - which is why an 8bpp sprite's
+    /// tiles step by two, in both mapping modes.
+    fn obj_tile_addr(&self, tile_index: usize) -> Option<usize> {
+        let index = tile_index & 0x3FF;
+        if self.bg_mode >= 3 && index < 512 {
+            return None;
+        }
+        Some(0x0601_0000 + index * 32)
+    }
+
+    /// Offset, in 32-byte tile units, of the (col, row) tile of a sprite.
+    fn obj_tile_offset(&self, col: usize, row: usize, width: usize, is_8bpp: bool) -> usize {
+        let mapping_1d = self.dispcnt & 0x0040 != 0;
+        let step = if is_8bpp { 2 } else { 1 };
+        if mapping_1d {
+            (row * (width / 8) + col) * step
+        } else {
+            // 2D mapping is a fixed 32-unit-wide grid, so a row always
+            // advances 32 units whatever the sprite's own width.
+            row * 32 + col * step
+        }
+    }
+
     fn render_obj_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
         self.obj_covered = [false; SCREEN_WIDTH];
-        for sprite in 0..128u16 {
-            let oam_addr = 0x0700_0000 + (sprite as u32) * 8;
+        for sprite in 0..128u32 {
+            let oam_addr = 0x0700_0000 + sprite * 8;
             let attr0 = bus.read16(oam_addr);
             let attr1 = bus.read16(oam_addr + 2);
             let attr2 = bus.read16(oam_addr + 4);
 
             let is_affine = attr0 & 0x0100 != 0;
             let is_double_size = attr0 & 0x0200 != 0;
-            let is_disabled = attr0 & 0x0200 != 0 && !is_affine;
-            let mosaic_enabled = attr0 & 0x1000 != 0;
+            if !is_affine && attr0 & 0x0200 != 0 {
+                continue; // disabled
+            }
+            // GBATEK, OBJ Attribute 0: bit 13 is the colour depth and bits
+            // 10-11 the OBJ mode. The depth used to be read from bit 7, which
+            // belongs to the Y coordinate, so any sprite at Y >= 128 was
+            // decoded as 256-colour.
+            let is_8bpp = attr0 & 0x2000 != 0;
+            if (attr0 >> 10) & 3 == 2 {
+                continue; // OBJ window: shapes a window, is not drawn
+            }
 
-            if is_disabled { continue; }
-
-            let sy = (attr0 & 0x00FF) as i16;
-            let sy = if sy > 127 { sy - 256 } else { sy };
             let shape = (attr0 >> 14) & 3;
-            let sx = (attr1 & 0x01FF) as i16;
-            let sx = if sx > 255 { sx - 512 } else { sx };
             let size = (attr1 >> 14) & 3;
-            let tile_num = attr2 & 0x03FF;
-            let palette = ((attr2 >> 12) & 0xF) as u8;
-            let bitmap_mode = attr0 & 0x2000 != 0;
-
-            let (base_width, base_height) = match shape {
-                0b00 => match size { 0 => (8,8), 1 => (16,16), 2 => (32,32), 3 => (64,64), _ => (8,8) },
-                0b01 => match size { 0 => (16,8), 1 => (32,8), 2 => (32,16), 3 => (64,32), _ => (16,8) },
-                0b10 => match size { 0 => (8,16), 1 => (8,32), 2 => (16,32), 3 => (32,64), _ => (8,16) },
+            let (width, height) = match shape {
+                0b00 => match size { 0 => (8, 8), 1 => (16, 16), 2 => (32, 32), _ => (64, 64) },
+                0b01 => match size { 0 => (16, 8), 1 => (32, 8), 2 => (32, 16), _ => (64, 32) },
+                0b10 => match size { 0 => (8, 16), 1 => (8, 32), 2 => (16, 32), _ => (32, 64) },
                 _ => continue,
             };
 
-            if is_affine {
-                // Affine sprite rendering
-                let matrix_idx = ((attr1 >> 9) & 0x1F) as usize;
-                let matrix_base = matrix_idx * 32 + 0x0700_0006;
-
-                // Read affine parameters from OAM
-                let pa = bus.read16((0x0700_0000 + matrix_base as u32) as u32) as i16 as i32;
-                let pb = bus.read16((0x0700_0000 + matrix_base as u32 + 8) as u32) as i16 as i32;
-                let pc = bus.read16((0x0700_0000 + matrix_base as u32 + 16) as u32) as i16 as i32;
-                let pd = bus.read16((0x0700_0000 + matrix_base as u32 + 24) as u32) as i16 as i32;
-
-                let sprite_height = if is_double_size { base_height * 2 } else { base_height };
-                let sprite_width = if is_double_size { base_width * 2 } else { base_width };
-
-                // Center of sprite
-                let cx = sx + base_width as i16 / 2;
-                let cy = sy + base_height as i16 / 2;
-
-                let mapping_1d = self.dispcnt & 0x0040 != 0;
-                let is_8bpp = attr0 & 0x0080 != 0;
-
-                for screen_y in 0..sprite_height {
-                    let draw_y = cy - sprite_height as i16 / 2 + screen_y as i16;
-                    if draw_y as usize != y as i16 as usize || draw_y < 0 || draw_y >= 160 {
-                        continue;
-                    }
-
-                    for screen_x in 0..sprite_width {
-                        let draw_x = cx - sprite_width as i16 / 2 + screen_x as i16;
-                        if draw_x < 0 || draw_x >= 240 {
-                            continue;
-                        }
-
-                        // Transform texture coordinates
-                        let rel_x = screen_x as i32 - sprite_width as i32 / 2;
-                        let rel_y = screen_y as i32 - sprite_height as i32 / 2;
-                        let tex_x = (pa * rel_x + pb * rel_y) / 256 + base_width as i32 / 2;
-                        let tex_y = (pc * rel_x + pd * rel_y) / 256 + base_height as i32 / 2;
-
-                        if tex_x < 0 || tex_x >= base_width as i32 || tex_y < 0 || tex_y >= base_height as i32 {
-                            continue;
-                        }
-
-                        let tile_x = tex_x as usize % 8;
-                        let tile_y = tex_y as usize % 8;
-
-                        let tiles_per_row = if mapping_1d { base_width / 8 } else { 32 };
-                        let tile_offset = (tex_y as usize / 8) * tiles_per_row + (tex_x as usize / 8);
-                        let tile_number = tile_num + tile_offset as u16;
-
-                        let tile_data_addr = if is_8bpp {
-                            0x0600_0000 + (tile_number as usize) * 64
-                        } else {
-                            0x0600_0000 + (tile_number as usize) * 32
-                        };
-
-                        let color_index = if is_8bpp {
-                            let byte_offset = tile_y * 8 + tile_x;
-                            bus.read8((tile_data_addr + byte_offset) as u32)
-                        } else {
-                            let byte_offset = tile_y * 4 + tile_x / 2;
-                            let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                            if tile_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
-                        };
-
-                        if color_index == 0 { continue; }
-
-                        let palette_addr = if is_8bpp {
-                            0x0500_0200 + (color_index as usize) * 2
-                        } else {
-                            0x0500_0200 + (palette as usize) * 32 + (color_index as usize) * 2
-                        };
-
-                        let color = bus.read16(palette_addr as u32);
-                        let r = ((color & 0x001F) as u8) << 3;
-                        let g = (((color >> 5) & 0x001F) as u8) << 3;
-                        let b = (((color >> 10) & 0x001F) as u8) << 3;
-
-                        let idx = (y * SCREEN_WIDTH + draw_x as usize) * 3;
-                        self.obj_covered[draw_x as usize] = true;
-                        self.frame_buffer[idx] = r;
-                        self.frame_buffer[idx + 1] = g;
-                        self.frame_buffer[idx + 2] = b;
-                    }
-                }
+            // Y is 8 bits and X is 9, both unsigned, and both wrap - a sprite
+            // near the bottom reappears at the top. Sign-extending them
+            // instead put every sprite at Y >= 128 off the top of the screen.
+            let sy = (attr0 & 0x00FF) as i32;
+            let sx = (attr1 & 0x01FF) as i32;
+            let (box_w, box_h) = if is_affine && is_double_size {
+                (width * 2, height * 2)
             } else {
-                // Regular (non-affine) sprite rendering
-                if y as i16 >= sy && (y as i16) < sy + base_height as i16 {
-                    let mapping_1d = self.dispcnt & 0x0040 != 0;
-                    let is_8bpp = attr0 & 0x0080 != 0;
+                (width, height)
+            };
+            let row = (y as i32 - sy).rem_euclid(256);
+            if row >= box_h as i32 {
+                continue;
+            }
 
-                    for sx_off in 0..base_width {
-                        let px = sx + sx_off as i16;
-                        if px < 0 || px >= 240 { continue; }
+            let palette = ((attr2 >> 12) & 0xF) as usize;
+            let tile_num = (attr2 & 0x03FF) as usize;
 
-                        let py = y as i16 - sy;
-                        let tile_x = sx_off % 8;
-                        let tile_y = (py % 8) as usize;
+            // Affine sprites take their transform from one of 32 parameter
+            // groups interleaved through OAM at +6, +14, +22, +30.
+            let (pa, pb, pc, pd) = if is_affine {
+                let base = 0x0700_0000 + ((attr1 >> 9) & 0x1F) as u32 * 32 + 6;
+                (
+                    bus.read16(base) as i16 as i32,
+                    bus.read16(base + 8) as i16 as i32,
+                    bus.read16(base + 16) as i16 as i32,
+                    bus.read16(base + 24) as i16 as i32,
+                )
+            } else {
+                (256, 0, 0, 256)
+            };
+            let hflip = !is_affine && attr1 & 0x1000 != 0;
+            let vflip = !is_affine && attr1 & 0x2000 != 0;
 
-                        let tiles_per_row = if mapping_1d { base_width as u16 / 8 } else { 32 };
-                        let tile_offset = (py as u16 / 8) * tiles_per_row + (sx_off as u16 / 8);
-                        let tile_number = tile_num + tile_offset;
-
-                        let tile_data_addr = if bitmap_mode {
-                            // Bitmap mode: tile_num is the base, offset is linear
-                            0x0600_0000 + (tile_num as usize) * 64 + tile_offset as usize * 64
-                        } else if is_8bpp {
-                            0x0600_0000 + (tile_number as usize) * 64
-                        } else {
-                            0x0600_0000 + (tile_number as usize) * 32
-                        };
-
-                        let color_index = if bitmap_mode {
-                            // Bitmap sprites are always 8bpp
-                            let byte_offset = tile_y * 8 + tile_x;
-                            bus.read8((tile_data_addr + byte_offset) as u32)
-                        } else if is_8bpp {
-                            let byte_offset = tile_y * 8 + tile_x;
-                            bus.read8((tile_data_addr + byte_offset) as u32)
-                        } else {
-                            let byte_offset = tile_y * 4 + tile_x / 2;
-                            let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                            if tile_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
-                        };
-
-                        if color_index == 0 { continue; }
-
-                        let palette_addr = if bitmap_mode || is_8bpp {
-                            0x0500_0200 + (color_index as usize) * 2
-                        } else {
-                            0x0500_0200 + (palette as usize) * 32 + (color_index as usize) * 2
-                        };
-
-                        let color = bus.read16(palette_addr as u32);
-                        let r = ((color & 0x001F) as u8) << 3;
-                        let g = (((color >> 5) & 0x001F) as u8) << 3;
-                        let b = (((color >> 10) & 0x001F) as u8) << 3;
-
-                        let idx = (y * SCREEN_WIDTH + px as usize) * 3;
-                        self.obj_covered[px as usize] = true;
-                        self.frame_buffer[idx] = r;
-                        self.frame_buffer[idx + 1] = g;
-                        self.frame_buffer[idx + 2] = b;
-                    }
+            for col in 0..box_w {
+                let screen_x = (sx + col as i32).rem_euclid(512);
+                if screen_x >= SCREEN_WIDTH as i32 {
+                    continue;
                 }
+                let screen_x = screen_x as usize;
+                if self.obj_covered[screen_x] {
+                    continue; // a lower-numbered sprite already owns this pixel
+                }
+
+                let (tex_x, tex_y) = if is_affine {
+                    let rel_x = col as i32 - box_w as i32 / 2;
+                    let rel_y = row - box_h as i32 / 2;
+                    (
+                        (pa * rel_x + pb * rel_y) / 256 + width as i32 / 2,
+                        (pc * rel_x + pd * rel_y) / 256 + height as i32 / 2,
+                    )
+                } else {
+                    let x = if hflip { width as i32 - 1 - col as i32 } else { col as i32 };
+                    let y = if vflip { height as i32 - 1 - row } else { row };
+                    (x, y)
+                };
+                if tex_x < 0 || tex_x >= width as i32 || tex_y < 0 || tex_y >= height as i32 {
+                    continue;
+                }
+                let (tex_x, tex_y) = (tex_x as usize, tex_y as usize);
+
+                let offset = self.obj_tile_offset(tex_x / 8, tex_y / 8, width, is_8bpp);
+                let Some(tile_addr) = self.obj_tile_addr(tile_num + offset) else {
+                    continue;
+                };
+
+                let color_index = if is_8bpp {
+                    bus.read8((tile_addr + (tex_y % 8) * 8 + (tex_x % 8)) as u32)
+                } else {
+                    let byte = bus.read8((tile_addr + (tex_y % 8) * 4 + (tex_x % 8) / 2) as u32);
+                    if tex_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
+                };
+                if color_index == 0 {
+                    continue;
+                }
+
+                let palette_addr = if is_8bpp {
+                    0x0500_0200 + color_index as usize * 2
+                } else {
+                    0x0500_0200 + palette * 32 + color_index as usize * 2
+                };
+                let color = bus.read16(palette_addr as u32);
+
+                let idx = (y * SCREEN_WIDTH + screen_x) * 3;
+                self.obj_covered[screen_x] = true;
+                self.frame_buffer[idx] = ((color & 0x001F) as u8) << 3;
+                self.frame_buffer[idx + 1] = (((color >> 5) & 0x001F) as u8) << 3;
+                self.frame_buffer[idx + 2] = (((color >> 10) & 0x001F) as u8) << 3;
             }
         }
     }
