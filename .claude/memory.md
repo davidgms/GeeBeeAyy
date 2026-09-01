@@ -588,3 +588,35 @@ frame with each of BG0-3 and OBJ forced off in DISPCNT (re-forcing it every
 step, because the game rewrites DISPCNT in VBlank), then diff the frame
 buffers: the garbage band changed only when OBJ was disabled, so nothing but
 the sprite path could be responsible.
+
+### 2026-08-31 - Homebrew test ROMs, and the LZ77 decompressor found by them
+
+Added two freely distributable ROMs to `temp/roms/`, with the fetch commands in
+`core/tests/ppu.rs`'s header:
+
+- **Celeste Classic** (`JeffRuLz/Celeste-Classic-GBA` release) - a sprite-heavy
+  platformer. Title screen and gameplay both render, on the host and on the
+  device.
+- **240p Test Suite** (`pinobatch/240p-test-mini`, the `240pee_mb.gba` build) -
+  a purpose-built PPU test suite. Its "Shadow sprite" test draws a large
+  multi-tile sprite and is the sharpest sprite check available; its menus are
+  LZ77-compressed into VRAM.
+
+The 240p suite immediately found one: **`LZ77UnCompVram` and `RLUnCompVram`
+wrote their output with `bus.write8`.** VRAM ignores byte stores - a `STRB`
+there writes the byte into *both* halves of the halfword - which is the entire
+reason the BIOS has separate Wram and Vram decompressors. Every halfword came
+out as two copies of its second byte, and the back-references then read that
+corruption back and compounded it. Both now build the block in a `Vec` (so the
+lookback is immune to the destination's behaviour) and write it out through a
+shared `write_block` that uses halfwords for anything in 0x05000000-0x07FFFFFF.
+The suite's front page went from 7 colours to 15 and the sprite test's dithered
+edges became flat.
+
+Still failing: **`fantasy-knight.gba`** (`laqieer/gba-free-fonts`) is a black
+screen. DISPCNT is 0xF641 - BG mode 1 with an affine BG2, all three windows
+enabled and OBJ on. Neither affine backgrounds (`render_mode1_scanline`'s
+affine path only handles 8bpp and is marked "not fully handled yet") nor
+windows are implemented: `get_window` and `window_layer_visible` are dead code
+and the windowing loop in `render_scanline` computes its flags and discards
+them. That is the next real PPU gap, and it will hit commercial games.

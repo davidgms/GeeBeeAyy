@@ -104,8 +104,10 @@ screen on the host, and the homebrew `waimanu`, `jumpingbarnabe` and
 - [~] Scanline-based PPU - mode 0 verified against test ROMs and against
       *Yggdra Union*'s opening and title screen, including sprites and alpha
       blending; modes 1, 2, 4, 5, windows and semi-transparent sprites are
-      unverified, sprite priority against backgrounds is not implemented, and
-      colour effects outside mode 0 are still a scanline-wide approximation
+      unverified, sprite priority against backgrounds is not implemented,
+      colour effects outside mode 0 are still a scanline-wide approximation,
+      and **windows are decoded but not applied** - `fantasy-knight.gba`
+      renders black because of it
 - [~] Audio output - DMA sound is driven by timer overflows and plays
       continuously under *Yggdra Union*; the PSG channels are unverified against
       a game, and nothing has been checked by ear on a device
