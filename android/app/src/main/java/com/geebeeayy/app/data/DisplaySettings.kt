@@ -46,8 +46,47 @@ class DisplaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_FORCE_PORTRAIT, forced).apply()
     }
 
-    private companion object {
-        const val KEY_SCALE_MODE = "scale_mode"
-        const val KEY_FORCE_PORTRAIT = "force_portrait"
+    /**
+     * Multiplier on the on-screen control sizes, [MIN_CONTROL_SCALE] to 1.0.
+     *
+     * Shrink only, because there is nowhere to grow: at 1.0 the button row
+     * already spans nearly the full width, so anything above it pushes L, R
+     * and the outer D-pad keys off the screen. Below 1.0 the buttons drop
+     * under the 48.dp minimum touch target Material and WCAG 2.1 SC 2.5.8 ask
+     * for, which is why the default stays at 1.0 and the floor is 0.7 rather
+     * than something smaller.
+     */
+    fun getControlScale(): Float =
+        prefs.getFloat(KEY_CONTROL_SCALE, 1.0f).coerceIn(MIN_CONTROL_SCALE, 1.0f)
+
+    fun setControlScale(scale: Float) {
+        prefs.edit().putFloat(KEY_CONTROL_SCALE, scale.coerceIn(MIN_CONTROL_SCALE, 1.0f)).apply()
+    }
+
+    /** Opacity of the on-screen controls, 0.3 to 1.0. */
+    fun getControlOpacity(): Float =
+        prefs.getFloat(KEY_CONTROL_OPACITY, 1.0f).coerceIn(MIN_CONTROL_OPACITY, 1.0f)
+
+    fun setControlOpacity(opacity: Float) {
+        prefs.edit()
+            .putFloat(KEY_CONTROL_OPACITY, opacity.coerceIn(MIN_CONTROL_OPACITY, 1.0f))
+            .apply()
+    }
+
+    companion object {
+        /** 0.7 puts a 48.dp button at 34.dp, which is about as small as it
+         *  can get and still be hit reliably. */
+        const val MIN_CONTROL_SCALE = 0.7f
+
+        /**
+         * Below this the controls stop being findable by touch, which matters
+         * more than the extra visibility of the game behind them.
+         */
+        const val MIN_CONTROL_OPACITY = 0.3f
+
+        private const val KEY_SCALE_MODE = "scale_mode"
+        private const val KEY_FORCE_PORTRAIT = "force_portrait"
+        private const val KEY_CONTROL_SCALE = "control_scale"
+        private const val KEY_CONTROL_OPACITY = "control_opacity"
     }
 }

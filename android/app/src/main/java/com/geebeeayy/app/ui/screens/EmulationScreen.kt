@@ -16,6 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -44,6 +46,8 @@ fun EmulationScreen(
     onFastForward: () -> Unit,
     isRewinding: Boolean = false,
     onRewind: (Boolean) -> Unit = {},
+    controlScale: Float = 1f,
+    controlOpacity: Float = 1f,
     onSaveState: (Int) -> Unit,
     onLoadState: (Int) -> Unit,
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
@@ -169,6 +173,18 @@ fun EmulationScreen(
                         .padding(horizontal = 8.dp, vertical = 8.dp),
                 )
 
+                // One transform on the whole block rather than a size
+                // multiplier threaded through every button: Compose maps
+                // pointer input through the layer, so the touch targets grow
+                // with the drawing and stay in register.
+                Box(
+                    modifier = Modifier.graphicsLayer(
+                        scaleX = controlScale,
+                        scaleY = controlScale,
+                        alpha = controlOpacity,
+                        transformOrigin = TransformOrigin(0.5f, 1f),
+                    )
+                ) {
                 GameControls(
                     isPaused = isPaused,
                     isFastForward = isFastForward,
@@ -184,6 +200,7 @@ fun EmulationScreen(
                     },
                     onKeyChange = onKeyChange,
                 )
+                }
             }
         }
 

@@ -243,7 +243,17 @@ is left is literally finishing the game, which needs a person playing it.
 
 ## Phase 2 - Quality
 
-- [ ] Customisable touch overlay: size, position, opacity, per-game layouts.
+- [~] **Touch overlay: size and opacity** - two sliders in Settings, persisted
+      in `DisplaySettings` alongside the scale mode, applied with a single
+      `graphicsLayer` on the control block so Compose maps pointer input
+      through the same transform and the targets stay in register with the
+      drawing.
+      Size is **shrink only**, 0.7x to 1.0x, and the first attempt at 1.0-1.6x
+      is why: at 1.0 the button row already spans nearly the full width, so
+      growing pushed L, R and the outer D-pad off the screen. Below 1.0 the
+      buttons fall under the 48.dp minimum touch target, so the default stays
+      at 1.0 and the subtitle says so.
+      Still open: position, and per-game layouts.
 - [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
       now supports Fit (largest size preserving 3:2, letterboxed), Integer
       (largest whole-number multiple, falling back to Fit below 240x160) and

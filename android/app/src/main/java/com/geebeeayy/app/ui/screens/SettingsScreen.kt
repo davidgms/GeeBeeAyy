@@ -49,6 +49,8 @@ fun SettingsScreen(
 
     val displaySettings = remember { DisplaySettings(context) }
     var scaleMode by remember { mutableStateOf(displaySettings.getScaleMode()) }
+    var controlScale by remember { mutableFloatStateOf(displaySettings.getControlScale()) }
+    var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
     var showScaleMenu by remember { mutableStateOf(false) }
     var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
 
@@ -210,6 +212,27 @@ fun SettingsScreen(
                     subtitle = "Nearest Neighbor (pixel perfect)",
                     onClick = { }
                 )
+                SettingsSlider(
+                    icon = Icons.Default.OpenInFull,
+                    title = "Control Size",
+                    // Shrink only - at 1.0 the row already fills the width,
+                    // so growing pushes L, R and the outer D-pad off-screen.
+                    subtitle = "%.2fx".format(controlScale) +
+                        if (controlScale < 1.0f) " (below the 48.dp touch target)" else "",
+                    value = controlScale,
+                    range = DisplaySettings.MIN_CONTROL_SCALE..1.0f,
+                    onValueChange = { controlScale = it },
+                    onValueChangeFinished = { displaySettings.setControlScale(controlScale) },
+                )
+                SettingsSlider(
+                    icon = Icons.Default.Opacity,
+                    title = "Control Opacity",
+                    subtitle = "%d%%".format((controlOpacity * 100).toInt()),
+                    value = controlOpacity,
+                    range = DisplaySettings.MIN_CONTROL_OPACITY..1.0f,
+                    onValueChange = { controlOpacity = it },
+                    onValueChangeFinished = { displaySettings.setControlOpacity(controlOpacity) },
+                )
                 SettingsSwitch(
                     icon = Icons.Default.StayCurrentPortrait,
                     title = "Force Portrait",
@@ -334,6 +357,35 @@ fun SettingsItem(
             Icons.Default.ChevronRight,
             contentDescription = null,
             tint = PineGlowMist.copy(alpha = 0.4f),
+        )
+    }
+}
+
+/** A labelled slider row, matching [SettingsSwitch]'s shape. */
+@Composable
+fun SettingsSlider(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = AmberResin)
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(title, fontSize = 16.sp, color = PineGlowMist)
+                Text(subtitle, fontSize = 13.sp, color = AmberResin)
+            }
+        }
+        Slider(
+            value = value,
+            valueRange = range,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
         )
     }
 }
