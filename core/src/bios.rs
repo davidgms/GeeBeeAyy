@@ -324,42 +324,81 @@ fn handle_lz77_uncomp_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     true
 }
 
+/// Write a decompressed block out to `dst`.
+///
+/// This is why the BIOS has separate "Wram" and "Vram" decompressors at all:
+/// VRAM, palette RAM and OAM ignore byte stores - a `STRB` there writes the
+/// byte into *both* halves of the halfword. Decompressing with byte writes
+/// therefore produced garbage in exactly the place the Vram variants exist to
+/// serve: every halfword came out as two copies of its second byte, which is
+/// why the 240p Test Suite's LZ77-compressed tiles arrived as nothing at all.
+fn write_block(dst: u32, data: &[u8], bus: &mut MemoryBus) {
+    let halfword_only = (0x0500_0000..0x0800_0000).contains(&dst);
+    if !halfword_only {
+        for (i, &b) in data.iter().enumerate() {
+            bus.write8(dst.wrapping_add(i as u32), b);
+        }
+        return;
+    }
+    let mut i = 0;
+    while i + 1 < data.len() {
+        bus.write16(
+            dst.wrapping_add(i as u32),
+            u16::from_le_bytes([data[i], data[i + 1]]),
+        );
+        i += 2;
+    }
+    if i < data.len() {
+        bus.write16(dst.wrapping_add(i as u32), data[i] as u16);
+    }
+}
+
 /// GBATEK, BIOS Decompression Functions: the header holds the reserved nibble
 /// in bits 0-3, the type in bits 4-7 and the **decompressed size in bits 8-31**.
 /// The size is the only thing that ends the stream - there is no terminator -
 /// so an unbounded loop here runs until it has overwritten every mapped byte.
+///
+/// The output is built in a buffer rather than written as it is produced. The
+/// back-references read from that buffer, so they cannot be corrupted by a
+/// destination that mangles the writes, and the finished block goes out
+/// through [`write_block`] in units the destination accepts.
 fn lz77_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
-    let end = dst.wrapping_add(bus.read32(src) >> 8);
+    let size = (bus.read32(src) >> 8) as usize;
+    let mut out: Vec<u8> = Vec::with_capacity(size.min(0x40000));
     let mut src_pos = src + 4;
-    let mut dst_pos = dst;
-    while dst_pos < end {
+    while out.len() < size {
         let flags = bus.read8(src_pos);
         src_pos += 1;
         for bit in 0..8 {
-            if dst_pos >= end {
+            if out.len() >= size {
                 break;
             }
             if flags & (0x80 >> bit) != 0 {
                 let byte1 = bus.read8(src_pos);
                 let byte2 = bus.read8(src_pos + 1);
                 src_pos += 2;
-                let length = ((byte1 >> 4) & 0x0F) as u32 + 3;
+                let length = ((byte1 >> 4) & 0x0F) as usize + 3;
                 // Disp is the full 12 bits, and the +1 applies to the whole
                 // displacement: `x | y + 1` would bind the +1 to y alone.
-                let offset = ((((byte1 & 0x0F) as u32) << 8) | byte2 as u32) + 1;
+                let offset = ((((byte1 & 0x0F) as usize) << 8) | byte2 as usize) + 1;
                 for _ in 0..length {
-                    let val = bus.read8(dst_pos.wrapping_sub(offset));
-                    bus.write8(dst_pos, val);
-                    dst_pos += 1;
+                    if out.len() >= size {
+                        break;
+                    }
+                    let Some(&val) = out.len().checked_sub(offset).and_then(|i| out.get(i)) else {
+                        // A displacement reaching before the start of the
+                        // block is a corrupt stream; stop rather than loop.
+                        return;
+                    };
+                    out.push(val);
                 }
             } else {
-                let val = bus.read8(src_pos);
+                out.push(bus.read8(src_pos));
                 src_pos += 1;
-                bus.write8(dst_pos, val);
-                dst_pos += 1;
             }
         }
     }
+    write_block(dst, &out, bus);
 }
 
 fn handle_rl_uncomp_wram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
@@ -381,36 +420,34 @@ fn handle_rl_uncomp_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 /// repeated N times". The header carries no unit-size flag; bits 8-31 are the
 /// decompressed size, which is what ends the stream.
 fn rl_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
-    let end = dst.wrapping_add(bus.read32(src) >> 8);
+    let size = (bus.read32(src) >> 8) as usize;
+    let mut out: Vec<u8> = Vec::with_capacity(size.min(0x40000));
     let mut src_pos = src + 4;
-    let mut dst_pos = dst;
-    while dst_pos < end {
+    while out.len() < size {
         let flag = bus.read8(src_pos);
         src_pos += 1;
         if flag & 0x80 != 0 {
             // Compressed run: one byte repeated N+3 times.
             let val = bus.read8(src_pos);
             src_pos += 1;
-            for _ in 0..(flag & 0x7F) as u32 + 3 {
-                if dst_pos >= end {
+            for _ in 0..(flag & 0x7F) as usize + 3 {
+                if out.len() >= size {
                     break;
                 }
-                bus.write8(dst_pos, val);
-                dst_pos += 1;
+                out.push(val);
             }
         } else {
             // Uncompressed run of N+1 bytes.
-            for _ in 0..(flag & 0x7F) as u32 + 1 {
-                if dst_pos >= end {
+            for _ in 0..(flag & 0x7F) as usize + 1 {
+                if out.len() >= size {
                     break;
                 }
-                let val = bus.read8(src_pos);
+                out.push(bus.read8(src_pos));
                 src_pos += 1;
-                bus.write8(dst_pos, val);
-                dst_pos += 1;
             }
         }
     }
+    write_block(dst, &out, bus);
 }
 
 /// SWI 0x16: Diff8bitUnFilterWrite8bit ("Wram").

@@ -443,3 +443,55 @@ fn rl_uncomp_expands_runs_and_literals_in_byte_units() {
     assert_eq!(bus.read8(DEST + 6), 0xBB);
     assert_eq!(bus.read8(DEST + 7), 0, "kept writing past the header size");
 }
+
+/// `LZ77UnCompVram` (SWI 0x12) exists because VRAM ignores byte stores - a
+/// `STRB` there writes the byte into *both* halves of the halfword. The
+/// decompressor wrote its output a byte at a time, so every halfword landed as
+/// two copies of its second byte and the whole block came out as noise.
+#[test]
+fn lz77_decompresses_into_vram_in_halfwords() {
+    let mut bus = MemoryBus::new();
+    bus.write32(BASE, arm_swi(0x12));
+
+    // Header: type 1, four decompressed bytes. Then one flag byte with every
+    // unit uncompressed, followed by the literals.
+    bus.write32(DATA, 0x0000_0410);
+    bus.write8(DATA + 4, 0x00);
+    for (i, b) in [0xAAu8, 0xBB, 0xCC, 0xDD].iter().enumerate() {
+        bus.write8(DATA + 5 + i as u32, *b);
+    }
+
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[13] = 0x0300_7F00;
+    cpu.registers[0] = DATA;
+    cpu.registers[1] = 0x0600_0000;
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read16(0x0600_0000), 0xBBAA, "first halfword");
+    assert_eq!(bus.read16(0x0600_0002), 0xDDCC, "second halfword");
+}
+
+/// The same for the run-length decompressor's VRAM variant (SWI 0x15).
+#[test]
+fn rl_decompresses_into_vram_in_halfwords() {
+    let mut bus = MemoryBus::new();
+    bus.write32(BASE, arm_swi(0x15));
+
+    // Header: type 3, four bytes out. One uncompressed run of four literals.
+    bus.write32(DATA, 0x0000_0430);
+    bus.write8(DATA + 4, 0x03); // uncompressed, N+1 = 4
+    for (i, b) in [0x11u8, 0x22, 0x33, 0x44].iter().enumerate() {
+        bus.write8(DATA + 5 + i as u32, *b);
+    }
+
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[13] = 0x0300_7F00;
+    cpu.registers[0] = DATA;
+    cpu.registers[1] = 0x0600_0000;
+    cpu.step(&mut bus);
+
+    assert_eq!(bus.read16(0x0600_0000), 0x2211, "first halfword");
+    assert_eq!(bus.read16(0x0600_0002), 0x4433, "second halfword");
+}

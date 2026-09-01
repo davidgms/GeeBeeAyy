@@ -12,6 +12,14 @@
 //! for r in hello stripes shades; do
 //!   curl -sSLO "https://raw.githubusercontent.com/jsmolka/gba-tests/master/ppu/$r.gba"
 //! done
+//!
+//! # Freely distributable homebrew, for the parts jsmolka's suite does not
+//! # reach - both of these are sprite-heavy, which is how the OBJ renderer's
+//! # wrong tile base finally showed up.
+//! curl -sSL -o celeste.gba \
+//!   https://github.com/JeffRuLz/Celeste-Classic-GBA/releases/download/v1.2/Celeste.Classic.v1.2.Homebrew.gba
+//! curl -sSL -o 240p.gba \
+//!   https://github.com/pinobatch/240p-test-mini/releases/download/v0.23/240pee_mb.gba
 //! ```
 
 use geebeeayy_core::Gba;
@@ -286,5 +294,35 @@ fn sprite_colour_depth_comes_from_attr0_bit_13() {
         px,
         [0xF8, 0x00, 0x00],
         "a sprite at y=0x80 was decoded as 256-colour"
+    );
+}
+
+/// Celeste Classic gets past its title into a level, which is a sprite-heavy
+/// screen: the player, the snow and the particles are all OBJ. A blank or
+/// single-colour frame here means the sprite path is broken again.
+#[test]
+fn celeste_renders_its_title_screen() {
+    let Some(counts) = render("celeste") else {
+        return;
+    };
+    assert!(
+        counts.len() >= 4,
+        "Celeste's title screen should have several colours, got {}",
+        counts.len()
+    );
+}
+
+/// The 240p Test Suite's front page is LZ77-compressed into VRAM. When the
+/// decompressor wrote bytes instead of halfwords the text came out as noise,
+/// which shows up here as a much shorter colour list.
+#[test]
+fn the_240p_suite_draws_its_front_page() {
+    let Some(counts) = render("240p") else {
+        return;
+    };
+    assert!(
+        counts.len() >= 4,
+        "the 240p suite's front page should have several colours, got {}",
+        counts.len()
     );
 }
