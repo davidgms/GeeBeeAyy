@@ -324,11 +324,10 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
   wrong when a background outranks the sprite - but it is what makes sprites
   appear in the bitmap modes at all, since modes 3-5 never ran the sprite pass
   before 2026-09-01.
-- **Windows are decoded but not applied.** `get_window` and
-  `window_layer_visible` are dead code and `render_scanline`'s windowing loop
-  computes its flags and discards them. `fantasy-knight.gba` renders black
-  because of it. *Yggdra Union* never enables one - every DISPCNT it uses has
-  bits 13-15 clear - so this is not what blocks that game.
+- Windows work as of 2026-09-01, including the OBJ window, but a
+  semi-transparent sprite (OAM mode 1) is still drawn opaque: GBATEK makes one
+  an unconditional 1st target in alpha-blend mode regardless of BLDCNT bits 4
+  and 6-7, and that override is not implemented.
 - Affine backgrounds render, as of 2026-09-01, but their per-pixel path is not
   cycle-shaped: PB and PD are accumulated once per scanline rather than being
   applied inside the line, which is right for the ordinary case and wrong for

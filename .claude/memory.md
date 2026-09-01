@@ -754,3 +754,31 @@ SELECT to the battle map itself - "Thieves' Stronghold", terrain, the map
 layout and the Locations/Geography/Units/Formations menu, all correct. That was
 the last major screen unseen, so every part of *Yggdra Union* reached so far
 renders properly.
+
+### 2026-09-01 - Windows, and a "display off" bit that does not exist
+
+Implemented the window feature - the last big PPU gap. `get_window` and
+`window_layer_visible` were dead code; `render_scanline` computed window flags
+and discarded them. There is now a per-scanline `window: [u8; 240]` holding
+WININ/WINOUT's low six bits (BG0-3, OBJ, and bit 5 for the colour effect),
+built once per line and consulted by every compositor. Priority is WIN0, then
+WIN1, then the OBJ window, then outside.
+
+Three things worth knowing:
+
+1. **WINxH holds X1 - the left edge - in bits 8-15**, so the byte at 0x40 is
+   the *right* edge. The old code read them the other way round. Same for V.
+2. **OBJ-window sprites (OAM mode 2) must still be fully decoded.** They are
+   never drawn, but their non-transparent dots are what shapes the window, so
+   the sprite pass now runs before the mask is built for every mode.
+3. **`display_off` was read from DISPCNT bit 15, which is the OBJ Window
+   enable.** There is no display-off bit; forced blank is bit 7. So any game
+   that turned the OBJ window on had its entire screen blacked out. That was
+   `fantasy-knight.gba`'s black screen, not the windows themselves - it now
+   renders its synthwave scene, grid and all.
+
+**Application**: the black screen had three independent causes stacked - the
+affine background, the missing windows, and this bit. Fixing the first two
+changed nothing visible, which is exactly the situation where it is tempting to
+conclude the fix did not work. Check what a register bit *is* before trusting a
+field named after what someone assumed it meant.

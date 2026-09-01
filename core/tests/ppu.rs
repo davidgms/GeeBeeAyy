@@ -513,3 +513,81 @@ fn an_affine_background_without_overflow_is_transparent_outside_its_map() {
         "outside the map with overflow off the backdrop must show through"
     );
 }
+
+/// Build a machine with BG0 drawing solid red everywhere over a green
+/// backdrop, ready for a window to cut a hole in it.
+fn bg_over_backdrop() -> Gba {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + i, 0x1111);
+    }
+    for i in 0..32u32 * 32 {
+        gba.bus.write16(0x0600_F800 + i * 2, 0);
+    }
+    gba.bus.write16(0x0500_0000, 0x03E0); // backdrop: green
+    gba.bus.write16(0x0500_0002, 0x001F); // BG colour 1: red
+    gba.bus.write16(0x0400_0008, 0x1F00); // BG0: screen base 0x1F
+    gba
+}
+
+/// DISPCNT bit 15 is the OBJ Window enable. It used to be read as a
+/// "display off" flag, so any game that turned the OBJ window on had its
+/// entire screen blanked - which is why `fantasy-knight.gba` was black.
+#[test]
+fn dispcnt_bit_15_is_the_obj_window_not_a_display_off() {
+    let mut gba = bg_over_backdrop();
+    gba.bus.write16(0x0400_004A, 0x3F3F); // everything visible in/out
+    gba.bus.write16(0x0400_0000, 0x8100); // mode 0, BG0 on, OBJ window on
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "enabling the OBJ window blanked the screen"
+    );
+}
+
+/// WININ and WINOUT decide which layers show inside and outside a window. The
+/// whole windowing path used to be dead code: `render_scanline` computed its
+/// flags and discarded them.
+#[test]
+fn a_window_hides_the_layers_winout_leaves_out() {
+    let mut gba = bg_over_backdrop();
+    // WIN0 covers x 0..64, y 0..32. GBATEK: X1/Y1 - the left and top edges -
+    // live in bits 8-15, so the *high* byte is the near edge.
+    gba.bus.write16(0x0400_0040, (0 << 8) | 64);
+    gba.bus.write16(0x0400_0044, (0 << 8) | 32);
+    gba.bus.write16(0x0400_0048, 0x0001); // inside WIN0: BG0 only
+    gba.bus.write16(0x0400_004A, 0x0000); // outside: nothing
+    gba.bus.write16(0x0400_0000, 0x2100); // mode 0, BG0 on, WIN0 on
+    gba.run_frame();
+
+    let at = |x: usize, y: usize| {
+        let i = (y * 240 + x) * 3;
+        gba.frame_buffer()[i..i + 3].to_vec()
+    };
+    assert_eq!(at(10, 10), vec![0xF8, 0x00, 0x00], "inside the window BG0 shows");
+    assert_eq!(at(100, 10), vec![0x00, 0xF8, 0x00], "right of the window it does not");
+    assert_eq!(at(10, 100), vec![0x00, 0xF8, 0x00], "below the window it does not");
+}
+
+/// WIN0 outranks WIN1 where they overlap.
+#[test]
+fn win0_takes_precedence_over_win1() {
+    let mut gba = bg_over_backdrop();
+    gba.bus.write16(0x0400_0040, (0 << 8) | 64); // WIN0: x 0..64
+    gba.bus.write16(0x0400_0044, (0 << 8) | 64); // WIN0: y 0..64
+    gba.bus.write16(0x0400_0042, (0 << 8) | 240); // WIN1: the whole screen
+    gba.bus.write16(0x0400_0046, (0 << 8) | 160);
+    gba.bus.write16(0x0400_0048, 0x0100); // WIN0: nothing, WIN1: BG0
+    gba.bus.write16(0x0400_004A, 0x0000);
+    gba.bus.write16(0x0400_0000, 0x6100); // BG0 on, WIN0 + WIN1 on
+    gba.run_frame();
+
+    let at = |x: usize, y: usize| {
+        let i = (y * 240 + x) * 3;
+        gba.frame_buffer()[i..i + 3].to_vec()
+    };
+    assert_eq!(at(10, 10), vec![0x00, 0xF8, 0x00], "WIN0 must win the overlap");
+    assert_eq!(at(100, 100), vec![0xF8, 0x00, 0x00], "WIN1 alone shows BG0");
+}

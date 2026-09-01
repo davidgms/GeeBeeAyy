@@ -25,12 +25,16 @@ pub struct Ppu {
     /// whatever their priority said. Holding them here instead lets the
     /// compositor order them against the backgrounds properly.
     obj_pixel: [Option<((u8, u8, u8), u8)>; SCREEN_WIDTH],
+    /// Pixels covered by an OBJ-window sprite (OAM mode 2). Those sprites are
+    /// never drawn; their non-transparent dots shape a window instead.
+    obj_window: [bool; SCREEN_WIDTH],
+    /// Which layers each pixel of this scanline may show, from WININ/WINOUT.
+    window: [u8; SCREEN_WIDTH],
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
     pub dispcnt: u16,
     force_blank: bool,
-    display_off: bool,
     bg0_enable: bool,
     bg1_enable: bool,
     bg2_enable: bool,
@@ -109,10 +113,11 @@ impl Ppu {
             vcount_irq_pending: false,
             vcount_match: false,
             obj_pixel: [None; SCREEN_WIDTH],
+            obj_window: [false; SCREEN_WIDTH],
+            window: [0x3F; SCREEN_WIDTH],
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
-            display_off: false,
             bg_mode: 0,
             dispstat_vblank_ie: false,
             dispstat_hblank_ie: false,
@@ -261,8 +266,11 @@ impl Ppu {
 
     fn sync_from_bus(&mut self, bus: &mut super::memory::MemoryBus) {
         self.dispcnt = bus.read16(0x0400_0000);
+        // Bit 7 is the only blanking control DISPCNT has. There used also to
+        // be a `display_off` read from bit 15 - which is the OBJ Window
+        // enable, not a blank - so any game that turned the OBJ window on had
+        // its entire screen blacked out.
         self.force_blank = self.dispcnt & 0x0080 != 0;
-        self.display_off = self.dispcnt & 0x8000 != 0;
         self.bg_mode = (self.dispcnt & 0x0007) as u8;
         self.bg0_enable = self.dispcnt & 0x0100 != 0;
         self.bg1_enable = self.dispcnt & 0x0200 != 0;
@@ -342,15 +350,17 @@ impl Ppu {
         // whenever a game set 1D sprite mapping, which is most of them.
         self.mosaic_obj_enabled = true;
 
-        // Window registers
-        self.win0h_left = bus.read8(0x0400_0040);
-        self.win0h_right = bus.read8(0x0400_0041);
-        self.win0v_top = bus.read8(0x0400_0044);
-        self.win0v_bottom = bus.read8(0x0400_0045);
-        self.win1h_left = bus.read8(0x0400_0042);
-        self.win1h_right = bus.read8(0x0400_0043);
-        self.win1v_top = bus.read8(0x0400_0046);
-        self.win1v_bottom = bus.read8(0x0400_0047);
+        // Window registers. GBATEK, LCD I/O Window Feature: WINxH holds X1 -
+        // the *left* edge - in bits 8-15 and X2 in bits 0-7, so the low byte
+        // is the right edge. This used to read them the other way round.
+        self.win0h_right = bus.read8(0x0400_0040);
+        self.win0h_left = bus.read8(0x0400_0041);
+        self.win1h_right = bus.read8(0x0400_0042);
+        self.win1h_left = bus.read8(0x0400_0043);
+        self.win0v_bottom = bus.read8(0x0400_0044);
+        self.win0v_top = bus.read8(0x0400_0045);
+        self.win1v_bottom = bus.read8(0x0400_0046);
+        self.win1v_top = bus.read8(0x0400_0047);
         self.winin = bus.read16(0x0400_0048);
         self.winout = bus.read16(0x0400_004A);
 
@@ -358,59 +368,73 @@ impl Ppu {
     }
 
     // ========================================================================
-    // Window check
+    // Windows
     // ========================================================================
 
-    /// Returns which window is active at (x, y).
-    /// 0 = outside all windows, 1 = WIN0, 2 = WIN1, 3 = OBJ window, 4 = inside window
-    fn get_window(&self, x: usize, y: usize) -> u8 {
+    /// Which layers are enabled at each pixel of this scanline.
+    ///
+    /// Each entry holds WININ/WINOUT's low six bits: BG0-3, OBJ, and bit 5
+    /// for the colour special effect. With no window enabled everything is on,
+    /// which is the common case and costs one branch.
+    ///
+    /// This replaces `get_window` and `window_layer_visible`, which were dead
+    /// code - `render_scanline` computed its window flags and threw them away,
+    /// so windows had no effect on anything.
+    fn window_mask(&self, y: usize) -> [u8; SCREEN_WIDTH] {
         let win0_en = self.dispcnt & 0x2000 != 0;
         let win1_en = self.dispcnt & 0x4000 != 0;
-        let obj_win_en = self.dispcnt & 0x8000 != 0;
-
-        if win0_en
-            && x >= self.win0h_left as usize
-            && x < self.win0h_right as usize
-            && y >= self.win0v_top as usize
-            && y < self.win0v_bottom as usize
-        {
-            return 1;
+        let objwin_en = self.dispcnt & 0x8000 != 0;
+        if !win0_en && !win1_en && !objwin_en {
+            return [0x3F; SCREEN_WIDTH];
         }
 
-        if win1_en
-            && x >= self.win1h_left as usize
-            && x < self.win1h_right as usize
-            && y >= self.win1v_top as usize
-            && y < self.win1v_bottom as usize
-        {
-            return 2;
+        // GBATEK: X2 beyond 240, or X1 > X2, is read as X2 = 240; the same for
+        // Y against 160. A window whose top is below its bottom is empty.
+        let rows = |top: u8, bottom: u8| -> (usize, usize) {
+            let bottom = if bottom as usize > SCREEN_HEIGHT || top > bottom {
+                SCREEN_HEIGHT
+            } else {
+                bottom as usize
+            };
+            (top as usize, bottom)
+        };
+        let cols = |left: u8, right: u8| -> (usize, usize) {
+            let right = if right as usize > SCREEN_WIDTH || left > right {
+                SCREEN_WIDTH
+            } else {
+                right as usize
+            };
+            (left as usize, right)
+        };
+
+        let (w0t, w0b) = rows(self.win0v_top, self.win0v_bottom);
+        let (w1t, w1b) = rows(self.win1v_top, self.win1v_bottom);
+        let (w0l, w0r) = cols(self.win0h_left, self.win0h_right);
+        let (w1l, w1r) = cols(self.win1h_left, self.win1h_right);
+
+        let win0_row = win0_en && y >= w0t && y < w0b;
+        let win1_row = win1_en && y >= w1t && y < w1b;
+
+        let inside0 = (self.winin & 0x3F) as u8;
+        let inside1 = ((self.winin >> 8) & 0x3F) as u8;
+        let outside = (self.winout & 0x3F) as u8;
+        let objwin = ((self.winout >> 8) & 0x3F) as u8;
+
+        let mut mask = [outside; SCREEN_WIDTH];
+        for (x, m) in mask.iter_mut().enumerate() {
+            // WIN0 outranks WIN1, which outranks the OBJ window, which
+            // outranks everything outside.
+            *m = if win0_row && x >= w0l && x < w0r {
+                inside0
+            } else if win1_row && x >= w1l && x < w1r {
+                inside1
+            } else if objwin_en && self.obj_window[x] {
+                objwin
+            } else {
+                outside
+            };
         }
-
-        if obj_win_en {
-            // OBJ window is set per-pixel in the OBJ layer
-            return 3;
-        }
-
-        if win0_en || win1_en {
-            return 4; // Inside display area but not in any window
-        }
-
-        0
-    }
-
-    /// Check if a given BG/OBJ layer is visible in the given window.
-    fn window_layer_visible(&self, window: u8, layer: u8) -> bool {
-        let winin = self.winin;
-        let winout = self.winout;
-
-        match window {
-            0 => false, // No window active → use WINOUT
-            1 => winin & (1 << layer) != 0,
-            2 => (winin >> 8) & (1 << layer) != 0,
-            3 => false, // OBJ window - handled per-pixel
-            4 => winout & (1 << layer) != 0,
-            _ => false,
-        }
+        mask
     }
 
     // ========================================================================
@@ -459,10 +483,6 @@ impl Ppu {
             return;
         }
 
-        if self.display_off {
-            return;
-        }
-
         let y = self.scanline as usize;
         if y >= SCREEN_HEIGHT {
             return;
@@ -485,6 +505,17 @@ impl Ppu {
             self.frame_buffer[idx + 2] = bb;
         }
 
+        // The sprite pass comes first for every mode: mode 0 composites from
+        // its result, the others overlay it, and OBJ-window sprites have to be
+        // decoded before the window mask can be built at all.
+        if self.obj_enable {
+            self.render_obj_scanline(y, bus);
+        } else {
+            self.obj_pixel = [None; SCREEN_WIDTH];
+            self.obj_window = [false; SCREEN_WIDTH];
+        }
+        self.window = self.window_mask(y);
+
         match self.bg_mode {
             0 => self.render_mode0_scanline(y, bus),
             1 => self.render_mode1_scanline(y, bus),
@@ -502,8 +533,10 @@ impl Ppu {
         // appear in the bitmap modes at all: those three never ran the sprite
         // pass before.
         if self.bg_mode != 0 && self.obj_enable {
-            self.render_obj_scanline(y, bus);
             for x in 0..SCREEN_WIDTH {
+                if self.window[x] & 0x10 == 0 {
+                    continue;
+                }
                 if let Some((rgb, _)) = self.obj_pixel[x] {
                     let idx = (y * SCREEN_WIDTH + x) * 3;
                     self.frame_buffer[idx] = rgb.0;
@@ -566,10 +599,6 @@ impl Ppu {
         // order, and the lower-numbered background is the one in front.
         bg_list.sort_by_key(|&(p, _)| p);
 
-        if self.obj_enable {
-            self.render_obj_scanline(y, bus);
-        }
-
         let backdrop = {
             let idx = (y * SCREEN_WIDTH) * 3;
             (
@@ -586,7 +615,11 @@ impl Ppu {
             // the first two opaque backgrounds rather than stopping at one.
             let mut hit: [Option<((u8, u8, u8), usize, u8)>; 2] = [None, None];
             let mut found = 0usize;
+            let allow = self.window[x];
             for &(bg_priority, bg) in &bg_list {
+                if allow & (1 << bg) == 0 {
+                    continue;
+                }
                 let (mx, my) = self.mosaic_bg(bg, x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
@@ -625,7 +658,7 @@ impl Ppu {
             // layers, then the OBJ becomes higher priority" - so the sprite
             // goes ahead of the first background it ties with.
             let mut stack: Vec<((u8, u8, u8), usize)> = Vec::with_capacity(3);
-            let obj = self.obj_pixel[x];
+            let obj = if allow & 0x10 != 0 { self.obj_pixel[x] } else { None };
             let mut obj_placed = obj.is_none();
             for entry in hit.iter().flatten() {
                 let &(rgb, bg, bg_priority) = entry;
@@ -649,7 +682,13 @@ impl Ppu {
             // backdrop stands in for itself, which is what hardware blends.
             let (second, second_layer) = stack.get(1).copied().unwrap_or(stack[0]);
 
-            let out = self.blend(top, top_layer, second, second_layer);
+            // WININ/WINOUT bit 5 is the colour special effect's own enable
+            // for that region.
+            let out = if allow & 0x20 != 0 {
+                self.blend(top, top_layer, second, second_layer)
+            } else {
+                top
+            };
             self.frame_buffer[idx] = out.0;
             self.frame_buffer[idx + 1] = out.1;
             self.frame_buffer[idx + 2] = out.2;
@@ -715,6 +754,9 @@ impl Ppu {
 
         for x in 0..SCREEN_WIDTH {
             for &(_, bg) in &bg_list {
+                if self.window[x] & (1 << bg) == 0 {
+                    continue;
+                }
                 let (mx, my) = self.mosaic_bg(bg, x, y);
                 let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
                     self.get_bg_pixel(bg, mx, my, bus);
@@ -746,7 +788,7 @@ impl Ppu {
             }
 
             // BG2 affine
-            if self.bg2_enable {
+            if self.bg2_enable && self.window[x] & 0x04 != 0 {
                 self.render_affine_bg_pixel(2, x, y, bus);
             }
         }
@@ -759,10 +801,10 @@ impl Ppu {
     fn render_mode2_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
 
         for x in 0..SCREEN_WIDTH {
-            if self.bg2_enable {
+            if self.bg2_enable && self.window[x] & 0x04 != 0 {
                 self.render_affine_bg_pixel(2, x, y, bus);
             }
-            if self.bg3_enable {
+            if self.bg3_enable && self.window[x] & 0x08 != 0 {
                 self.render_affine_bg_pixel(3, x, y, bus);
             }
         }
@@ -887,6 +929,7 @@ impl Ppu {
 
     fn render_obj_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
         self.obj_pixel = [None; SCREEN_WIDTH];
+        self.obj_window = [false; SCREEN_WIDTH];
         for sprite in 0..128u32 {
             let oam_addr = 0x0700_0000 + sprite * 8;
             let attr0 = bus.read16(oam_addr);
@@ -903,9 +946,10 @@ impl Ppu {
             // belongs to the Y coordinate, so any sprite at Y >= 128 was
             // decoded as 256-colour.
             let is_8bpp = attr0 & 0x2000 != 0;
-            if (attr0 >> 10) & 3 == 2 {
-                continue; // OBJ window: shapes a window, is not drawn
-            }
+            // Mode 2 is the OBJ window: the sprite is not drawn, but its
+            // non-transparent dots still have to be decoded because they are
+            // what shapes the window.
+            let is_obj_window = (attr0 >> 10) & 3 == 2;
 
             let shape = (attr0 >> 14) & 3;
             let size = (attr1 >> 14) & 3;
@@ -957,7 +1001,7 @@ impl Ppu {
                     continue;
                 }
                 let screen_x = screen_x as usize;
-                if self.obj_pixel[screen_x].is_some() {
+                if !is_obj_window && self.obj_pixel[screen_x].is_some() {
                     // Between two overlapping sprites the OAM index decides,
                     // on its own - a sprite's priority field is only ever
                     // compared against the backgrounds, never against another
@@ -1005,6 +1049,11 @@ impl Ppu {
                 } else {
                     0x0500_0200 + palette * 32 + color_index as usize * 2
                 };
+                if is_obj_window {
+                    self.obj_window[screen_x] = true;
+                    continue;
+                }
+
                 let color = bus.read16(palette_addr as u32);
                 self.obj_pixel[screen_x] = Some((
                     (
