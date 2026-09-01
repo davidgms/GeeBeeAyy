@@ -719,3 +719,38 @@ Two findings worth keeping:
 a four-minute run-up into a three-second one. `temp/cardselect.state` is a
 snapshot sitting on CARD SELECT; note it is a v5 save state and will be
 rejected the moment the format changes again.
+
+### 2026-09-01 - Moving to 48 kHz exposed a PSG that had been 64x flat all along
+
+The roadmap's open Phase 1 item was the denied low-latency audio path: the core
+emitted at `16777216 / 964` = 17403 Hz, no device supports that, so AudioTrack
+resampled every buffer and refused `AUDIO_OUTPUT_FLAG_FAST`. The sample clock
+is now an exact fraction - `sample_accum += cycles * 48000`, a sample due each
+time it reaches 16777216 - which lands on 48000 Hz with no accumulated
+rounding.
+
+Changing the rate is what exposed the real bug. **Every PSG channel advanced
+its phase once per emitted sample**, so its pitch was a function of the output
+rate. Measured before the change: the tone ROM programs 128 Hz and the APU
+produced **2.0 Hz** - 64x flat. Nobody had noticed because no game tested here
+uses the PSG for music; Yggdra's music is all DMA sound, and
+`core/tests/tonerom.rs` only asserted that samples were non-zero.
+
+Channel phases now run off the system clock at GBATEK's divisors: `16*(2048-n)`
+cycles per duty phase for channels 1 and 2, `8*(2048-n)` per wave sample for
+channel 3, and `32*r*2^(s+1)` per LFSR step for channel 4 (with `r=0` meaning
+0.5). Measured after: 127.9 Hz against 128.0 programmed.
+
+**Application**: "audio works" had meant "samples are non-zero" for this whole
+project. A test that asserts a signal exists says nothing about whether it is
+the *right* signal - the pitch check took ten lines and would have caught this
+at any point. Where a subsystem has a number the ROM can state and the output
+can be measured against, assert on the number.
+
+### 2026-09-01 - The battle map renders
+
+Random-input fuzzing from `temp/cardselect.state` eventually got past CARD
+SELECT to the battle map itself - "Thieves' Stronghold", terrain, the map
+layout and the Locations/Geography/Units/Formations menu, all correct. That was
+the last major screen unseen, so every part of *Yggdra Union* reached so far
+renders properly.

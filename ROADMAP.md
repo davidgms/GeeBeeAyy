@@ -210,15 +210,20 @@ was correct.
       device reports `AudioPlaybackConfiguration ... state:started`, so samples
       reach the audio HAL. Covered by `core/tests/tonerom.rs`. A *game* still
       has not driven it.
-- [ ] **The low-latency audio path is denied** - `rust-engineer`. logcat shows
-      `AUDIO_OUTPUT_FLAG_FAST denied by server`, because our 17403 Hz rate
-      (`16777216 / 964` cycles per sample) does not match the device's native
-      48000 Hz, so the track goes through the resampler and the normal mixer
-      instead of the fast path. `PERFORMANCE_MODE_LOW_LATENCY` in
-      `AudioOutput` is therefore doing nothing. Fixing it means resampling to
-      48000 in the core, which needs fractional cycle accumulation rather than
-      an integer `CYCLES_PER_SAMPLE`. This is what the roadmap's "input latency
-      under 45 ms" blocker actually depends on.
+- [x] **The core emits 48 kHz** - the sample clock is now an exact fraction
+      (`sample_accum += cycles * 48000`, a sample due each time it reaches
+      16777216) rather than an integer `CYCLES_PER_SAMPLE` of 964, which gave
+      17403 Hz - a rate no device supports, so AudioTrack resampled every
+      buffer and refused the fast path (`AUDIO_OUTPUT_FLAG_FAST denied by
+      server`), leaving `PERFORMANCE_MODE_LOW_LATENCY` doing nothing.
+      Moving the rate forced a much bigger bug into the open: **the PSG
+      channels' phase was clocked by emitted samples, not by the system
+      clock**, so their pitch was tied to the output rate and the tone ROM's
+      128 Hz square was playing at 2 Hz - 64x flat, since the project began.
+      Channel phases now advance in cycles at GBATEK's divisors. Covered by
+      `a_psg_square_plays_the_frequency_the_rom_asked_for`.
+      Not yet confirmed: whether the device now grants the fast path. That
+      needs a logcat check on hardware.
 
 **Exit criterion:** a full game is playable start to finish, with sound, on a
 physical device, without losing progress.

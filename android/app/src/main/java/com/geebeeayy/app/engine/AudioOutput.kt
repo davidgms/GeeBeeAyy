@@ -19,8 +19,16 @@ class AudioOutput {
     companion object {
         private const val TAG = "GeeBeeAyy/Audio"
 
-        /** The core emits one sample every 964 cycles of the 16.78 MHz clock. */
-        const val SAMPLE_RATE = 16_777_216 / 964
+        /**
+         * Must match `geebeeayy_core::apu::SAMPLE_RATE`.
+         *
+         * 48 kHz is the device mixer's native rate. The core used to emit at
+         * 16777216/964 = 17403 Hz, which no device supports, so AudioTrack
+         * resampled every buffer and refused the fast path outright -
+         * `AUDIO_OUTPUT_FLAG_FAST denied by server` in logcat, with
+         * PERFORMANCE_MODE_LOW_LATENCY below doing nothing at all.
+         */
+        const val SAMPLE_RATE = 48_000
 
         /** Samples the core produces per video frame, at ~59.73 Hz. */
         const val SAMPLES_PER_FRAME = SAMPLE_RATE / 60

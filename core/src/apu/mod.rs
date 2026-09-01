@@ -1,7 +1,17 @@
 // GBA APU (Audio Processing Unit)
 // 4 PSG channels + 2 FIFO channels
 
-const CYCLES_PER_SAMPLE: u32 = 964; // 16_777_216 / 17_500 ≈ 964 (for accurate GBA timing)
+/// The GBA system clock.
+const GBA_CLOCK: u64 = 16_777_216;
+
+/// The rate the core hands samples to the frontend.
+///
+/// 48 kHz is what Android's mixer runs at natively. The old rate was
+/// `16_777_216 / 964` = 17403 Hz, which no device supports, so every track
+/// went through the resampler and `AUDIO_OUTPUT_FLAG_FAST` was refused. The
+/// sample clock below is an exact fraction rather than an integer cycle
+/// count, so this rate carries no rounding drift.
+pub const SAMPLE_RATE: u32 = 48_000;
 
 struct SoundChannel1 {
     enabled: bool,
@@ -21,6 +31,10 @@ struct SoundChannel1 {
     freq_divider: u16,
     freq_timer: u16,
     freq_counter: u16,
+    /// Cycles owed to this channel's phase counter. The phase is clocked by
+    /// the system clock, not by output samples - clocking it per sample tied
+    /// the pitch to the sample rate and put every PSG channel 64x flat.
+    cycle_accum: u32,
     sample_idx: u32,
 }
 
@@ -37,6 +51,7 @@ struct SoundChannel2 {
     freq_divider: u16,
     freq_timer: u16,
     freq_counter: u16,
+    cycle_accum: u32,
     sample_idx: u32,
 }
 
@@ -49,6 +64,7 @@ struct SoundChannel3 {
     freq_divider: u16,
     freq_timer: u16,
     freq_counter: u16,
+    cycle_accum: u32,
     wave_ram: [u8; 32],
     sample_idx: u32,
 }
@@ -68,6 +84,7 @@ struct SoundChannel4 {
     lfsr: u16,
     freq_timer: u16,
     freq_counter: u16,
+    cycle_accum: u32,
 }
 
 struct FifoChannel {
@@ -130,7 +147,10 @@ impl FifoChannel {
 }
 
 pub struct Apu {
-    cycle_counter: u32,
+    /// Sample clock, in units of cycles * SAMPLE_RATE. A sample falls due
+    /// each time it reaches GBA_CLOCK, which makes the output rate an exact
+    /// fraction of the system clock with no accumulated rounding error.
+    sample_accum: u64,
     sample_buffer: Vec<f32>,
     ch1: SoundChannel1,
     ch2: SoundChannel2,
@@ -162,7 +182,7 @@ pub struct Apu {
 impl Apu {
     pub fn new() -> Self {
         Self {
-            cycle_counter: 0,
+            sample_accum: 0,
             sample_buffer: Vec::new(),
             ch1: SoundChannel1 {
                 enabled: false, sweep_enabled: false, sweep_shift: 0,
@@ -170,20 +190,20 @@ impl Apu {
                 volume_init: 0, volume_cur: 0, envelope_dir: 0,
                 envelope_period: 0, envelope_timer: 0,
                 length_counter: 0, length_enabled: false,
-                freq_divider: 0, freq_timer: 0, freq_counter: 0,
+                freq_divider: 0, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
                 sample_idx: 0,
             },
             ch2: SoundChannel2 {
                 enabled: false, duty: 0, volume_init: 0, volume_cur: 0,
                 envelope_dir: 0, envelope_period: 0, envelope_timer: 0,
                 length_counter: 0, length_enabled: false,
-                freq_divider: 0, freq_timer: 0, freq_counter: 0,
+                freq_divider: 0, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
                 sample_idx: 0,
             },
             ch3: SoundChannel3 {
                 enabled: false, bank_select: false, volume_code: 0,
                 length_counter: 0, length_enabled: false,
-                freq_divider: 0, freq_timer: 0, freq_counter: 0,
+                freq_divider: 0, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
                 wave_ram: [0; 32], sample_idx: 0,
             },
             ch4: SoundChannel4 {
@@ -191,7 +211,7 @@ impl Apu {
                 envelope_dir: 0, envelope_period: 0, envelope_timer: 0,
                 length_counter: 0, length_enabled: false,
                 shift_freq: 0, width_mode: 0, div_ratio: 0,
-                lfsr: 0x7FFF, freq_timer: 0, freq_counter: 0,
+                lfsr: 0x7FFF, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
             },
             fifo_a: FifoChannel::new(),
             fifo_b: FifoChannel::new(),
@@ -432,6 +452,60 @@ impl Apu {
         }
     }
 
+    /// Advance every channel's phase by `cycles` of the system clock.
+    ///
+    /// GBATEK, GBA Sound Channels: a square channel's tone is
+    /// `131072/(2048-n)` Hz and its duty waveform has eight phases, so one
+    /// phase lasts `16 * (2048-n)` cycles. Channel 3 walks 32 wave samples at
+    /// `2097152/(2048-n)` Hz, one every `8 * (2048-n)` cycles. Channel 4's
+    /// generator runs at `524288/r/2^(s+1)` Hz with `r=0` meaning 0.5, so one
+    /// step is `32*r*2^(s+1)` cycles - `16*2^(s+1)` when `r` is zero.
+    fn tick_channels(&mut self, cycles: u32) {
+        let square = |divider: u16| -> u32 { 16 * (2048u32 - divider.min(2047) as u32) };
+
+        if self.ch1.enabled {
+            let period = square(self.ch1.freq_divider);
+            self.ch1.cycle_accum += cycles;
+            while self.ch1.cycle_accum >= period {
+                self.ch1.cycle_accum -= period;
+                self.ch1.sample_idx = self.ch1.sample_idx.wrapping_add(1);
+            }
+        }
+        if self.ch2.enabled {
+            let period = square(self.ch2.freq_divider);
+            self.ch2.cycle_accum += cycles;
+            while self.ch2.cycle_accum >= period {
+                self.ch2.cycle_accum -= period;
+                self.ch2.sample_idx = self.ch2.sample_idx.wrapping_add(1);
+            }
+        }
+        if self.ch3.enabled {
+            let period = 8 * (2048u32 - self.ch3.freq_divider.min(2047) as u32);
+            self.ch3.cycle_accum += cycles;
+            while self.ch3.cycle_accum >= period {
+                self.ch3.cycle_accum -= period;
+                self.ch3.sample_idx = self.ch3.sample_idx.wrapping_add(1);
+            }
+        }
+        if self.ch4.enabled {
+            let step = 1u32 << (self.ch4.shift_freq.min(15) + 1);
+            let period = if self.ch4.div_ratio == 0 {
+                16 * step
+            } else {
+                32 * self.ch4.div_ratio as u32 * step
+            };
+            self.ch4.cycle_accum += cycles;
+            while self.ch4.cycle_accum >= period {
+                self.ch4.cycle_accum -= period;
+                let xor_bit = (self.ch4.lfsr & 1) ^ ((self.ch4.lfsr >> 1) & 1);
+                self.ch4.lfsr = (self.ch4.lfsr >> 1) | (xor_bit << 14);
+                if self.ch4.width_mode == 1 {
+                    self.ch4.lfsr = (self.ch4.lfsr & !0x40) | (xor_bit << 6);
+                }
+            }
+        }
+    }
+
     fn duty_wave(duty: u8, idx: u32) -> f32 {
         let phase = idx % 8;
         match duty {
@@ -445,15 +519,17 @@ impl Apu {
 
     pub fn tick(&mut self, cycles: u32) {
         if !self.sound_on {
-            self.cycle_counter += cycles;
-            while self.cycle_counter >= CYCLES_PER_SAMPLE {
-                self.cycle_counter -= CYCLES_PER_SAMPLE;
+            self.sample_accum += cycles as u64 * SAMPLE_RATE as u64;
+            while self.sample_accum >= GBA_CLOCK {
+                self.sample_accum -= GBA_CLOCK;
                 self.sample_buffer.push(0.0);
             }
             return;
         }
 
-        self.cycle_counter += cycles;
+        // The channel phases run off the system clock, so their pitch does not
+        // move when the output rate does.
+        self.tick_channels(cycles);
 
         // Envelope timer: tick every ~8 scanlines (59.73 Hz)
         // 1232 cycles/scanline * 8 = 9856 cycles
@@ -465,43 +541,26 @@ impl Apu {
             self.tick_length_counters();
         }
 
-        while self.cycle_counter >= CYCLES_PER_SAMPLE {
-            self.cycle_counter -= CYCLES_PER_SAMPLE;
+        self.sample_accum += cycles as u64 * SAMPLE_RATE as u64;
+        while self.sample_accum >= GBA_CLOCK {
+            self.sample_accum -= GBA_CLOCK;
 
             let mut sample = 0.0f32;
 
             // Channel 1: Square wave with sweep
             if self.ch1.enabled {
-                self.ch1.freq_counter += 1;
-                let period = 2048u16.saturating_sub(self.ch1.freq_divider);
-                if period > 0 && self.ch1.freq_counter >= period {
-                    self.ch1.freq_counter = 0;
-                    self.ch1.sample_idx += 1;
-                }
                 let duty_sample = Self::duty_wave(self.ch1.duty, self.ch1.sample_idx);
                 sample += duty_sample * (self.ch1.volume_cur as f32 / 15.0) * 0.25;
             }
 
             // Channel 2: Square wave
             if self.ch2.enabled {
-                self.ch2.freq_counter += 1;
-                let period = 2048u16.saturating_sub(self.ch2.freq_divider);
-                if period > 0 && self.ch2.freq_counter >= period {
-                    self.ch2.freq_counter = 0;
-                    self.ch2.sample_idx += 1;
-                }
                 let duty_sample = Self::duty_wave(self.ch2.duty, self.ch2.sample_idx);
                 sample += duty_sample * (self.ch2.volume_cur as f32 / 15.0) * 0.25;
             }
 
             // Channel 3: Wave
             if self.ch3.enabled {
-                self.ch3.freq_counter += 1;
-                let period = 2048u16.saturating_sub(self.ch3.freq_divider);
-                if period > 0 && self.ch3.freq_counter >= period {
-                    self.ch3.freq_counter = 0;
-                    self.ch3.sample_idx += 1;
-                }
                 let wave_idx = (self.ch3.sample_idx % 32) as usize;
                 let wave_byte = self.ch3.wave_ram[wave_idx / 2];
                 let nibble = if wave_idx % 2 == 0 { wave_byte >> 4 } else { wave_byte & 0x0F };
@@ -517,18 +576,6 @@ impl Apu {
 
             // Channel 4: Noise
             if self.ch4.enabled {
-                self.ch4.freq_counter += 1;
-                let freq = if self.ch4.div_ratio == 0 { 8u16 } else { self.ch4.div_ratio as u16 * 16 };
-                let period = freq << self.ch4.shift_freq;
-                if period > 0 && self.ch4.freq_counter >= period {
-                    self.ch4.freq_counter = 0;
-                    // LFSR
-                    let xor_bit = (self.ch4.lfsr & 1) ^ ((self.ch4.lfsr >> 1) & 1);
-                    self.ch4.lfsr = (self.ch4.lfsr >> 1) | (xor_bit << 14);
-                    if self.ch4.width_mode == 1 {
-                        self.ch4.lfsr = (self.ch4.lfsr & !0x40) | (xor_bit << 6);
-                    }
-                }
                 let noise_sample = if self.ch4.lfsr & 1 == 0 { 1.0 } else { -1.0 };
                 sample += noise_sample * (self.ch4.volume_cur as f32 / 15.0) * 0.15;
             }
@@ -833,7 +880,7 @@ impl FifoChannel {
 
 impl Apu {
     fn write_state(&self, buf: &mut Vec<u8>) {
-        buf.extend_from_slice(&self.cycle_counter.to_le_bytes());
+        buf.extend_from_slice(&self.sample_accum.to_le_bytes());
         self.ch1.write_state(buf);
         self.ch2.write_state(buf);
         self.ch3.write_state(buf);
@@ -857,7 +904,7 @@ impl Apu {
     }
 
     fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
-        self.cycle_counter = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?);
+        self.sample_accum = u64::from_le_bytes(take(cur, 8)?.try_into().ok()?);
         self.ch1.read_state(cur)?;
         self.ch2.read_state(cur)?;
         self.ch3.read_state(cur)?;
