@@ -211,6 +211,7 @@ fun GeeBeeAyyNavHost() {
                 controlOpacity = controlOpacity,
                 onSaveState = { slot -> viewModel.saveState(slot) },
                 onLoadState = { slot -> viewModel.loadState(slot) },
+                onScreenshot = { viewModel.takeScreenshot() },
                 onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
             )
         }

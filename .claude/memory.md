@@ -799,3 +799,32 @@ semi-transparent sprites, sprite priority, affine backgrounds, alpha blending
 and brightness. `fantasy-knight.gba` - black since it was added - renders its
 synthwave scene on hardware. What is left approximate is colour effects outside
 mode 0, which still apply per scanline rather than per pixel.
+
+### 2026-09-01 - Frontend work: rewind, overlay settings, screenshots, and an audio buffer worth 47 ms
+
+Four frontend items, all verified on the device rather than assumed:
+
+- **Rewind** is wired end to end. `core/src/rewind.rs` had existed since
+  August with no way to reach it, so five FFI functions plus JNI were the
+  missing half. A snapshot every 30 frames into a depth of 20 buys about ten
+  seconds of history for roughly 10 MB. Loading a save state clears the ring,
+  because that history belongs to the timeline you just left.
+- **Audio latency halved.** `AudioOutput` was clamping its buffer up to
+  `getMinBufferSize`, which is the safe size for the *normal* mixer - 3844
+  frames, 80 ms. Since audio is the timing master, that buffer is the floor on
+  input latency. Asking for two emulated frames gets 1600 (33 ms) with the
+  fast path still granted and zero underruns over several minutes.
+  AudioFlinger's reported track latency went 96 ms to 54 ms.
+- **Overlay size and opacity.** The first attempt allowed 1.0-1.6x and pushed
+  L, R and the outer D-pad off the screen: at 1.0 the row already spans nearly
+  the full width, so there is nowhere to grow. It is shrink-only now, 0.7-1.0,
+  with the subtitle saying when the buttons drop below the 48.dp touch target.
+  One `graphicsLayer` on the control block does it - Compose maps pointer
+  input through the same transform, so the targets stay in register.
+- **Screenshots** at native 240x160 into `Pictures/GeeBeeAyy`.
+
+**Application**: two of these four were "the core side is done, nothing can
+reach it" - rewind had no FFI, and the audio buffer had no one asking whether
+`getMinBufferSize` was the right number for a fast track. Same shape as the
+seven core features that had no caller. When a layer boundary exists, check
+both sides of it.

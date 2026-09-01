@@ -493,6 +493,56 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private fun stateFile(slot: Int): File = File(statesDir, "${romStateKey}_slot$slot.state")
 
     /**
+     * Write the current frame to the device's Pictures/GeeBeeAyy folder as a
+     * PNG, at native 240x160.
+     *
+     * Deliberately not upscaled: a screenshot is a record of what the emulator
+     * produced, and the scaling is a display choice the viewer can make again.
+     */
+    fun takeScreenshot() {
+        val frame = _frameBuffer.value
+        if (frame == null || frame.size < GbaEngine.FRAME_BUFFER_SIZE) {
+            _stateMessage.value = "No frame to capture yet"
+            return
+        }
+        val name = "${romStateKey ?: "GeeBeeAyy"}_${System.currentTimeMillis()}.png"
+        viewModelScope.launch(Dispatchers.IO) {
+            val w = GbaEngine.SCREEN_WIDTH
+            val h = GbaEngine.SCREEN_HEIGHT
+            val pixels = IntArray(w * h)
+            for (i in pixels.indices) {
+                val o = i * 3
+                pixels[i] = (0xFF shl 24) or
+                    ((frame[o].toInt() and 0xFF) shl 16) or
+                    ((frame[o + 1].toInt() and 0xFF) shl 8) or
+                    (frame[o + 2].toInt() and 0xFF)
+            }
+            val bitmap = android.graphics.Bitmap.createBitmap(
+                pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888,
+            )
+            val message = try {
+                val dir = File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_PICTURES,
+                    ),
+                    "GeeBeeAyy",
+                ).apply { mkdirs() }
+                val out = File(dir, name)
+                out.outputStream().use { stream ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                }
+                "Screenshot saved to Pictures/GeeBeeAyy"
+            } catch (e: Exception) {
+                Log.e(TAG, "Screenshot failed", e)
+                "Could not save the screenshot: ${e.message}"
+            } finally {
+                bitmap.recycle()
+            }
+            _stateMessage.value = message
+        }
+    }
+
+    /**
      * Request a save-state capture into [slot] (0-9). Deferred to the
      * emulation loop thread while it is running, since the engine is a raw
      * pointer and only one thread may touch it at a time; called directly

@@ -334,7 +334,11 @@ The iOS target has never been compiled. Owned by `swift-expert`, with
 - [ ] JIT recompilation, ARM host only. Only after the interpreter is correct -
       a JIT built on a wrong interpreter inherits every bug and makes it harder
       to find.
-- [ ] Screen recording and screenshots.
+- [~] **Screenshots** - a menu entry writes the current frame to
+      `Pictures/GeeBeeAyy/<rom key>_<timestamp>.png` at native 240x160,
+      deliberately not upscaled: a screenshot records what the emulator
+      produced, and the scaling is a display choice the viewer can make again.
+      Verified on a device. Screen *recording* is still undone.
 - [ ] Debug tools: breakpoints, memory viewer, register inspector.
 - [ ] RetroAchievements.
 

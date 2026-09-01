@@ -50,6 +50,7 @@ fun EmulationScreen(
     controlOpacity: Float = 1f,
     onSaveState: (Int) -> Unit,
     onLoadState: (Int) -> Unit,
+    onScreenshot: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
 ) {
     var isPaused by remember { mutableStateOf(false) }
@@ -221,6 +222,11 @@ fun EmulationScreen(
                     leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = AmberResin) }
                 )
                 HorizontalDivider(color = HoneyMid)
+                DropdownMenuItem(
+                    text = { Text("Screenshot") },
+                    onClick = { showMenu = false; onScreenshot() },
+                    leadingIcon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
+                )
                 DropdownMenuItem(
                     text = { Text("Settings") },
                     onClick = { showMenu = false },
