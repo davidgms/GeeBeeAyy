@@ -253,7 +253,12 @@ is left is literally finishing the game, which needs a person playing it.
       growing pushed L, R and the outer D-pad off the screen. Below 1.0 the
       buttons fall under the 48.dp minimum touch target, so the default stays
       at 1.0 and the subtitle says so.
-      Still open: position, and per-game layouts.
+      Position landed 2026-09-02: a "Customise Layout" mode outlines each
+      control group and lets it be dragged, with Done and Reset, persisted per
+      group in `DisplaySettings`. **Untested on a device**, portrait only, and
+      a group can be dragged off-screen with no clamping - see
+      `temp/pending-device-tests.md`.
+      Still open: per-game layouts.
 - [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
       now supports Fit (largest size preserving 3:2, letterboxed), Integer
       (largest whole-number multiple, falling back to Fit below 240x160) and
@@ -269,7 +274,18 @@ is left is literally finishing the game, which needs a person playing it.
       default, so a 240x160 frame scaled up keeps hard pixel edges. 2xSaI and
       CRT remain undone; they need their own shader/sampling work, not a flag.
       Unverified: not compiled, no device test.
-- [ ] Screen filters: 2xSaI, CRT.
+- [~] **Screen filters** - four options in Settings, persisted in
+      `DisplaySettings` and read when a ROM is opened: None (nearest
+      neighbour), Smooth (bilinear, a free flag on `drawImage`), Scanlines
+      (darkened alternate rows drawn as rects so the GPU does it) and 2xSaI
+      (240x160 to 480x320, edge-aware). The 2xSaI arithmetic is unit-tested on
+      the JVM - `android/app/src/test/.../Sai2xTest.kt`, six cases, run with
+      `gradle testDebugUnitTest`, which is new test infrastructure this project
+      did not have.
+      **Untested on a device**, and 2xSaI is 153,600 pixels of Kotlin per frame
+      inside composition, so its cost is the open question. See
+      `temp/pending-device-tests.md`. CRT beyond scanlines - curvature, mask,
+      bloom - is not done and wants a real shader.
 - [ ] ROM library with cover art and metadata.
 - [x] **Landscape/portrait handling** - `kotlin-specialist`. The manifest no
       longer hard-locks `screenOrientation="portrait"`;  `MainActivity`
@@ -304,6 +320,16 @@ is left is literally finishing the game, which needs a person playing it.
 
 The iOS target has never been compiled. Owned by `swift-expert`, with
 `mobile-app-developer` on the build.
+
+**How to do any of this without a Mac or an iPhone is researched in
+[`temp/ios-without-a-mac.md`](../temp/ios-without-a-mac.md).** The short of it:
+step 1 below is free and needs no Apple hardware, because Rust does not need
+Apple's SDK the way Swift does. Everything after it needs a rented Mac - about
+EUR 1 of hourly Scaleway time to create the Xcode project once, then GitHub
+Actions' free macOS minutes as a compile gate. Note that the Simulator plays
+audio through the *host* Mac's stack, so it cannot reproduce iPhone CoreAudio
+latency - which, for an emulator whose timing model is "audio is the timing
+master", makes it close to worthless for the bugs this project actually hits.
 
 - [ ] Create the Xcode project (or `Package.swift`) - there is currently
       neither.
