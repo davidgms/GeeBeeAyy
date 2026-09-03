@@ -9,6 +9,7 @@ class RomFolderManager(private val context: Context) {
     }
 
     private val prefs = context.getSharedPreferences("rom_folders", Context.MODE_PRIVATE)
+    private val lastPlayed = LastPlayed(context)
 
     /**
      * The configured folders, sorted.
@@ -70,6 +71,7 @@ class RomFolderManager(private val context: Context) {
                             sizeBytes = file.length(),
                             dateModifiedMillis = file.lastModified(),
                             filePath = file.absolutePath,
+                            lastPlayedMillis = lastPlayed.get(file.absolutePath),
                         )
                     )
                 }

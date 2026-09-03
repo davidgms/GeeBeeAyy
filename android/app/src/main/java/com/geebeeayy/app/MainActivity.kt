@@ -217,6 +217,9 @@ fun GeeBeeAyyNavHost() {
                 onBack = {
                     viewModel.stopEmulation()
                     navController.popBackStack()
+                    // Rescan so the ROM browser picks up the last-played time
+                    // just recorded, and can sort by it.
+                    rescanRoms()
                 },
                 onPause = { viewModel.togglePause() },
                 onFastForward = { viewModel.toggleFastForward() },

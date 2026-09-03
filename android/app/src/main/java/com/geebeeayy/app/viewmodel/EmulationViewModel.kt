@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
@@ -222,6 +223,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 val success = engine.loadRom(data)
                 if (success) {
                     romLoaded = true
+                    LastPlayed(getApplication()).record(filePath)
                     // A fresh ROM means a fresh history; the ring is allocated
                     // here rather than at create() so a cold handle costs
                     // nothing.

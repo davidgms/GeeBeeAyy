@@ -27,6 +27,8 @@ import com.geebeeayy.app.ui.theme.*
 
 /** A sort order for the ROM list, plus the comparator that applies it. */
 enum class RomSortOrder(val label: String) {
+    LAST_PLAYED_DESC("Recently Played"),
+    LAST_PLAYED_ASC("Least Played"),
     NAME_ASC("Name (A-Z)"),
     NAME_DESC("Name (Z-A)"),
     SIZE_DESC("Size (largest)"),
@@ -35,6 +37,12 @@ enum class RomSortOrder(val label: String) {
     DATE_ASC("Oldest");
 
     fun sort(roms: List<RomEntry>): List<RomEntry> = when (this) {
+        // There is no play-count, only a last-played time, so "least played"
+        // reads as "least *recently* played" - never-played ROMs (no
+        // recorded timestamp) count as the least played of all and sort
+        // first.
+        LAST_PLAYED_DESC -> roms.sortedByDescending { it.lastPlayedMillis ?: Long.MIN_VALUE }
+        LAST_PLAYED_ASC -> roms.sortedBy { it.lastPlayedMillis ?: Long.MIN_VALUE }
         NAME_ASC -> roms.sortedBy { it.name.lowercase() }
         NAME_DESC -> roms.sortedByDescending { it.name.lowercase() }
         SIZE_DESC -> roms.sortedByDescending { it.sizeBytes }
@@ -54,7 +62,7 @@ fun RomBrowserScreen(
     onAboutClick: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    var sortOrder by remember { mutableStateOf(RomSortOrder.NAME_ASC) }
+    var sortOrder by remember { mutableStateOf(RomSortOrder.LAST_PLAYED_DESC) }
     var sortMenuOpen by remember { mutableStateOf(false) }
 
     val visibleRoms = remember(roms, query, sortOrder) {
@@ -203,6 +211,9 @@ fun RomBrowserScreen(
     }
 }
 
+private fun formatLastPlayed(millis: Long): String =
+    java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(millis)
+
 @Composable
 fun RomCard(rom: RomEntry, onClick: () -> Unit) {
     Card(
@@ -266,9 +277,9 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (rom.lastPlayed != null) {
+                if (rom.lastPlayedMillis != null) {
                     Text(
-                        text = "Last played: ${rom.lastPlayed}",
+                        text = "Last played: ${formatLastPlayed(rom.lastPlayedMillis)}",
                         fontSize = 11.sp,
                         color = PineGlowMist.copy(alpha = 0.6f),
                     )

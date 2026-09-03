@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -87,6 +89,29 @@ fun EmulationScreen(
                 val (x, y) = settings.getControlOffset(group)
                 put(group, Offset(x, y))
             }
+        }
+    }
+    // Undo/redo history for the current edit session: a stack of full-layout
+    // snapshots taken before each change (a drag gesture or Reset), not one
+    // per pixel of movement - a single drag is one undo step, not hundreds.
+    val undoStack = remember { mutableStateListOf<Map<ControlGroup, Offset>>() }
+    val redoStack = remember { mutableStateListOf<Map<ControlGroup, Offset>>() }
+    val pushUndoSnapshot: () -> Unit = {
+        undoStack.add(offsets.toMap())
+        redoStack.clear()
+    }
+    val undoEdit: () -> Unit = {
+        undoStack.removeLastOrNull()?.let { previous ->
+            redoStack.add(offsets.toMap())
+            offsets.clear()
+            offsets.putAll(previous)
+        }
+    }
+    val redoEdit: () -> Unit = {
+        redoStack.removeLastOrNull()?.let { next ->
+            undoStack.add(offsets.toMap())
+            offsets.clear()
+            offsets.putAll(next)
         }
     }
     var isFastForward by remember { mutableStateOf(false) }
@@ -256,6 +281,7 @@ fun EmulationScreen(
                     onKeyChange = onKeyChange,
                     editingLayout = editingLayout,
                     offsets = offsets,
+                    onDragStart = pushUndoSnapshot,
                 )
                 }
             }
@@ -269,11 +295,18 @@ fun EmulationScreen(
                         settings.setControlOffset(group, o.x, o.y)
                     }
                     editingLayout = false
+                    undoStack.clear()
+                    redoStack.clear()
                 },
                 onReset = {
+                    pushUndoSnapshot()
                     settings.resetControlOffsets()
                     ControlGroup.entries.forEach { offsets[it] = Offset.Zero }
                 },
+                canUndo = undoStack.isNotEmpty(),
+                canRedo = redoStack.isNotEmpty(),
+                onUndo = undoEdit,
+                onRedo = redoEdit,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
@@ -317,7 +350,12 @@ fun EmulationScreen(
                 HorizontalDivider(color = HoneyMid)
                 DropdownMenuItem(
                     text = { Text("Customise Layout") },
-                    onClick = { showMenu = false; editingLayout = true },
+                    onClick = {
+                        showMenu = false
+                        undoStack.clear()
+                        redoStack.clear()
+                        editingLayout = true
+                    },
                     leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
                 )
                 DropdownMenuItem(
@@ -399,27 +437,49 @@ private fun ScreenContainer(
 private fun LayoutEditBar(
     onDone: () -> Unit,
     onReset: () -> Unit,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(BurntRoot.copy(alpha = 0.92f))
             .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            text = "Drag the outlined controls",
-            color = PineGlowMist,
-            fontSize = 14.sp,
-        )
-        Row {
-            TextButton(onClick = onReset) {
-                Text("Reset", color = AmberResin)
-            }
-            TextButton(onClick = onDone) {
-                Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "Drag the outlined controls",
+                color = PineGlowMist,
+                fontSize = 14.sp,
+            )
+            Row {
+                IconButton(onClick = onUndo, enabled = canUndo) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Undo",
+                        tint = if (canUndo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                    )
+                }
+                IconButton(onClick = onRedo, enabled = canRedo) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Redo",
+                        tint = if (canRedo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                    )
+                }
+                TextButton(onClick = onReset) {
+                    Text("Reset", color = AmberResin)
+                }
+                TextButton(onClick = onDone) {
+                    Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
@@ -548,6 +608,7 @@ private fun Modifier.movableGroup(
     group: ControlGroup,
     editing: Boolean,
     offsets: MutableMap<ControlGroup, Offset>,
+    onDragStart: () -> Unit = {},
 ): Modifier {
     val offset = offsets[group] ?: Offset.Zero
     return this
@@ -559,7 +620,9 @@ private fun Modifier.movableGroup(
                 Modifier
                     .border(2.dp, GoldenSaplight, RoundedCornerShape(8.dp))
                     .pointerInput(group) {
-                        detectDragGestures { change, drag ->
+                        detectDragGestures(
+                            onDragStart = { onDragStart() },
+                        ) { change, drag ->
                             change.consume()
                             val current = offsets[group] ?: Offset.Zero
                             offsets[group] = current + drag
@@ -580,11 +643,12 @@ fun GameControls(
     onKeyChange: (Int, Boolean) -> Unit,
     editingLayout: Boolean = false,
     offsets: MutableMap<ControlGroup, Offset> = mutableMapOf(),
+    onDragStart: () -> Unit = {},
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // Shoulder buttons sit above the rest, where the real hardware puts
         // them: L on the far left, R on the far right.
-        Box(modifier = Modifier.movableGroup(ControlGroup.SHOULDERS, editingLayout, offsets)) {
+        Box(modifier = Modifier.movableGroup(ControlGroup.SHOULDERS, editingLayout, offsets, onDragStart)) {
             ShoulderRow(onKeyChange = onKeyChange)
         }
 
@@ -597,17 +661,17 @@ fun GameControls(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(modifier = Modifier.movableGroup(ControlGroup.DPAD, editingLayout, offsets)) {
+            Box(modifier = Modifier.movableGroup(ControlGroup.DPAD, editingLayout, offsets, onDragStart)) {
                 DPad(onKeyChange = onKeyChange)
             }
-            Box(modifier = Modifier.movableGroup(ControlGroup.ACTIONS, editingLayout, offsets)) {
+            Box(modifier = Modifier.movableGroup(ControlGroup.ACTIONS, editingLayout, offsets, onDragStart)) {
                 ActionButtons(onKeyChange = onKeyChange)
             }
         }
 
         // Start and Select. Without these most games cannot get past a title
         // screen, so they are not optional extras.
-        Box(modifier = Modifier.movableGroup(ControlGroup.START_SELECT, editingLayout, offsets)) {
+        Box(modifier = Modifier.movableGroup(ControlGroup.START_SELECT, editingLayout, offsets, onDragStart)) {
             StartSelectRow(onKeyChange = onKeyChange)
         }
     }

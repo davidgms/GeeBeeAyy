@@ -7,6 +7,6 @@ data class RomEntry(
     val sizeBytes: Long = 0,
     val dateModifiedMillis: Long = 0,
     val filePath: String,
-    val lastPlayed: String? = null,
+    val lastPlayedMillis: Long? = null,
     val isFavorite: Boolean = false,
 )
