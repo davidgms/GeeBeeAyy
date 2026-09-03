@@ -78,6 +78,16 @@ fun GeeBeeAyyNavHost() {
 
     Log.i(TAG, "NavHost init: isFirstLaunch=$isFirstLaunch, hasStoragePermission=$hasStoragePermission")
 
+    // Below R the grant comes from the ordinary runtime-permission dialog, not
+    // from the all-files settings screen. Without this launcher the pre-R
+    // branch of `requestStoragePermission` had nothing to call, so the ROM
+    // browser stayed empty forever on API 26-29.
+    val legacyPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasStoragePermission = granted
+    }
+
     val storagePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
@@ -99,7 +109,7 @@ fun GeeBeeAyyNavHost() {
                 storagePermissionLauncher.launch(intent)
             }
         } else {
-            // For older devices, handled via standard permission request
+            legacyPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
     }
 
