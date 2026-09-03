@@ -58,10 +58,17 @@ pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, l
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     let rom = unsafe { std::slice::from_raw_parts(data, len) };
-    eprintln!(
-        "[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}",
-        len, rom[0], rom[1], rom[2], rom[3]
-    );
+    // Indexing rom[0..4] unconditionally panicked on a buffer shorter than
+    // four bytes, and a panic unwinding across `extern "C"` aborts the
+    // process. The Android side happens to reject anything under 0xC0 first;
+    // this is a public C entry point and cannot rely on that.
+    match rom.get(..4) {
+        Some(head) => eprintln!(
+            "[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}",
+            len, head[0], head[1], head[2], head[3]
+        ),
+        None => eprintln!("[GeeBeeAyy] load_rom: {len} bytes, too short to be a ROM"),
+    }
     match handle.inner.load_rom(rom) {
         Ok(()) => {
             eprintln!(
@@ -483,8 +490,11 @@ pub mod android {
         if handle == 0 {
             return -1;
         }
+        // NoCopyBack, like the save and state writes: the core only reads the
+        // ROM, so copying it back to the Java heap on release is up to 32 MB
+        // of pointless work per load.
         let bytes = unsafe {
-            match env.get_array_elements(&data, ReleaseMode::CopyBack) {
+            match env.get_array_elements(&data, ReleaseMode::NoCopyBack) {
                 Ok(b) => b,
                 Err(_) => return -1,
             }

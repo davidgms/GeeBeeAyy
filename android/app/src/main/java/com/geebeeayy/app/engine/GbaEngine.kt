@@ -67,7 +67,7 @@ class GbaEngine {
      */
     fun loadRom(data: ByteArray): Boolean {
         ensureHandle()
-        val result = nativeLoadRom(handle, data, data.size)
+        val result = nativeLoadRom(handle, data)
         return result == 0
     }
 
@@ -221,7 +221,10 @@ class GbaEngine {
     // JNI native methods
     private external fun nativeCreate(): Long
     private external fun nativeDestroy(handle: Long)
-    private external fun nativeLoadRom(handle: Long, data: ByteArray, len: Int): Int
+    // No `len`: the Rust export takes only the handle and the array, and JNI's
+    // short-name resolution happily ignored the extra argument. Declaring a
+    // parameter the native side never sees is a trap for the next reader.
+    private external fun nativeLoadRom(handle: Long, data: ByteArray): Int
     private external fun nativeRunFrame(handle: Long)
     private external fun nativeRunFrames(handle: Long, count: Int)
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)

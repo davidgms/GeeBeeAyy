@@ -58,3 +58,21 @@ fn every_kotlin_external_fun_is_exported() {
         "declared in GbaEngine.kt but not exported with #[no_mangle] from ffi.rs: {missing:?}"
     );
 }
+
+/// `geebeeayy_load_rom`'s debug line used to index the first four bytes before
+/// anything validated the length, so a short buffer panicked - and a panic
+/// unwinding out of an `extern "C"` function aborts the process rather than
+/// returning an error.
+#[test]
+fn load_rom_rejects_a_buffer_too_short_to_index() {
+    unsafe {
+        let handle = geebeeayy_core::ffi::geebeeayy_create();
+        assert!(!handle.is_null());
+        for len in 0..4usize {
+            let data = vec![0u8; len];
+            let rc = geebeeayy_core::ffi::geebeeayy_load_rom(handle, data.as_ptr(), len);
+            assert_eq!(rc, -1, "a {len}-byte ROM should be rejected, not panic");
+        }
+        geebeeayy_core::ffi::geebeeayy_destroy(handle);
+    }
+}
