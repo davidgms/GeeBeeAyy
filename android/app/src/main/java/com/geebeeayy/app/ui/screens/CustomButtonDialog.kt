@@ -181,44 +181,36 @@ private fun CustomButtonEditDialog(
                 Column {
                     Text("Behaviour", color = AmberResin, fontSize = 12.sp)
                     CustomButtonMode.entries.forEach { m ->
+                        // The row and the radio are two separate touch targets
+                        // for the same choice, so they share one handler. They
+                        // did not: the row cleared `keys` unconditionally while
+                        // the radio kept them, so whether editing a button lost
+                        // its keys depended on whether the tap landed on the
+                        // label or on the radio itself.
+                        val selectMode = {
+                            if (mode != m) {
+                                // Only a move across the SEQUENCE boundary
+                                // invalidates the picks: SEQUENCE keeps an
+                                // ordered list that may repeat a key, the
+                                // other two an unordered set.
+                                val crossesSequence =
+                                    (mode == CustomButtonMode.SEQUENCE) !=
+                                        (m == CustomButtonMode.SEQUENCE)
+                                mode = m
+                                if (crossesSequence) {
+                                    keys = emptyList()
+                                }
+                            }
+                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    if (mode != m) {
-                                        mode = m
-                                        // A sequence's repeats and a set's
-                                        // membership do not mean the same
-                                        // thing - switching modes clears the
-                                        // pick rather than carry over a list
-                                        // that would misread as the other.
-                                        keys = emptyList()
-                                    }
-                                },
+                                .clickable(onClick = selectMode),
                         ) {
                             RadioButton(
                                 selected = mode == m,
-                                onClick = {
-                                    if (mode != m) {
-                                        // Only a move across the SEQUENCE
-                                        // boundary invalidates the picks:
-                                        // SEQUENCE keeps an ordered list that
-                                        // may repeat a key, the other two an
-                                        // unordered set. Clearing on every
-                                        // change meant editing a button just
-                                        // to switch COMBO to TOGGLE_HOLD
-                                        // silently dropped its keys and left
-                                        // Save disabled.
-                                        val crossesSequence =
-                                            (mode == CustomButtonMode.SEQUENCE) !=
-                                                (m == CustomButtonMode.SEQUENCE)
-                                        mode = m
-                                        if (crossesSequence) {
-                                            keys = emptyList()
-                                        }
-                                    }
-                                },
+                                onClick = selectMode,
                                 colors = RadioButtonDefaults.colors(
                                     selectedColor = GoldenSaplight,
                                     unselectedColor = AmberResin,
