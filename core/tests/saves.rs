@@ -65,7 +65,10 @@ fn writing_the_save_region_marks_it_dirty() {
     let mut gba = gba_with("SRAM_V100");
     assert!(!gba.take_save_dirty(), "a fresh cart is not dirty");
     gba.bus.write8(SAVE_BASE, 1);
-    assert!(gba.take_save_dirty(), "a save write must set the dirty flag");
+    assert!(
+        gba.take_save_dirty(),
+        "a save write must set the dirty flag"
+    );
     assert!(!gba.take_save_dirty(), "taking the flag must clear it");
 }
 
@@ -166,7 +169,10 @@ fn save_state_round_trip_reproduces_the_machine() {
         gba.run_frame();
     }
 
-    assert_eq!(gba.cycles, cycles_expected, "cycle count diverged after restore");
+    assert_eq!(
+        gba.cycles, cycles_expected,
+        "cycle count diverged after restore"
+    );
     assert!(
         gba.frame_buffer().to_vec() == expected,
         "the frames after a restore differ from the frames before it"
@@ -211,13 +217,21 @@ fn flash_reports_its_chip_id() {
         cmd(&mut gba, 0xAA);
         cmd(&mut gba, 0x55);
         cmd(&mut gba, 0x90);
-        assert_eq!(gba.bus.read8(SAVE_BASE), (id & 0xFF) as u8, "manufacturer byte");
+        assert_eq!(
+            gba.bus.read8(SAVE_BASE),
+            (id & 0xFF) as u8,
+            "manufacturer byte"
+        );
         assert_eq!(gba.bus.read8(SAVE_BASE + 1), (id >> 8) as u8, "device byte");
 
         cmd(&mut gba, 0xAA);
         cmd(&mut gba, 0x55);
         cmd(&mut gba, 0xF0);
-        assert_eq!(gba.bus.read8(SAVE_BASE), 0xFF, "ID mode was never terminated");
+        assert_eq!(
+            gba.bus.read8(SAVE_BASE),
+            0xFF,
+            "ID mode was never terminated"
+        );
     }
 }
 
@@ -346,7 +360,10 @@ fn eeprom_round_trips_a_64_bit_block() {
     for &b in &out[4..] {
         got = (got << 1) | b as u64;
     }
-    assert_eq!(got, payload, "EEPROM did not return the block that was written");
+    assert_eq!(
+        got, payload,
+        "EEPROM did not return the block that was written"
+    );
 }
 
 #[test]
@@ -360,7 +377,10 @@ fn eeprom_writes_mark_the_save_dirty() {
     write.push(false);
     eeprom_send(&mut gba, &write);
 
-    assert!(gba.take_save_dirty(), "an EEPROM write must mark the save dirty");
+    assert!(
+        gba.take_save_dirty(),
+        "an EEPROM write must mark the save dirty"
+    );
 }
 
 #[test]

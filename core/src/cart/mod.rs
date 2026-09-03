@@ -26,11 +26,11 @@ pub struct Cartridge {
     rom: Vec<u8>,
     save_type: SaveType,
     title: String,
-    sram: Vec<u8>,       // SRAM 32KB
-    flash: Vec<u8>,      // Flash 64KB/128KB
-    eeprom: Vec<u8>,     // EEPROM 512B/8KB
-    flash_state: u8,     // Flash command state machine
-    flash_bank: usize,   // Flash bank select (for 128KB)
+    sram: Vec<u8>,     // SRAM 32KB
+    flash: Vec<u8>,    // Flash 64KB/128KB
+    eeprom: Vec<u8>,   // EEPROM 512B/8KB
+    flash_state: u8,   // Flash command state machine
+    flash_bank: usize, // Flash bank select (for 128KB)
     /// Set whenever a byte of save memory actually changes, so a frontend can
     /// flush without diffing the whole buffer every frame.
     save_dirty: bool,
@@ -164,7 +164,11 @@ impl Cartridge {
 
     /// Address width in bits: 6 for a 512-byte EEPROM, 14 for an 8 KB one.
     fn eeprom_address_bits(&self) -> usize {
-        if self.eeprom.len() > 512 { 14 } else { 6 }
+        if self.eeprom.len() > 512 {
+            14
+        } else {
+            6
+        }
     }
 
     /// One serial bit out of the EEPROM, in bit 0 as the hardware presents it.
@@ -176,7 +180,10 @@ impl Cartridge {
     /// One serial bit into the EEPROM, taken from bit 0.
     pub fn eeprom_write(&mut self, value: u16) {
         let bits = self.eeprom_address_bits();
-        if self.eeprom_state.write_bit(&mut self.eeprom, bits, value & 1 == 1) {
+        if self
+            .eeprom_state
+            .write_bit(&mut self.eeprom, bits, value & 1 == 1)
+        {
             self.save_dirty = true;
         }
     }
@@ -192,7 +199,11 @@ impl Cartridge {
         match self.save_type {
             SaveType::Sram => {
                 let addr = (address as usize) & 0x7FFF;
-                if addr < self.sram.len() { self.sram[addr] } else { 0 }
+                if addr < self.sram.len() {
+                    self.sram[addr]
+                } else {
+                    0
+                }
             }
             SaveType::Flash64 | SaveType::Flash128 => {
                 // In ID mode the chip answers with its identity rather than
@@ -214,7 +225,11 @@ impl Cartridge {
                 }
                 let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF))
                     & (self.flash.len() - 1);
-                if addr < self.flash.len() { self.flash[addr] } else { 0xFF }
+                if addr < self.flash.len() {
+                    self.flash[addr]
+                } else {
+                    0xFF
+                }
             }
             SaveType::Eeprom512 | SaveType::Eeprom8k => {
                 let addr = (address as usize) & (self.eeprom.len() - 1);
@@ -248,19 +263,26 @@ impl Cartridge {
                 match self.flash_state {
                     0 => {
                         // Command unlock sequence
-                        if value == 0xAA { self.flash_state = 1; }
+                        if value == 0xAA {
+                            self.flash_state = 1;
+                        }
                     }
                     1 => {
-                        if value == 0x55 { self.flash_state = 2; }
-                        else { self.flash_state = 0; }
+                        if value == 0x55 {
+                            self.flash_state = 2;
+                        } else {
+                            self.flash_state = 0;
+                        }
                     }
                     2 => {
                         match value {
-                            0x90 => { // Enter chip ID mode
+                            0x90 => {
+                                // Enter chip ID mode
                                 self.flash_id_mode = true;
                                 self.flash_state = 0;
                             }
-                            0xF0 => { // Terminate chip ID mode
+                            0xF0 => {
+                                // Terminate chip ID mode
                                 self.flash_id_mode = false;
                                 self.flash_state = 0;
                             }
@@ -270,15 +292,18 @@ impl Cartridge {
                             _ => self.flash_state = 0,
                         }
                     }
-                    4 => { // Byte program
-                        let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF)) & (self.flash.len() - 1);
+                    4 => {
+                        // Byte program
+                        let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF))
+                            & (self.flash.len() - 1);
                         if addr < self.flash.len() {
                             self.flash[addr] = value;
                             self.save_dirty = true;
                         }
                         self.flash_state = 0;
                     }
-                    5 => { // Bank select
+                    5 => {
+                        // Bank select
                         self.flash_bank = (value as usize) & 1;
                         self.flash_state = 0;
                     }
@@ -287,16 +312,23 @@ impl Cartridge {
                     // (sector). Taking the command straight after 0x80 meant the
                     // 0xAA was swallowed here and the erase never ran.
                     6 => {
-                        if value == 0xAA { self.flash_state = 7; } else { self.flash_state = 0; }
+                        if value == 0xAA {
+                            self.flash_state = 7;
+                        } else {
+                            self.flash_state = 0;
+                        }
                     }
                     7 => {
-                        if value == 0x55 { self.flash_state = 8; } else { self.flash_state = 0; }
+                        if value == 0x55 {
+                            self.flash_state = 8;
+                        } else {
+                            self.flash_state = 0;
+                        }
                     }
                     8 => {
                         match value {
                             0x30 => {
-                                let addr = ((self.flash_bank << 16)
-                                    | (address as usize & 0xFFFF))
+                                let addr = ((self.flash_bank << 16) | (address as usize & 0xFFFF))
                                     & (self.flash.len() - 1);
                                 let sector = addr & !0xFFF;
                                 if sector + 0x1000 <= self.flash.len() {

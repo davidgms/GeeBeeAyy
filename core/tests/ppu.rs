@@ -55,14 +55,20 @@ fn rgb(bgr555: u16) -> (u8, u8, u8) {
 
 #[test]
 fn mode0_tiled_background_uses_the_palette_the_rom_wrote() {
-    let Some(counts) = render("stripes") else { return };
+    let Some(counts) = render("stripes") else {
+        return;
+    };
 
     // The ROM writes 0x560B as the backdrop and 0x6290 as colour 1, then fills
     // alternating rows. Both must appear, and nothing else.
     let backdrop = rgb(0x560B);
     let stripe = rgb(0x6290);
 
-    assert_eq!(counts.len(), 2, "expected exactly two colours, got {counts:?}");
+    assert_eq!(
+        counts.len(),
+        2,
+        "expected exactly two colours, got {counts:?}"
+    );
     assert!(counts.contains_key(&backdrop), "backdrop 0x560B is missing");
     assert!(counts.contains_key(&stripe), "colour 1 (0x6290) is missing");
     assert_eq!(
@@ -73,20 +79,28 @@ fn mode0_tiled_background_uses_the_palette_the_rom_wrote() {
 
 #[test]
 fn mode0_renders_a_full_palette_of_shades() {
-    let Some(counts) = render("shades") else { return };
+    let Some(counts) = render("shades") else {
+        return;
+    };
 
     // The ROM steps the blue channel through sixteen values, so every colour on
     // screen must be pure blue and there must be many distinct ones. A single
     // colour here means the backgrounds are not drawing at all.
     assert!(counts.len() >= 15, "expected ~16 shades, got {counts:?}");
     for &(r, g, _b) in counts.keys() {
-        assert_eq!((r, g), (0, 0), "a shade of blue should have no red or green");
+        assert_eq!(
+            (r, g),
+            (0, 0),
+            "a shade of blue should have no red or green"
+        );
     }
 }
 
 #[test]
 fn text_renders_over_the_backdrop() {
-    let Some(counts) = render("hello") else { return };
+    let Some(counts) = render("hello") else {
+        return;
+    };
 
     // "Hello world!" in white on a black backdrop: mostly backdrop, a little
     // text, nothing in between.
@@ -169,7 +183,11 @@ fn alpha_blend_mixes_the_top_layer_with_the_one_under_it() {
     // No effect yet: the pixel is the flat red.
     gba.run_frame();
     let flat = gba.frame_buffer()[0..3].to_vec();
-    assert_eq!(flat, vec![0xF8, 0x00, 0x00], "BG0 should draw its own colour");
+    assert_eq!(
+        flat,
+        vec![0xF8, 0x00, 0x00],
+        "BG0 should draw its own colour"
+    );
 
     // Alpha blend BG0 (1st target) over the backdrop (2nd target), half each.
     gba.bus.write16(0x0400_0050, 0x2041); // effect 1 (bits 6-7), 1st = BG0, 2nd = BD
@@ -566,9 +584,21 @@ fn a_window_hides_the_layers_winout_leaves_out() {
         let i = (y * 240 + x) * 3;
         gba.frame_buffer()[i..i + 3].to_vec()
     };
-    assert_eq!(at(10, 10), vec![0xF8, 0x00, 0x00], "inside the window BG0 shows");
-    assert_eq!(at(100, 10), vec![0x00, 0xF8, 0x00], "right of the window it does not");
-    assert_eq!(at(10, 100), vec![0x00, 0xF8, 0x00], "below the window it does not");
+    assert_eq!(
+        at(10, 10),
+        vec![0xF8, 0x00, 0x00],
+        "inside the window BG0 shows"
+    );
+    assert_eq!(
+        at(100, 10),
+        vec![0x00, 0xF8, 0x00],
+        "right of the window it does not"
+    );
+    assert_eq!(
+        at(10, 100),
+        vec![0x00, 0xF8, 0x00],
+        "below the window it does not"
+    );
 }
 
 /// WIN0 outranks WIN1 where they overlap.
@@ -588,7 +618,11 @@ fn win0_takes_precedence_over_win1() {
         let i = (y * 240 + x) * 3;
         gba.frame_buffer()[i..i + 3].to_vec()
     };
-    assert_eq!(at(10, 10), vec![0x00, 0xF8, 0x00], "WIN0 must win the overlap");
+    assert_eq!(
+        at(10, 10),
+        vec![0x00, 0xF8, 0x00],
+        "WIN0 must win the overlap"
+    );
     assert_eq!(at(100, 100), vec![0xF8, 0x00, 0x00], "WIN1 alone shows BG0");
 }
 

@@ -4,9 +4,9 @@
 //! `MemoryBus::new` installs at 0x18 is exercised directly.
 
 use geebeeayy_core::cpu::{Cpu, Mode};
+use geebeeayy_core::dma::Dma;
 use geebeeayy_core::memory::MemoryBus;
 use geebeeayy_core::timer::Timer;
-use geebeeayy_core::dma::Dma;
 
 const BASE: u32 = 0x0300_0000;
 const KEYINPUT: u32 = 0x0400_0130;
@@ -142,7 +142,10 @@ fn fiq_banks_r8_to_r12_and_irq_does_not() {
     assert_eq!(cpu.registers[12], 0xCCCC_CCCC, "IRQ must not bank R12");
 
     cpu.set_cpsr((cpu.cpsr & !0x1F) | Mode::Fiq as u32);
-    assert_eq!(cpu.registers[8], 0x1111_1111, "FIQ R8 must survive the trip");
+    assert_eq!(
+        cpu.registers[8], 0x1111_1111,
+        "FIQ R8 must survive the trip"
+    );
 }
 
 #[test]
@@ -159,8 +162,15 @@ fn irq_entry_from_thumb_clears_t_and_switches_to_the_irq_stack() {
     assert_eq!(cpu.cpsr & 0x20, 0, "the handler always runs in ARM state");
     assert_eq!(cpu.cpsr & 0x1F, Mode::Irq as u32);
     assert_ne!(cpu.cpsr & 0x80, 0, "I must be set on entry");
-    assert_ne!(cpu.spsr_irq & 0x20, 0, "SPSR_irq keeps the interrupted T bit");
-    assert_eq!(cpu.registers[14], 0x0800_0104, "LR_irq = return address + 4");
+    assert_ne!(
+        cpu.spsr_irq & 0x20,
+        0,
+        "SPSR_irq keeps the interrupted T bit"
+    );
+    assert_eq!(
+        cpu.registers[14], 0x0800_0104,
+        "LR_irq = return address + 4"
+    );
     assert_eq!(cpu.registers[13], 0x0300_7FA0, "the handler runs on sp_irq");
     assert_eq!(cpu.registers[15], 0x0000_0018);
 }
@@ -243,13 +253,25 @@ fn irq_returns_to_the_interrupted_instruction() {
 fn ram_regions_mirror_through_their_blocks() {
     let mut bus = MemoryBus::new();
     bus.write32(0x0200_0000, 0xDEAD_BEEF);
-    assert_eq!(bus.read32(0x0204_0000), 0xDEAD_BEEF, "EWRAM mirrors every 256 KB");
+    assert_eq!(
+        bus.read32(0x0204_0000),
+        0xDEAD_BEEF,
+        "EWRAM mirrors every 256 KB"
+    );
 
     bus.write32(0x0300_0000, 0xCAFE_BABE);
-    assert_eq!(bus.read32(0x0300_8000), 0xCAFE_BABE, "IWRAM mirrors every 32 KB");
+    assert_eq!(
+        bus.read32(0x0300_8000),
+        0xCAFE_BABE,
+        "IWRAM mirrors every 32 KB"
+    );
 
     bus.write16(0x0500_0010, 0x1234);
-    assert_eq!(bus.read16(0x0500_0410), 0x1234, "palette mirrors every 1 KB");
+    assert_eq!(
+        bus.read16(0x0500_0410),
+        0x1234,
+        "palette mirrors every 1 KB"
+    );
 
     bus.write16(0x0700_0010, 0x5678);
     assert_eq!(bus.read16(0x0700_0410), 0x5678, "OAM mirrors every 1 KB");
@@ -271,7 +293,11 @@ fn byte_writes_to_video_memory_follow_the_gba_rules() {
     // OAM ignores byte writes entirely.
     bus.write16(0x0700_0010, 0x0000);
     bus.write8(0x0700_0010, 0xFF);
-    assert_eq!(bus.read16(0x0700_0010), 0x0000, "OAM must ignore byte stores");
+    assert_eq!(
+        bus.read16(0x0700_0010),
+        0x0000,
+        "OAM must ignore byte stores"
+    );
 
     // Palette duplicates the byte across the halfword.
     bus.write8(0x0500_0020, 0xAB);
@@ -279,15 +305,27 @@ fn byte_writes_to_video_memory_follow_the_gba_rules() {
 
     // A halfword store must NOT be treated as two byte stores.
     bus.write16(0x0500_0020, 0x1234);
-    assert_eq!(bus.read16(0x0500_0020), 0x1234, "write16 leaked into the byte path");
+    assert_eq!(
+        bus.read16(0x0500_0020),
+        0x1234,
+        "write16 leaked into the byte path"
+    );
 
     // VRAM: BG half duplicates, OBJ half ignores. Mode 0 puts OBJ at 0x10000.
     bus.write16(0x0400_0000, 0x0000);
     bus.write8(0x0600_0040, 0xCD);
-    assert_eq!(bus.read16(0x0600_0040), 0xCDCD, "BG VRAM duplicates the byte");
+    assert_eq!(
+        bus.read16(0x0600_0040),
+        0xCDCD,
+        "BG VRAM duplicates the byte"
+    );
     bus.write16(0x0601_0040, 0x0000);
     bus.write8(0x0601_0040, 0xEE);
-    assert_eq!(bus.read16(0x0601_0040), 0x0000, "OBJ VRAM must ignore byte stores");
+    assert_eq!(
+        bus.read16(0x0601_0040),
+        0x0000,
+        "OBJ VRAM must ignore byte stores"
+    );
 }
 
 #[test]

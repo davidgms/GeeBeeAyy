@@ -185,39 +185,79 @@ impl Apu {
             sample_accum: 0,
             sample_buffer: Vec::new(),
             ch1: SoundChannel1 {
-                enabled: false, sweep_enabled: false, sweep_shift: 0,
-                sweep_dir: 0, sweep_timer: 0, sweep_tick: 0, duty: 0,
-                volume_init: 0, volume_cur: 0, envelope_dir: 0,
-                envelope_period: 0, envelope_timer: 0,
-                length_counter: 0, length_enabled: false,
-                freq_divider: 0, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
+                enabled: false,
+                sweep_enabled: false,
+                sweep_shift: 0,
+                sweep_dir: 0,
+                sweep_timer: 0,
+                sweep_tick: 0,
+                duty: 0,
+                volume_init: 0,
+                volume_cur: 0,
+                envelope_dir: 0,
+                envelope_period: 0,
+                envelope_timer: 0,
+                length_counter: 0,
+                length_enabled: false,
+                freq_divider: 0,
+                freq_timer: 0,
+                freq_counter: 0,
+                cycle_accum: 0,
                 sample_idx: 0,
             },
             ch2: SoundChannel2 {
-                enabled: false, duty: 0, volume_init: 0, volume_cur: 0,
-                envelope_dir: 0, envelope_period: 0, envelope_timer: 0,
-                length_counter: 0, length_enabled: false,
-                freq_divider: 0, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
+                enabled: false,
+                duty: 0,
+                volume_init: 0,
+                volume_cur: 0,
+                envelope_dir: 0,
+                envelope_period: 0,
+                envelope_timer: 0,
+                length_counter: 0,
+                length_enabled: false,
+                freq_divider: 0,
+                freq_timer: 0,
+                freq_counter: 0,
+                cycle_accum: 0,
                 sample_idx: 0,
             },
             ch3: SoundChannel3 {
-                enabled: false, bank_select: false, volume_code: 0,
-                length_counter: 0, length_enabled: false,
-                freq_divider: 0, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
-                wave_ram: [0; 32], sample_idx: 0,
+                enabled: false,
+                bank_select: false,
+                volume_code: 0,
+                length_counter: 0,
+                length_enabled: false,
+                freq_divider: 0,
+                freq_timer: 0,
+                freq_counter: 0,
+                cycle_accum: 0,
+                wave_ram: [0; 32],
+                sample_idx: 0,
             },
             ch4: SoundChannel4 {
-                enabled: false, volume_init: 0, volume_cur: 0,
-                envelope_dir: 0, envelope_period: 0, envelope_timer: 0,
-                length_counter: 0, length_enabled: false,
-                shift_freq: 0, width_mode: 0, div_ratio: 0,
-                lfsr: 0x7FFF, freq_timer: 0, freq_counter: 0, cycle_accum: 0,
+                enabled: false,
+                volume_init: 0,
+                volume_cur: 0,
+                envelope_dir: 0,
+                envelope_period: 0,
+                envelope_timer: 0,
+                length_counter: 0,
+                length_enabled: false,
+                shift_freq: 0,
+                width_mode: 0,
+                div_ratio: 0,
+                lfsr: 0x7FFF,
+                freq_timer: 0,
+                freq_counter: 0,
+                cycle_accum: 0,
             },
             fifo_a: FifoChannel::new(),
             fifo_b: FifoChannel::new(),
             sound_on: false,
-            sound1_vol: 0, sound2_vol: 0,
-            master_vol_left: 0, master_vol_right: 0,
+            sound1_vol: 0,
+            sound2_vol: 0,
+            master_vol_left: 0,
+            master_vol_right: 0,
             sound_out_mix: 0,
             envelope_tick_counter: 0,
             fifo_timer: 0,
@@ -509,10 +549,34 @@ impl Apu {
     fn duty_wave(duty: u8, idx: u32) -> f32 {
         let phase = idx % 8;
         match duty {
-            0 => if phase < 1 { 1.0 } else { -1.0 },  // 12.5%
-            1 => if phase < 2 { 1.0 } else { -1.0 },  // 25%
-            2 => if phase < 4 { 1.0 } else { -1.0 },  // 50%
-            3 => if phase < 6 { 1.0 } else { -1.0 },  // 75%
+            0 => {
+                if phase < 1 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            } // 12.5%
+            1 => {
+                if phase < 2 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            } // 25%
+            2 => {
+                if phase < 4 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            } // 50%
+            3 => {
+                if phase < 6 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            } // 75%
             _ => 0.0,
         }
     }
@@ -563,7 +627,11 @@ impl Apu {
             if self.ch3.enabled {
                 let wave_idx = (self.ch3.sample_idx % 32) as usize;
                 let wave_byte = self.ch3.wave_ram[wave_idx / 2];
-                let nibble = if wave_idx % 2 == 0 { wave_byte >> 4 } else { wave_byte & 0x0F };
+                let nibble = if wave_idx % 2 == 0 {
+                    wave_byte >> 4
+                } else {
+                    wave_byte & 0x0F
+                };
                 let vol_shift = match self.ch3.volume_code {
                     0 => 4,
                     1 => 3,
@@ -867,7 +935,9 @@ impl FifoChannel {
     }
 
     fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
-        for (i, &b) in take(cur, 32)?.iter().enumerate() { self.buffer[i] = b as i8; }
+        for (i, &b) in take(cur, 32)?.iter().enumerate() {
+            self.buffer[i] = b as i8;
+        }
         self.read_pos = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
         self.write_pos = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
         self.count = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;

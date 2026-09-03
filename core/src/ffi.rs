@@ -1,4 +1,4 @@
-use crate::{Gba, savestate::SaveState};
+use crate::{savestate::SaveState, Gba};
 use std::ffi::c_void;
 
 // ─── C FFI (used by iOS via bridging header, and by Android via JNI) ────────
@@ -39,7 +39,9 @@ pub extern "C" fn geebeeayy_create() -> *mut c_void {
 #[no_mangle]
 pub unsafe extern "C" fn geebeeayy_destroy(ptr: *mut c_void) {
     if !ptr.is_null() {
-        unsafe { drop(Box::from_raw(ptr as *mut GbaHandle)); }
+        unsafe {
+            drop(Box::from_raw(ptr as *mut GbaHandle));
+        }
     }
 }
 
@@ -50,20 +52,22 @@ pub unsafe extern "C" fn geebeeayy_destroy(ptr: *mut c_void) {
 /// # Safety
 /// `ptr` must be a valid handle. `data` must point to `len` readable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn geebeeayy_load_rom(
-    ptr: *mut c_void,
-    data: *const u8,
-    len: usize,
-) -> i32 {
+pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, len: usize) -> i32 {
     if ptr.is_null() || data.is_null() {
         return -1;
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     let rom = unsafe { std::slice::from_raw_parts(data, len) };
-    eprintln!("[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}", len, rom[0], rom[1], rom[2], rom[3]);
+    eprintln!(
+        "[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}",
+        len, rom[0], rom[1], rom[2], rom[3]
+    );
     match handle.inner.load_rom(rom) {
         Ok(()) => {
-            eprintln!("[GeeBeeAyy] load_rom: OK, CPU PC={:08X} CPSR={:08X}", handle.inner.cpu.registers[15], handle.inner.cpu.cpsr);
+            eprintln!(
+                "[GeeBeeAyy] load_rom: OK, CPU PC={:08X} CPSR={:08X}",
+                handle.inner.cpu.registers[15], handle.inner.cpu.cpsr
+            );
             0
         }
         Err(e) => {
@@ -105,7 +109,9 @@ pub unsafe extern "C" fn geebeeayy_run_frame(ptr: *mut c_void) {
         let fb = handle.inner.frame_buffer();
         let mut non_zero = 0u32;
         for chunk in fb.chunks(3) {
-            if chunk[0] != 0 || chunk[1] != 0 || chunk[2] != 0 { non_zero += 1; }
+            if chunk[0] != 0 || chunk[1] != 0 || chunk[2] != 0 {
+                non_zero += 1;
+            }
         }
         eprintln!(
             "[GeeBeeAyy] frame={} AFTER: PC={:08X} CPSR={:08X} halted={} IME={} IE={:04X} IF={:04X} non_zero_px={}",
@@ -428,7 +434,9 @@ pub unsafe extern "C" fn geebeeayy_state_write(
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    let state = crate::savestate::SaveState { data: bytes.to_vec() };
+    let state = crate::savestate::SaveState {
+        data: bytes.to_vec(),
+    };
     match handle.inner.load_state(&state) {
         Ok(()) => 0,
         Err(_) => -1,
@@ -438,9 +446,9 @@ pub unsafe extern "C" fn geebeeayy_state_write(
 #[cfg(target_os = "android")]
 pub mod android {
     use super::*;
-    use jni::JNIEnv;
-    use jni::objects::{JClass, JByteArray, JFloatArray, ReleaseMode};
+    use jni::objects::{JByteArray, JClass, JFloatArray, ReleaseMode};
     use jni::sys::{jint, jlong};
+    use jni::JNIEnv;
 
     #[no_mangle]
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeCreate(
@@ -458,7 +466,9 @@ pub mod android {
         handle: jlong,
     ) {
         if handle != 0 {
-            unsafe { geebeeayy_destroy(handle as *mut c_void); }
+            unsafe {
+                geebeeayy_destroy(handle as *mut c_void);
+            }
         }
     }
 
@@ -490,7 +500,9 @@ pub mod android {
         handle: jlong,
     ) {
         if handle != 0 {
-            unsafe { geebeeayy_run_frame(handle as *mut c_void); }
+            unsafe {
+                geebeeayy_run_frame(handle as *mut c_void);
+            }
         }
     }
 
@@ -502,7 +514,9 @@ pub mod android {
         count: jint,
     ) {
         if handle != 0 {
-            unsafe { geebeeayy_run_frames(handle as *mut c_void, count as u32); }
+            unsafe {
+                geebeeayy_run_frames(handle as *mut c_void, count as u32);
+            }
         }
     }
 
@@ -517,7 +531,9 @@ pub mod android {
             return;
         }
         let mut buf = vec![0u8; 240 * 160 * 3];
-        unsafe { geebeeayy_frame_buffer_copy(handle as *mut c_void, buf.as_mut_ptr()); }
+        unsafe {
+            geebeeayy_frame_buffer_copy(handle as *mut c_void, buf.as_mut_ptr());
+        }
         let signed: Vec<i8> = buf.iter().map(|&b| b as i8).collect();
         let _ = env.set_byte_array_region(&out, 0, &signed);
     }
@@ -637,7 +653,6 @@ pub mod android {
         }
     }
 
-    #[no_mangle]
     /// Rewind: configure the ring's depth, take a snapshot, step back one.
     #[no_mangle]
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindConfigure(
@@ -688,6 +703,7 @@ pub mod android {
         unsafe { geebeeayy_rewind_clear(handle as *mut c_void) };
     }
 
+    #[no_mangle]
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeStateWrite(
         mut env: JNIEnv,
         _class: JClass,

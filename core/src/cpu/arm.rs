@@ -6,7 +6,6 @@ use crate::memory::MemoryBus;
 /// The condition check is already done by the caller (mod.rs).
 /// This function dispatches based on bits [27:4] and [7:4].
 pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
-
     // Software Interrupt.
     //
     // GBATEK, ARM CPU Exceptions: an ARM SWI carries a 24bit comment field
@@ -40,9 +39,9 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu),
             0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu),
             // SWP is 00010 B 00, so bits[27:20] are 0x10 for the word form and
-                // 0x14 for the byte form. The old range stopped at 0x13, so
-                // every SWPB fell through and was decoded as an MSR.
-                0b0001_0000 | 0b0001_0100 => return swap(instruction, cpu, bus),
+            // 0x14 for the byte form. The old range stopped at 0x13, so
+            // every SWPB fell through and was decoded as an MSR.
+            0b0001_0000 | 0b0001_0100 => return swap(instruction, cpu, bus),
             _ => {}
         }
     }
@@ -96,7 +95,10 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     }
 
     // Undefined instruction — bits [27:25]=01, bit [4]=1, bit [7]=1
-    if (instruction >> 25) & 0x7 == 0b011 && (instruction >> 4) & 1 == 1 && (instruction >> 7) & 1 == 1 {
+    if (instruction >> 25) & 0x7 == 0b011
+        && (instruction >> 4) & 1 == 1
+        && (instruction >> 7) & 1 == 1
+    {
         // Undefined instruction - treat as NOP for now
         return 1;
     }
@@ -418,25 +420,35 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
     // Determine which flags to write (bits 8-24 of MSR mask)
     let mask = {
         let mut m: u32 = 0;
-        if instruction & 0x0001_0000 != 0 { m |= 0x0000_00FF; } // Control
-        if instruction & 0x0002_0000 != 0 { m |= 0x0000_FF00; } // Extension
-        if instruction & 0x0004_0000 != 0 { m |= 0x00FF_0000; } // Status
-        if instruction & 0x0008_0000 != 0 { m |= 0xFF00_0000; } // Flags
+        if instruction & 0x0001_0000 != 0 {
+            m |= 0x0000_00FF;
+        } // Control
+        if instruction & 0x0002_0000 != 0 {
+            m |= 0x0000_FF00;
+        } // Extension
+        if instruction & 0x0004_0000 != 0 {
+            m |= 0x00FF_0000;
+        } // Status
+        if instruction & 0x0008_0000 != 0 {
+            m |= 0xFF00_0000;
+        } // Flags
         m
     };
 
-    let new_psr = (value & mask) | (!mask & if spsr {
-        match cpu.mode() {
-            super::Mode::Fiq => cpu.spsr_fiq,
-            super::Mode::Irq => cpu.spsr_irq,
-            super::Mode::Supervisor => cpu.spsr_svc,
-            super::Mode::Abort => cpu.spsr_abt,
-            super::Mode::Undefined => cpu.spsr_und,
-            _ => cpu.cpsr,
-        }
-    } else {
-        cpu.cpsr
-    });
+    let new_psr = (value & mask)
+        | (!mask
+            & if spsr {
+                match cpu.mode() {
+                    super::Mode::Fiq => cpu.spsr_fiq,
+                    super::Mode::Irq => cpu.spsr_irq,
+                    super::Mode::Supervisor => cpu.spsr_svc,
+                    super::Mode::Abort => cpu.spsr_abt,
+                    super::Mode::Undefined => cpu.spsr_und,
+                    _ => cpu.cpsr,
+                }
+            } else {
+                cpu.cpsr
+            });
 
     if spsr {
         match cpu.mode() {
@@ -480,8 +492,14 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         let rm_val = cpu.reg((instruction & 0xF) as usize);
         match (instruction >> 5) & 3 {
             0b00 => cpu.lsl(rm_val, shift_imm).value,
-            0b01 => cpu.lsr(rm_val, if shift_imm == 0 { 32 } else { shift_imm }).value,
-            0b10 => cpu.asr(rm_val, if shift_imm == 0 { 32 } else { shift_imm }).value,
+            0b01 => {
+                cpu.lsr(rm_val, if shift_imm == 0 { 32 } else { shift_imm })
+                    .value
+            }
+            0b10 => {
+                cpu.asr(rm_val, if shift_imm == 0 { 32 } else { shift_imm })
+                    .value
+            }
             0b11 => {
                 if shift_imm == 0 {
                     cpu.rrx(rm_val).value
@@ -535,7 +553,11 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         cpu.set_reg(rn, offset_addr);
     }
 
-    if load { 3 } else { 2 }
+    if load {
+        3
+    } else {
+        2
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -593,7 +615,11 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
         cpu.set_reg(rn, offset_addr);
     }
 
-    if load { 3 } else { 2 }
+    if load {
+        3
+    } else {
+        2
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -614,7 +640,11 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     // An empty register list is not a no-op on ARMv4: R15 is transferred and
     // the base moves by 0x40, as if all sixteen registers had been listed.
     let empty_list = reg_list == 0;
-    let reg_count = if empty_list { 16 } else { reg_list.count_ones() };
+    let reg_count = if empty_list {
+        16
+    } else {
+        reg_list.count_ones()
+    };
 
     // Registers always move in increasing address order, lowest register at the
     // lowest address; P and U only choose where the block starts.
@@ -714,7 +744,11 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         cpu.set_reg(rn, new_base);
     }
 
-    if load { 2 + reg_count } else { 1 + reg_count }
+    if load {
+        2 + reg_count
+    } else {
+        1 + reg_count
+    }
 }
 
 // ---------------------------------------------------------------------------

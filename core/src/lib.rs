@@ -1,23 +1,23 @@
-pub mod cpu;
-pub mod ppu;
 pub mod apu;
-pub mod memory;
-pub mod timer;
+pub mod bios;
 pub mod cart;
-pub mod io;
+pub mod cpu;
 pub mod dma;
+pub mod ffi;
+pub mod io;
+pub mod memory;
+pub mod ppu;
 pub mod rewind;
 pub mod savestate;
-pub mod bios;
-pub mod ffi;
+pub mod timer;
 
-use cpu::Cpu;
-use ppu::Ppu;
 use apu::Apu;
-use memory::MemoryBus;
-use timer::Timer;
 use cart::Cartridge;
+use cpu::Cpu;
 use dma::Dma;
+use memory::MemoryBus;
+use ppu::Ppu;
+use timer::Timer;
 
 const CYCLES_PER_FRAME: u64 = 280896;
 
@@ -312,7 +312,10 @@ impl Gba {
         savestate::SaveState::create(self)
     }
 
-    pub fn load_state(&mut self, state: &savestate::SaveState) -> Result<(), savestate::SaveStateError> {
+    pub fn load_state(
+        &mut self,
+        state: &savestate::SaveState,
+    ) -> Result<(), savestate::SaveStateError> {
         state.restore(self)
     }
 

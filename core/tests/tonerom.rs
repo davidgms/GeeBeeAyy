@@ -5,7 +5,9 @@ use geebeeayy_core::Gba;
 #[test]
 fn the_tone_rom_produces_audio() {
     let path = format!("{}/../temp/roms/tone.gba", env!("CARGO_MANIFEST_DIR"));
-    let Ok(rom) = std::fs::read(&path) else { return };
+    let Ok(rom) = std::fs::read(&path) else {
+        return;
+    };
     let mut gba = Gba::new();
     gba.load_rom(&rom).unwrap();
     gba.run_frame();
@@ -29,7 +31,9 @@ fn the_tone_rom_produces_audio() {
 #[test]
 fn a_psg_square_plays_the_frequency_the_rom_asked_for() {
     let path = format!("{}/../temp/roms/tone.gba", env!("CARGO_MANIFEST_DIR"));
-    let Ok(rom) = std::fs::read(&path) else { return };
+    let Ok(rom) = std::fs::read(&path) else {
+        return;
+    };
     let mut gba = Gba::new();
     gba.load_rom(&rom).unwrap();
 

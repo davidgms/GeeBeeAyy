@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
@@ -166,6 +167,12 @@ fun EmulationScreen(
             }
 
             if (stateMessage != null) {
+                // The banner sits above the screen and shrinks it, so it
+                // cannot be left standing until someone taps the X.
+                LaunchedEffect(stateMessage) {
+                    delay(3000)
+                    onDismissStateMessage()
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

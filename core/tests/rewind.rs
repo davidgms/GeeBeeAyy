@@ -69,7 +69,10 @@ fn popping_walks_backwards_and_then_runs_out() {
         assert!(rewind.pop(&mut gba).unwrap());
         assert_eq!(gba.cpu.registers[0], *expected);
     }
-    assert!(!rewind.pop(&mut gba).unwrap(), "an empty ring reports false");
+    assert!(
+        !rewind.pop(&mut gba).unwrap(),
+        "an empty ring reports false"
+    );
     assert!(rewind.is_empty());
 }
 
@@ -85,12 +88,15 @@ fn memory_cost_is_reported_so_a_caller_can_size_itself() {
     assert!(one > 0);
 
     rewind.push(&gba);
-    assert_eq!(rewind.memory_bytes(), one * 2, "cost should scale with depth");
+    assert_eq!(
+        rewind.memory_bytes(),
+        one * 2,
+        "cost should scale with depth"
+    );
 
     rewind.clear();
     assert_eq!(rewind.memory_bytes(), 0);
 }
-
 
 /// The FFI's rewind ring: a frontend configures a depth, pushes snapshots on
 /// its own cadence and pops to walk backwards. The core had the ring since

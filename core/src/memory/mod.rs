@@ -103,7 +103,6 @@ impl MemoryBus {
         // never ran at all.
         let bios_irq_handler: [u32; 4] = [
             0xE92D500F, // stmdb sp!, {r0-r3, r12, lr}
-
             0xE3A0C301, // mov r12, #0x04000000
             0xE51C0004, // ldr r0, [r12, #-4]        ; r0 = [0x03FFFFFC]
             0xE12FFF30, // blx r0                    ; call game handler
@@ -154,7 +153,11 @@ impl MemoryBus {
                 } else if offset == super::io::IO_IME + 1 {
                     (self.io.ime >> 8) as u8
                 } else if offset == 0x301 {
-                    if self.io.halt { 0x80 } else { 0 }
+                    if self.io.halt {
+                        0x80
+                    } else {
+                        0
+                    }
                 } else {
                     self.io_regs[offset]
                 }
@@ -167,7 +170,11 @@ impl MemoryBus {
             // access timing.
             0x0800_0000..=0x0DFF_FFFF => {
                 let addr = (address & 0x01FF_FFFF) as usize;
-                if addr < self.rom.len() { self.rom[addr] } else { 0 }
+                if addr < self.rom.len() {
+                    self.rom[addr]
+                } else {
+                    0
+                }
             }
             // Cartridge backup. GBATEK, GBA Cart Backup SRAM/FRAM: mapped at
             // 0x0E000000, "the databus is restricted to 8 bits, it should be
@@ -257,7 +264,11 @@ impl MemoryBus {
             }
             0x0600_0000..=0x06FF_FFFF => {
                 let offset = Self::vram_offset(address);
-                let obj_base = if self.io_regs[0] & 7 >= 3 { 0x14000 } else { 0x10000 };
+                let obj_base = if self.io_regs[0] & 7 >= 3 {
+                    0x14000
+                } else {
+                    0x10000
+                };
                 if offset < obj_base {
                     let offset = offset & !1;
                     self.vram[offset] = value;
@@ -325,7 +336,8 @@ impl MemoryBus {
                         let timer = (offset - 0x100) / 4;
                         let is_control = offset % 4 == 3;
                         let base = offset & !1;
-                        let word = self.io_regs[base] as u16 | ((self.io_regs[base + 1] as u16) << 8);
+                        let word =
+                            self.io_regs[base] as u16 | ((self.io_regs[base + 1] as u16) << 8);
                         self.timer_writes.push((timer, is_control, word));
                     }
                     _ => {}
@@ -381,23 +393,47 @@ impl MemoryBus {
     pub fn read_cycles(&self, address: u32, is_32bit: bool) -> u32 {
         match address {
             0x0000_0000..=0x0000_3FFF => 1,
-            0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },
-            0x0300_0000..=0x0300_7FFF => if is_32bit { 2 } else { 1 },
+            0x0200_0000..=0x0203_FFFF => {
+                if is_32bit {
+                    6
+                } else {
+                    3
+                }
+            }
+            0x0300_0000..=0x0300_7FFF => {
+                if is_32bit {
+                    2
+                } else {
+                    1
+                }
+            }
             0x0400_0000..=0x0400_03FE => 1,
             0x0500_0000..=0x0500_03FF => 1,
             0x0600_0000..=0x0601_7FFF => 1,
             0x0700_0000..=0x0700_03FF => 1,
             0x0800_0000..=0x09FF_FFFF => {
                 let ws = (self.waitcnt >> 2) & 3;
-                if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
+                if is_32bit {
+                    ws as u32 * 2 + 6
+                } else {
+                    ws as u32 + 3
+                }
             }
             0x0A00_0000..=0x0BFF_FFFF => {
                 let ws = (self.waitcnt >> 5) & 3;
-                if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
+                if is_32bit {
+                    ws as u32 * 2 + 6
+                } else {
+                    ws as u32 + 3
+                }
             }
             0x0C00_0000..=0x0DFF_FFFF => {
                 let ws = (self.waitcnt >> 8) & 3;
-                if is_32bit { ws as u32 * 2 + 6 } else { ws as u32 + 3 }
+                if is_32bit {
+                    ws as u32 * 2 + 6
+                } else {
+                    ws as u32 + 3
+                }
             }
             _ => 1,
         }
@@ -405,7 +441,13 @@ impl MemoryBus {
 
     pub fn write_cycles(&self, address: u32, is_32bit: bool) -> u32 {
         match address {
-            0x0200_0000..=0x0203_FFFF => if is_32bit { 6 } else { 3 },
+            0x0200_0000..=0x0203_FFFF => {
+                if is_32bit {
+                    6
+                } else {
+                    3
+                }
+            }
             0x0300_0000..=0x0300_7FFF => 1,
             0x0400_0000..=0x0400_03FE => 1,
             0x0500_0000..=0x0500_03FF => 1,
@@ -429,22 +471,48 @@ impl MemoryBus {
 
     /// Advance the gamepak prefetch buffer by one cycle.
     pub fn prefetch_tick(&mut self) {
-        if !self.prefetch_enabled { return; }
+        if !self.prefetch_enabled {
+            return;
+        }
         if self.prefetch_cyc > 0 {
             self.prefetch_cyc -= 1;
         }
     }
 
-    pub fn io_regs_data(&self) -> &[u8] { &self.io_regs }
-    pub fn io_regs_data_mut(&mut self) -> &mut [u8] { &mut self.io_regs }
-    pub fn ewram_data(&self) -> &[u8] { &self.ewram }
-    pub fn ewram_data_mut(&mut self) -> &mut [u8] { &mut self.ewram }
-    pub fn iwram_data(&self) -> &[u8] { &self.iwram }
-    pub fn iwram_data_mut(&mut self) -> &mut [u8] { &mut self.iwram }
-    pub fn palette_data(&self) -> &[u8] { &self.palette }
-    pub fn palette_data_mut(&mut self) -> &mut [u8] { &mut self.palette }
-    pub fn vram_data(&self) -> &[u8] { &self.vram }
-    pub fn vram_data_mut(&mut self) -> &mut [u8] { &mut self.vram }
-    pub fn oam_data(&self) -> &[u8] { &self.oam }
-    pub fn oam_data_mut(&mut self) -> &mut [u8] { &mut self.oam }
+    pub fn io_regs_data(&self) -> &[u8] {
+        &self.io_regs
+    }
+    pub fn io_regs_data_mut(&mut self) -> &mut [u8] {
+        &mut self.io_regs
+    }
+    pub fn ewram_data(&self) -> &[u8] {
+        &self.ewram
+    }
+    pub fn ewram_data_mut(&mut self) -> &mut [u8] {
+        &mut self.ewram
+    }
+    pub fn iwram_data(&self) -> &[u8] {
+        &self.iwram
+    }
+    pub fn iwram_data_mut(&mut self) -> &mut [u8] {
+        &mut self.iwram
+    }
+    pub fn palette_data(&self) -> &[u8] {
+        &self.palette
+    }
+    pub fn palette_data_mut(&mut self) -> &mut [u8] {
+        &mut self.palette
+    }
+    pub fn vram_data(&self) -> &[u8] {
+        &self.vram
+    }
+    pub fn vram_data_mut(&mut self) -> &mut [u8] {
+        &mut self.vram
+    }
+    pub fn oam_data(&self) -> &[u8] {
+        &self.oam
+    }
+    pub fn oam_data_mut(&mut self) -> &mut [u8] {
+        &mut self.oam
+    }
 }

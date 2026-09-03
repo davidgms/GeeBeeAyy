@@ -30,36 +30,76 @@ impl Dma {
         Self {
             channels: [
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
             ],
             hblank_fired: false,
@@ -116,8 +156,15 @@ impl Dma {
         ch.dst_reload = ch.dst_adj == 3;
     }
 
-    pub fn write_control(&mut self, channel: usize, value: u16, bus: &mut super::memory::MemoryBus) {
-        if channel >= 4 { return; }
+    pub fn write_control(
+        &mut self,
+        channel: usize,
+        value: u16,
+        bus: &mut super::memory::MemoryBus,
+    ) {
+        if channel >= 4 {
+            return;
+        }
         let was_enabled = self.channels[channel].enabled;
         self.decode_control(channel, value);
 
@@ -135,17 +182,25 @@ impl Dma {
     /// Rebuild a channel from a save state: decode the control word but never
     /// start a transfer.
     pub fn restore_control(&mut self, channel: usize, value: u16, enabled: bool) {
-        if channel >= 4 { return; }
+        if channel >= 4 {
+            return;
+        }
         self.decode_control(channel, value);
         self.channels[channel].enabled = enabled;
     }
 
     pub fn do_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) {
-        if channel >= 4 { return; }
+        if channel >= 4 {
+            return;
+        }
         let ch = &mut self.channels[channel];
         // A count of 0 in the register means the maximum length.
         let count = if ch.count == 0 {
-            if channel == 3 { 0x1_0000 } else { 0x4000 }
+            if channel == 3 {
+                0x1_0000
+            } else {
+                0x4000
+            }
         } else {
             ch.count as u32
         };
@@ -249,18 +304,27 @@ impl Dma {
     /// Check if a DMA channel is set up for sound FIFO refill.
     /// Returns (channel_index, source_address) if it's a sound DMA.
     pub fn is_sound_dma(&self, channel: usize) -> bool {
-        if channel >= 4 { return false; }
+        if channel >= 4 {
+            return false;
+        }
         let ch = &self.channels[channel];
         // Sound DMA: timing=3 (special), dest fixed to 0x040000A0/0x040000A4
-        ch.timing == 3 && ch.enabled
-            && (ch.dest == 0x0400_00A0 || ch.dest == 0x0400_00A4)
+        ch.timing == 3 && ch.enabled && (ch.dest == 0x0400_00A0 || ch.dest == 0x0400_00A4)
     }
 
     /// Perform a sound DMA transfer (4 words = 16 bytes to FIFO).
-    pub fn do_sound_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) -> Option<(u32, Vec<u8>)> {
-        if channel >= 4 { return None; }
+    pub fn do_sound_transfer(
+        &mut self,
+        channel: usize,
+        bus: &mut super::memory::MemoryBus,
+    ) -> Option<(u32, Vec<u8>)> {
+        if channel >= 4 {
+            return None;
+        }
         let ch = &mut self.channels[channel];
-        if !ch.enabled || ch.timing != 3 { return None; }
+        if !ch.enabled || ch.timing != 3 {
+            return None;
+        }
 
         let mut data = Vec::with_capacity(16);
         for _ in 0..4 {

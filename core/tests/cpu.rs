@@ -71,7 +71,10 @@ fn arm_branch_and_link() {
     // B offset is relative to PC (instr + 8), so offset 0 lands on instr+8.
     let (mut cpu, mut bus) = setup_arm(&[0xEA00_0000, 0xE3A0_00FF, 0xE3A0_0007]);
     steps(&mut cpu, &mut bus, 2);
-    assert_eq!(cpu.registers[0], 7, "branch did not land on instruction at +8");
+    assert_eq!(
+        cpu.registers[0], 7,
+        "branch did not land on instruction at +8"
+    );
 }
 
 #[test]
@@ -98,8 +101,7 @@ fn arm_subs_borrow_clears_carry() {
 #[test]
 fn arm_condition_codes_gate_execution() {
     // mov r0, #0 ; cmp r0, #0 ; movne r1, #1 ; moveq r2, #1
-    let (mut cpu, mut bus) =
-        setup_arm(&[0xE3A0_0000, 0xE350_0000, 0x13A0_1001, 0x03A0_2001]);
+    let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0000, 0xE350_0000, 0x13A0_1001, 0x03A0_2001]);
     steps(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.registers[1], 0, "NE must not execute when Z is set");
     assert_eq!(cpu.registers[2], 1, "EQ must execute when Z is set");
@@ -126,15 +128,17 @@ fn arm_stm_ldm_round_trip() {
 #[test]
 fn arm_ldr_str_word() {
     // mov r0, #0x02000000 ; mov r1, #0xAB ; str r1, [r0] ; ldr r2, [r0]
-    let (mut cpu, mut bus) = setup_arm(&[
-        0xE3A0_0402, 0xE3A0_10AB, 0xE580_1000, 0xE590_2000,
-    ]);
+    let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0402, 0xE3A0_10AB, 0xE580_1000, 0xE590_2000]);
     steps(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.registers[2], 0xAB);
     // Assert the address too. A store and a load that agree on the *wrong*
     // address still round-trip, which is how an inverted offset-mode flag
     // survived here undetected.
-    assert_eq!(bus.read32(0x0200_0000), 0xAB, "the store went somewhere else");
+    assert_eq!(
+        bus.read32(0x0200_0000),
+        0xAB,
+        "the store went somewhere else"
+    );
 }
 
 #[test]
@@ -169,7 +173,11 @@ fn arm_ldr_register_offset_still_works() {
         0xE780_1103, // str r1, [r0, r3, lsl #2]
     ]);
     steps(&mut cpu, &mut bus, 4);
-    assert_eq!(bus.read32(0x0200_0008), 0x77, "register offset or its shift is wrong");
+    assert_eq!(
+        bus.read32(0x0200_0008),
+        0x77,
+        "register offset or its shift is wrong"
+    );
 }
 
 #[test]
@@ -177,7 +185,11 @@ fn thumb_bl_returns_to_next_instruction() {
     // bl +4 ; mov r0, #1 ; (target) mov r1, #1 ; bx lr
     let (mut cpu, mut bus) = setup_thumb(&[0xF000, 0xF802, 0x2001, 0x2101, 0x4770]);
     steps(&mut cpu, &mut bus, 2); // BL is two halfwords, one logical call
-    assert_eq!(cpu.registers[14] & !1, BASE + 4, "LR must point past the BL pair");
+    assert_eq!(
+        cpu.registers[14] & !1,
+        BASE + 4,
+        "LR must point past the BL pair"
+    );
 }
 
 #[test]
@@ -217,7 +229,11 @@ fn irq_entry_switches_to_arm_state() {
     cpu.registers[15] = 0x0800_1234;
     cpu.handle_irq();
     assert_eq!(cpu.registers[15], 0x0000_0018, "IRQ vector");
-    assert_eq!(cpu.cpsr & 0x20, 0, "the IRQ vector is ARM code, T must be cleared");
+    assert_eq!(
+        cpu.cpsr & 0x20,
+        0,
+        "the IRQ vector is ARM code, T must be cleared"
+    );
     assert_ne!(cpu.cpsr & 0x80, 0, "IRQs must be masked on entry");
 }
 
@@ -237,7 +253,11 @@ fn thumb_bx_switches_to_arm() {
     let (mut cpu, mut bus) = setup_thumb(&[0x2140, 0x4708]);
     steps(&mut cpu, &mut bus, 2);
     assert_eq!(cpu.registers[15], 0x40);
-    assert_eq!(cpu.cpsr & 0x20, 0, "BX to an even address must clear the T bit");
+    assert_eq!(
+        cpu.cpsr & 0x20,
+        0,
+        "BX to an even address must clear the T bit"
+    );
 }
 
 #[test]
@@ -286,19 +306,25 @@ fn thumb_halfword_immediate_is_not_sp_relative() {
     steps(&mut cpu, &mut bus, 7);
     assert_eq!(cpu.registers[2], 0xFF, "halfword immediate load");
     assert_eq!(cpu.registers[3], 0xFF, "SP-relative load");
-    assert_eq!(bus.read32(cpu.registers[13]), 0xFF, "SP-relative store hit the stack");
+    assert_eq!(
+        bus.read32(cpu.registers[13]),
+        0xFF,
+        "SP-relative store hit the stack"
+    );
 }
 
 #[test]
 fn thumb_push_pop() {
     // mov r0, #0x11 ; mov r1, #0x22 ; push {r0,r1} ; mov r0,#0 ; mov r1,#0 ; pop {r0,r1}
-    let (mut cpu, mut bus) =
-        setup_thumb(&[0x2011, 0x2122, 0xB403, 0x2000, 0x2100, 0xBC03]);
+    let (mut cpu, mut bus) = setup_thumb(&[0x2011, 0x2122, 0xB403, 0x2000, 0x2100, 0xBC03]);
     let sp_before = cpu.registers[13];
     steps(&mut cpu, &mut bus, 6);
     assert_eq!(cpu.registers[0], 0x11);
     assert_eq!(cpu.registers[1], 0x22);
-    assert_eq!(cpu.registers[13], sp_before, "PUSH/POP must balance the stack");
+    assert_eq!(
+        cpu.registers[13], sp_before,
+        "PUSH/POP must balance the stack"
+    );
 }
 
 #[test]
@@ -321,8 +347,7 @@ fn thumb_stmia_ldmia() {
 #[test]
 fn thumb_conditional_branch() {
     // mov r0, #0 ; cmp r0, #0 ; beq +0 ; mov r1, #1 (skipped) ; mov r2, #1
-    let (mut cpu, mut bus) =
-        setup_thumb(&[0x2000, 0x2800, 0xD000, 0x2101, 0x2201]);
+    let (mut cpu, mut bus) = setup_thumb(&[0x2000, 0x2800, 0xD000, 0x2101, 0x2201]);
     steps(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.registers[1], 0, "BEQ should have skipped this");
     assert_eq!(cpu.registers[2], 1, "BEQ landed on the wrong instruction");
@@ -361,8 +386,14 @@ fn arm_halfword_and_signed_transfers() {
     ]);
     steps(&mut cpu, &mut bus, 7);
     assert_eq!(cpu.registers[2], 0xFF80, "LDRH is zero-extended");
-    assert_eq!(cpu.registers[3], 0xFFFF_FF80, "LDRSB sign-extends the low byte");
-    assert_eq!(cpu.registers[4], 0xFFFF_FF80, "LDRSH sign-extends the halfword");
+    assert_eq!(
+        cpu.registers[3], 0xFFFF_FF80,
+        "LDRSB sign-extends the low byte"
+    );
+    assert_eq!(
+        cpu.registers[4], 0xFFFF_FF80,
+        "LDRSH sign-extends the halfword"
+    );
 }
 
 #[test]
@@ -371,7 +402,10 @@ fn arm_halfword_post_index_writes_back() {
     let (mut cpu, mut bus) = setup_arm(&[0xE3A0_0402, 0xE3A0_1001, 0xE0C0_10B2]);
     steps(&mut cpu, &mut bus, 3);
     assert_eq!(bus.read16(0x0200_0000), 1);
-    assert_eq!(cpu.registers[0], 0x0200_0002, "post-indexed transfer must write back");
+    assert_eq!(
+        cpu.registers[0], 0x0200_0002,
+        "post-indexed transfer must write back"
+    );
 }
 
 #[test]
@@ -471,8 +505,15 @@ fn arm_pre_and_post_indexed_transfers() {
         0xE732_3101, // ldr r3, [r2, -r1, lsl #2]! -> loads 0x02000000, r2 -= 4
     ]);
     steps(&mut cpu, &mut bus, 5);
-    assert_eq!(bus.read32(0x0200_0000), 32, "post-indexed store used base+offset");
-    assert_eq!(cpu.registers[3], 32, "pre-indexed load read the wrong address");
+    assert_eq!(
+        bus.read32(0x0200_0000),
+        32,
+        "post-indexed store used base+offset"
+    );
+    assert_eq!(
+        cpu.registers[3], 32,
+        "pre-indexed load read the wrong address"
+    );
     assert_eq!(cpu.registers[2], 0x0200_0000, "writeback did not land");
 }
 

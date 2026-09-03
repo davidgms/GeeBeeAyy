@@ -88,10 +88,7 @@ fn immediate_dma_clears_the_enable_bit_a_game_polls() {
         0,
         "DMA3CNT_H bit 15 never cleared, so a game polling for completion hangs"
     );
-    assert_eq!(
-        gba.cpu.registers[2], 0xAB,
-        "the poll loop never exited"
-    );
+    assert_eq!(gba.cpu.registers[2], 0xAB, "the poll loop never exited");
 }
 
 #[test]
@@ -124,7 +121,11 @@ fn vblank_dma_fires_once_per_frame() {
     configure(&mut gba, 1, 0x0200_0000, 0x0200_0100, 2, 0x8000 | (1 << 12));
     gba.run_frame();
 
-    assert_eq!(gba.bus.read16(0x0200_0100), 0xCAFE, "VBlank DMA never fired");
+    assert_eq!(
+        gba.bus.read16(0x0200_0100),
+        0xCAFE,
+        "VBlank DMA never fired"
+    );
     assert_eq!(gba.bus.read16(0x0200_0102), 0xF00D);
     assert_eq!(
         gba.bus.read16(0x0400_00C6) & 0x8000,

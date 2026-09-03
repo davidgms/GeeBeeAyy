@@ -177,7 +177,12 @@ impl Ppu {
         }
     }
 
-    pub fn tick(&mut self, cycles: u32, bus: &mut super::memory::MemoryBus, dma: &mut super::dma::Dma) {
+    pub fn tick(
+        &mut self,
+        cycles: u32,
+        bus: &mut super::memory::MemoryBus,
+        dma: &mut super::dma::Dma,
+    ) {
         self.cycle_counter += cycles;
 
         // GBA timing: 1232 cycles per scanline
@@ -592,10 +597,18 @@ impl Ppu {
 
     fn render_mode0_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
         let mut bg_list: Vec<(u8, usize)> = Vec::new();
-        if self.bg0_enable { bg_list.push(((self.bg0cnt & 3) as u8, 0)); }
-        if self.bg1_enable { bg_list.push(((self.bg1cnt & 3) as u8, 1)); }
-        if self.bg2_enable { bg_list.push(((self.bg2cnt & 3) as u8, 2)); }
-        if self.bg3_enable { bg_list.push(((self.bg3cnt & 3) as u8, 3)); }
+        if self.bg0_enable {
+            bg_list.push(((self.bg0cnt & 3) as u8, 0));
+        }
+        if self.bg1_enable {
+            bg_list.push(((self.bg1cnt & 3) as u8, 1));
+        }
+        if self.bg2_enable {
+            bg_list.push(((self.bg2cnt & 3) as u8, 2));
+        }
+        if self.bg3_enable {
+            bg_list.push(((self.bg3cnt & 3) as u8, 3));
+        }
         // A stable sort on priority alone leaves equal priorities in BG-number
         // order, and the lower-numbered background is the one in front.
         bg_list.sort_by_key(|&(p, _)| p);
@@ -629,15 +642,23 @@ impl Ppu {
                     let tile_data_addr = char_base + screen_entry as usize * 32;
                     let byte_offset = tile_local_y * 4 + tile_local_x / 2;
                     let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                    let color_index = if tile_local_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F };
-                    if color_index == 0 { continue; }
+                    let color_index = if tile_local_x % 2 == 0 {
+                        byte & 0x0F
+                    } else {
+                        (byte >> 4) & 0x0F
+                    };
+                    if color_index == 0 {
+                        continue;
+                    }
                     let entry = palette_bank * 16 + color_index as usize;
                     bus.read16((0x0500_0000 + entry * 2) as u32)
                 } else {
                     let tile_data_addr = char_base + screen_entry as usize * 64;
                     let byte_offset = tile_local_y * 8 + tile_local_x;
                     let color_index = bus.read8((tile_data_addr + byte_offset) as u32);
-                    if color_index == 0 { continue; }
+                    if color_index == 0 {
+                        continue;
+                    }
                     bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
                 };
 
@@ -670,7 +691,11 @@ impl Ppu {
                 }
             };
 
-            let obj = if allow & 0x10 != 0 { self.obj_pixel[x] } else { None };
+            let obj = if allow & 0x10 != 0 {
+                self.obj_pixel[x]
+            } else {
+                None
+            };
             let mut obj_placed = obj.is_none();
             for entry in hit.iter().flatten() {
                 let &(rgb, bg, bg_priority) = entry;
@@ -776,11 +801,14 @@ impl Ppu {
     // ========================================================================
 
     fn render_mode1_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-
         // BG0 and BG1: standard tiled (like Mode 0)
         let mut bg_list: Vec<(u8, usize)> = Vec::new();
-        if self.bg0_enable { bg_list.push(((self.bg0cnt & 3) as u8, 0)); }
-        if self.bg1_enable { bg_list.push(((self.bg1cnt & 3) as u8, 1)); }
+        if self.bg0_enable {
+            bg_list.push(((self.bg0cnt & 3) as u8, 0));
+        }
+        if self.bg1_enable {
+            bg_list.push(((self.bg1cnt & 3) as u8, 1));
+        }
         bg_list.sort_by_key(|&(p, _)| p);
 
         for x in 0..SCREEN_WIDTH {
@@ -796,15 +824,23 @@ impl Ppu {
                     let tile_data_addr = char_base + screen_entry as usize * 32;
                     let byte_offset = tile_local_y * 4 + tile_local_x / 2;
                     let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                    let color_index = if tile_local_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F };
-                    if color_index == 0 { continue; }
+                    let color_index = if tile_local_x % 2 == 0 {
+                        byte & 0x0F
+                    } else {
+                        (byte >> 4) & 0x0F
+                    };
+                    if color_index == 0 {
+                        continue;
+                    }
                     let entry = palette_bank * 16 + color_index as usize;
                     bus.read16((0x0500_0000 + entry * 2) as u32)
                 } else {
                     let tile_data_addr = char_base + screen_entry as usize * 64;
                     let byte_offset = tile_local_y * 8 + tile_local_x;
                     let color_index = bus.read8((tile_data_addr + byte_offset) as u32);
-                    if color_index == 0 { continue; }
+                    if color_index == 0 {
+                        continue;
+                    }
                     bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
                 };
 
@@ -830,7 +866,6 @@ impl Ppu {
     // ========================================================================
 
     fn render_mode2_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-
         for x in 0..SCREEN_WIDTH {
             if self.bg2_enable && self.window[x] & 0x04 != 0 {
                 self.render_affine_bg_pixel(2, x, y, bus);
@@ -869,12 +904,22 @@ impl Ppu {
     ) {
         let (cnt, ref_x, ref_y, pa, pb, pc, pd) = match bg {
             2 => (
-                self.bg2cnt, self.bg2x_internal, self.bg2y_internal,
-                self.bg2pa as i32, self.bg2pb as i32, self.bg2pc as i32, self.bg2pd as i32,
+                self.bg2cnt,
+                self.bg2x_internal,
+                self.bg2y_internal,
+                self.bg2pa as i32,
+                self.bg2pb as i32,
+                self.bg2pc as i32,
+                self.bg2pd as i32,
             ),
             3 => (
-                self.bg3cnt, self.bg3x_internal, self.bg3y_internal,
-                self.bg3pa as i32, self.bg3pb as i32, self.bg3pc as i32, self.bg3pd as i32,
+                self.bg3cnt,
+                self.bg3x_internal,
+                self.bg3y_internal,
+                self.bg3pa as i32,
+                self.bg3pb as i32,
+                self.bg3pc as i32,
+                self.bg3pd as i32,
             ),
             _ => return,
         };
@@ -905,11 +950,7 @@ impl Ppu {
         let map_index = (ty as usize / 8) * map_tiles + (tx as usize / 8);
         let tile = bus.read8((0x0600_0000 + screen_base + map_index) as u32) as usize;
 
-        let addr = 0x0600_0000
-            + char_base
-            + tile * 64
-            + (ty as usize % 8) * 8
-            + (tx as usize % 8);
+        let addr = 0x0600_0000 + char_base + tile * 64 + (ty as usize % 8) * 8 + (tx as usize % 8);
         let color_index = bus.read8(addr as u32);
         if color_index == 0 {
             return;
@@ -986,9 +1027,24 @@ impl Ppu {
             let shape = (attr0 >> 14) & 3;
             let size = (attr1 >> 14) & 3;
             let (width, height) = match shape {
-                0b00 => match size { 0 => (8, 8), 1 => (16, 16), 2 => (32, 32), _ => (64, 64) },
-                0b01 => match size { 0 => (16, 8), 1 => (32, 8), 2 => (32, 16), _ => (64, 32) },
-                0b10 => match size { 0 => (8, 16), 1 => (8, 32), 2 => (16, 32), _ => (32, 64) },
+                0b00 => match size {
+                    0 => (8, 8),
+                    1 => (16, 16),
+                    2 => (32, 32),
+                    _ => (64, 64),
+                },
+                0b01 => match size {
+                    0 => (16, 8),
+                    1 => (32, 8),
+                    2 => (32, 16),
+                    _ => (64, 32),
+                },
+                0b10 => match size {
+                    0 => (8, 16),
+                    1 => (8, 32),
+                    2 => (16, 32),
+                    _ => (32, 64),
+                },
                 _ => continue,
             };
 
@@ -1052,7 +1108,11 @@ impl Ppu {
                         (pc * rel_x + pd * rel_y) / 256 + height as i32 / 2,
                     )
                 } else {
-                    let x = if hflip { width as i32 - 1 - col as i32 } else { col as i32 };
+                    let x = if hflip {
+                        width as i32 - 1 - col as i32
+                    } else {
+                        col as i32
+                    };
                     let y = if vflip { height as i32 - 1 - row } else { row };
                     (x, y)
                 };
@@ -1070,7 +1130,11 @@ impl Ppu {
                     bus.read8((tile_addr + (tex_y % 8) * 8 + (tex_x % 8)) as u32)
                 } else {
                     let byte = bus.read8((tile_addr + (tex_y % 8) * 4 + (tex_x % 8) / 2) as u32);
-                    if tex_x % 2 == 0 { byte & 0x0F } else { (byte >> 4) & 0x0F }
+                    if tex_x % 2 == 0 {
+                        byte & 0x0F
+                    } else {
+                        (byte >> 4) & 0x0F
+                    }
                 };
                 if color_index == 0 {
                     continue;
@@ -1105,7 +1169,10 @@ impl Ppu {
     // ========================================================================
 
     fn get_bg_pixel(
-        &self, bg: usize, screen_x: usize, screen_y: usize,
+        &self,
+        bg: usize,
+        screen_x: usize,
+        screen_y: usize,
         bus: &mut super::memory::MemoryBus,
     ) -> (usize, usize, u16, usize, usize, bool) {
         let (cnt, hofs, vofs) = match bg {
@@ -1125,8 +1192,20 @@ impl Ppu {
 
         let screen_block_offset = match screen_size {
             0 => 0,
-            1 => if tile_x >= 32 { 1024 } else { 0 },
-            2 => if tile_y >= 32 { 1024 } else { 0 },
+            1 => {
+                if tile_x >= 32 {
+                    1024
+                } else {
+                    0
+                }
+            }
+            2 => {
+                if tile_y >= 32 {
+                    1024
+                } else {
+                    0
+                }
+            }
             3 => ((tile_x / 32) + (tile_y / 32) * 2) * 1024,
             _ => 0,
         };
@@ -1153,7 +1232,14 @@ impl Ppu {
         // Bits 12-15 select one of sixteen 16-colour palettes, 4bpp only.
         let palette_bank = ((screen_entry_value >> 12) & 0xF) as usize;
 
-        (local_x, local_y, tile_number, char_base, palette_bank, is_8bpp)
+        (
+            local_x,
+            local_y,
+            tile_number,
+            char_base,
+            palette_bank,
+            is_8bpp,
+        )
     }
 
     // ========================================================================
@@ -1179,7 +1265,11 @@ impl Ppu {
     // ========================================================================
 
     fn render_mode4_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-        let page = if self.dispcnt & 0x0010 != 0 { 0xA000 } else { 0x0000 };
+        let page = if self.dispcnt & 0x0010 != 0 {
+            0xA000
+        } else {
+            0x0000
+        };
         let base = 0x0600_0000 + page + y * 240;
         for x in 0..SCREEN_WIDTH {
             let color_index = bus.read8((base + x) as u32);
@@ -1201,7 +1291,11 @@ impl Ppu {
     fn render_mode5_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
         // Mode 5: two 160x128 16bpp framebuffers
         // Page select from DISPCNT bit 4
-        let page = if self.dispcnt & 0x0010 != 0 { 0xA000 } else { 0x0000 };
+        let page = if self.dispcnt & 0x0010 != 0 {
+            0xA000
+        } else {
+            0x0000
+        };
 
         // Only 128 lines per page; lines 128-159 show garbage (use last line)
         let fb_y = if y >= 128 { 127 } else { y };
@@ -1255,7 +1349,9 @@ impl Ppu {
 
     fn apply_brightness_inc(&mut self, y: usize) {
         let ey = self.bldy as u32;
-        if ey == 0 { return; }
+        if ey == 0 {
+            return;
+        }
         for x in 0..SCREEN_WIDTH {
             let idx = (y * SCREEN_WIDTH + x) * 3;
             let r = self.frame_buffer[idx] as u32;
@@ -1269,7 +1365,9 @@ impl Ppu {
 
     fn apply_brightness_dec(&mut self, y: usize) {
         let ey = self.bldy as u32;
-        if ey == 0 { return; }
+        if ey == 0 {
+            return;
+        }
         for x in 0..SCREEN_WIDTH {
             let idx = (y * SCREEN_WIDTH + x) * 3;
             let r = self.frame_buffer[idx] as u32;

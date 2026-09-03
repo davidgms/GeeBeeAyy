@@ -44,11 +44,31 @@ fn handle_soft_reset(_cpu: &mut Cpu, _bus: &mut MemoryBus) -> bool {
 
 fn handle_register_ram_reset(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let flags = cpu.reg(0);
-    if flags & 0x01 != 0 { for b in bus.ewram_data_mut().iter_mut() { *b = 0; } }
-    if flags & 0x02 != 0 { for b in bus.iwram_data_mut().iter_mut() { *b = 0; } }
-    if flags & 0x04 != 0 { for b in bus.palette_data_mut().iter_mut() { *b = 0; } }
-    if flags & 0x08 != 0 { for b in bus.vram_data_mut().iter_mut() { *b = 0; } }
-    if flags & 0x10 != 0 { for b in bus.oam_data_mut().iter_mut() { *b = 0; } }
+    if flags & 0x01 != 0 {
+        for b in bus.ewram_data_mut().iter_mut() {
+            *b = 0;
+        }
+    }
+    if flags & 0x02 != 0 {
+        for b in bus.iwram_data_mut().iter_mut() {
+            *b = 0;
+        }
+    }
+    if flags & 0x04 != 0 {
+        for b in bus.palette_data_mut().iter_mut() {
+            *b = 0;
+        }
+    }
+    if flags & 0x08 != 0 {
+        for b in bus.vram_data_mut().iter_mut() {
+            *b = 0;
+        }
+    }
+    if flags & 0x10 != 0 {
+        for b in bus.oam_data_mut().iter_mut() {
+            *b = 0;
+        }
+    }
     true
 }
 
@@ -101,7 +121,7 @@ fn handle_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 /// SWI 0x05: VBlankIntrWait — waits specifically for VBlank
 /// SWI 05h. GBATEK: "sets r0=1, r1=1, and then calls IntrWait".
 fn handle_vblank_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
-    cpu.set_reg(0, 1);      // discard old flags
+    cpu.set_reg(0, 1); // discard old flags
     cpu.set_reg(1, 0x0001); // wait for VBlank
     handle_intr_wait(cpu, bus)
 }
@@ -302,10 +322,14 @@ fn handle_bit_unpack(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let mut offset = 0u32;
     loop {
         let val = bus.read8(src + offset);
-        if val == 0 { break; }
+        if val == 0 {
+            break;
+        }
         bus.write8(dst + offset, val);
         offset += 1;
-        if offset > 0x10000 { break; }
+        if offset > 0x10000 {
+            break;
+        }
     }
     true
 }

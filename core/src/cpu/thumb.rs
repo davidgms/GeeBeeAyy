@@ -16,7 +16,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let rs_val = cpu.reg(rs);
 
             match shift_op {
-                0b00 => { // LSL
+                0b00 => {
+                    // LSL
                     if offset5 == 0 {
                         cpu.set_reg(rd, rs_val);
                     } else {
@@ -26,7 +27,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         cpu.set_reg(rd, val);
                     }
                 }
-                0b01 => { // LSR
+                0b01 => {
+                    // LSR
                     if offset5 == 0 {
                         let carry = rs_val >> 31 == 1;
                         cpu.set_flag_nz_data(0, carry);
@@ -38,7 +40,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         cpu.set_reg(rd, val);
                     }
                 }
-                0b10 => { // ASR
+                0b10 => {
+                    // ASR
                     if offset5 == 0 {
                         let carry = rs_val >> 31 == 1;
                         let val = if carry { 0xFFFFFFFF } else { 0 };
@@ -105,24 +108,28 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                     let rd_val = cpu.reg(rd);
 
                     match op {
-                        0b00 => { // MOV
+                        0b00 => {
+                            // MOV
                             cpu.set_flag_nz(imm8);
                             cpu.set_reg(rd, imm8);
                         }
-                        0b01 => { // CMP
+                        0b01 => {
+                            // CMP
                             let result = rd_val.wrapping_sub(imm8);
                             let carry = rd_val >= imm8;
                             let overflow = crate::cpu::arm::overflow_sub(rd_val, imm8, result);
                             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
                         }
-                        0b10 => { // ADD
+                        0b10 => {
+                            // ADD
                             let result = rd_val.wrapping_add(imm8);
                             let carry = (rd_val as u64) + (imm8 as u64) > 0xFFFF_FFFF;
                             let overflow = crate::cpu::arm::overflow_add(rd_val, imm8, result);
                             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
                             cpu.set_reg(rd, result);
                         }
-                        0b11 => { // SUB
+                        0b11 => {
+                            // SUB
                             let result = rd_val.wrapping_sub(imm8);
                             let carry = rd_val >= imm8;
                             let overflow = crate::cpu::arm::overflow_sub(rd_val, imm8, result);
@@ -452,17 +459,20 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
     let result;
 
     match op {
-        0b0000 => { // AND
+        0b0000 => {
+            // AND
             result = rd_val & rs_val;
             cpu.set_reg(rd, result);
             cpu.set_flag_nz(result);
         }
-        0b0001 => { // EOR
+        0b0001 => {
+            // EOR
             result = rd_val ^ rs_val;
             cpu.set_reg(rd, result);
             cpu.set_flag_nz(result);
         }
-        0b0010 => { // LSL
+        0b0010 => {
+            // LSL
             let shift = rs_val & 0xFF;
             if shift == 0 {
                 result = rd_val;
@@ -480,7 +490,8 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
                 cpu.set_reg(rd, 0);
             }
         }
-        0b0011 => { // LSR
+        0b0011 => {
+            // LSR
             let shift = rs_val & 0xFF;
             if shift == 0 {
                 result = rd_val;
@@ -498,7 +509,8 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
                 cpu.set_reg(rd, 0);
             }
         }
-        0b0100 => { // ASR
+        0b0100 => {
+            // ASR
             let shift = rs_val & 0xFF;
             if shift == 0 {
                 result = rd_val;
@@ -515,7 +527,8 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
                 cpu.set_reg(rd, result);
             }
         }
-        0b0101 => { // ADC
+        0b0101 => {
+            // ADC
             let carry = cpu.flag_c() as u32;
             result = rd_val.wrapping_add(rs_val).wrapping_add(carry);
             let carry_out = (rd_val as u64) + (rs_val as u64) + (carry as u64) > 0xFFFF_FFFF;
@@ -523,7 +536,8 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             cpu.set_flags(result >> 31 == 1, result == 0, carry_out, overflow);
             cpu.set_reg(rd, result);
         }
-        0b0110 => { // SBC
+        0b0110 => {
+            // SBC
             let carry = cpu.flag_c() as u32;
             result = rd_val.wrapping_sub(rs_val).wrapping_sub(1 - carry);
             let carry_out = (rd_val as u64) >= (rs_val as u64) + (1 - carry as u64);
@@ -531,7 +545,8 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             cpu.set_flags(result >> 31 == 1, result == 0, carry_out, overflow);
             cpu.set_reg(rd, result);
         }
-        0b0111 => { // ROR
+        0b0111 => {
+            // ROR
             let shift = rs_val & 0xFF;
             if shift == 0 {
                 result = rd_val;
@@ -545,11 +560,13 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
                 cpu.set_reg(rd, result);
             }
         }
-        0b1000 => { // TST
+        0b1000 => {
+            // TST
             result = rd_val & rs_val;
             cpu.set_flag_nz(result);
         }
-        0b1001 => { // NEG
+        0b1001 => {
+            // NEG
             result = 0u32.wrapping_sub(rs_val);
             // NEG is RSB rd, rs, #0. C is "no borrow", which for 0 - rs_val
             // holds only when rs_val is 0.
@@ -558,34 +575,40 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
             cpu.set_reg(rd, result);
         }
-        0b1010 => { // CMP
+        0b1010 => {
+            // CMP
             result = rd_val.wrapping_sub(rs_val);
             let carry = rd_val >= rs_val;
             let overflow = crate::cpu::arm::overflow_sub(rd_val, rs_val, result);
             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
         }
-        0b1011 => { // CMN
+        0b1011 => {
+            // CMN
             result = rd_val.wrapping_add(rs_val);
             let carry = (rd_val as u64) + (rs_val as u64) > 0xFFFF_FFFF;
             let overflow = crate::cpu::arm::overflow_add(rd_val, rs_val, result);
             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
         }
-        0b1100 => { // ORR
+        0b1100 => {
+            // ORR
             result = rd_val | rs_val;
             cpu.set_reg(rd, result);
             cpu.set_flag_nz(result);
         }
-        0b1101 => { // MUL
+        0b1101 => {
+            // MUL
             result = rd_val.wrapping_mul(rs_val);
             cpu.set_reg(rd, result);
             cpu.set_flag_nz(result);
         }
-        0b1110 => { // BIC
+        0b1110 => {
+            // BIC
             result = rd_val & !rs_val;
             cpu.set_reg(rd, result);
             cpu.set_flag_nz(result);
         }
-        0b1111 => { // MVN
+        0b1111 => {
+            // MVN
             result = !rs_val;
             cpu.set_reg(rd, result);
             cpu.set_flag_nz(result);
@@ -607,7 +630,8 @@ fn format5_hireg(instruction: u16, cpu: &mut Cpu) {
     let rs_val = cpu.reg(rs as usize);
 
     match op {
-        0b00 => { // ADD
+        0b00 => {
+            // ADD
             let rd_val = cpu.reg(rd as usize);
             let result = rd_val.wrapping_add(rs_val);
             cpu.set_reg(rd as usize, result);
@@ -615,20 +639,23 @@ fn format5_hireg(instruction: u16, cpu: &mut Cpu) {
                 cpu.registers[15] &= !1;
             }
         }
-        0b01 => { // CMP
+        0b01 => {
+            // CMP
             let rd_val = cpu.reg(rd as usize);
             let result = rd_val.wrapping_sub(rs_val);
             let carry = rd_val >= rs_val;
             let overflow = crate::cpu::arm::overflow_sub(rd_val, rs_val, result);
             cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
         }
-        0b10 => { // MOV
+        0b10 => {
+            // MOV
             cpu.set_reg(rd as usize, rs_val);
             if rd == 15 {
                 cpu.registers[15] &= !1;
             }
         }
-        0b11 => { // BX
+        0b11 => {
+            // BX
             if rs_val & 1 == 1 {
                 cpu.cpsr |= 0x20;
                 cpu.set_reg(15, rs_val & !1);

@@ -1,4 +1,4 @@
-use std::io::{self, Read, Cursor};
+use std::io::{self, Cursor, Read};
 
 use super::Gba;
 
@@ -309,44 +309,77 @@ pub enum SaveStateError {
 }
 
 impl From<io::Error> for SaveStateError {
-    fn from(e: io::Error) -> Self { SaveStateError::Io(e) }
+    fn from(e: io::Error) -> Self {
+        SaveStateError::Io(e)
+    }
 }
 
 // Serialization helpers
-fn write_u8(buf: &mut Vec<u8>, v: u8) { buf.push(v); }
-fn write_bool(buf: &mut Vec<u8>, v: bool) { buf.push(v as u8); }
-fn write_u16(buf: &mut Vec<u8>, v: u16) { buf.extend_from_slice(&v.to_le_bytes()); }
-fn write_i16(buf: &mut Vec<u8>, v: i16) { buf.extend_from_slice(&v.to_le_bytes()); }
-fn write_u32(buf: &mut Vec<u8>, v: u32) { buf.extend_from_slice(&v.to_le_bytes()); }
-fn write_i32(buf: &mut Vec<u8>, v: i32) { buf.extend_from_slice(&v.to_le_bytes()); }
-fn write_u64(buf: &mut Vec<u8>, v: u64) { buf.extend_from_slice(&v.to_le_bytes()); }
+fn write_u8(buf: &mut Vec<u8>, v: u8) {
+    buf.push(v);
+}
+fn write_bool(buf: &mut Vec<u8>, v: bool) {
+    buf.push(v as u8);
+}
+fn write_u16(buf: &mut Vec<u8>, v: u16) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn write_i16(buf: &mut Vec<u8>, v: i16) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn write_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn write_i32(buf: &mut Vec<u8>, v: i32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn write_u64(buf: &mut Vec<u8>, v: u64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
 fn write_u32_array(buf: &mut Vec<u8>, arr: &[u32]) {
-    for &v in arr { write_u32(buf, v); }
+    for &v in arr {
+        write_u32(buf, v);
+    }
 }
 
 fn read_u8(r: &mut Cursor<&Vec<u8>>) -> io::Result<u8> {
-    let mut b = [0u8; 1]; r.read_exact(&mut b)?; Ok(b[0])
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b)?;
+    Ok(b[0])
 }
 fn read_bool(r: &mut Cursor<&Vec<u8>>) -> io::Result<bool> {
     Ok(read_u8(r)? != 0)
 }
 fn read_u16(r: &mut Cursor<&Vec<u8>>) -> io::Result<u16> {
-    let mut b = [0u8; 2]; r.read_exact(&mut b)?; Ok(u16::from_le_bytes(b))
+    let mut b = [0u8; 2];
+    r.read_exact(&mut b)?;
+    Ok(u16::from_le_bytes(b))
 }
 fn read_i16(r: &mut Cursor<&Vec<u8>>) -> io::Result<i16> {
-    let mut b = [0u8; 2]; r.read_exact(&mut b)?; Ok(i16::from_le_bytes(b))
+    let mut b = [0u8; 2];
+    r.read_exact(&mut b)?;
+    Ok(i16::from_le_bytes(b))
 }
 fn read_u32(r: &mut Cursor<&Vec<u8>>) -> io::Result<u32> {
-    let mut b = [0u8; 4]; r.read_exact(&mut b)?; Ok(u32::from_le_bytes(b))
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b)?;
+    Ok(u32::from_le_bytes(b))
 }
 fn read_i32(r: &mut Cursor<&Vec<u8>>) -> io::Result<i32> {
-    let mut b = [0u8; 4]; r.read_exact(&mut b)?; Ok(i32::from_le_bytes(b))
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b)?;
+    Ok(i32::from_le_bytes(b))
 }
 fn read_u64(r: &mut Cursor<&Vec<u8>>) -> io::Result<u64> {
-    let mut b = [0u8; 8]; r.read_exact(&mut b)?; Ok(u64::from_le_bytes(b))
+    let mut b = [0u8; 8];
+    r.read_exact(&mut b)?;
+    Ok(u64::from_le_bytes(b))
 }
 fn read_u32_array(r: &mut Cursor<&Vec<u8>>, arr: &mut [u32]) -> io::Result<()> {
-    for v in arr.iter_mut() { *v = read_u32(r)?; } Ok(())
+    for v in arr.iter_mut() {
+        *v = read_u32(r)?;
+    }
+    Ok(())
 }
 fn read_exact_vec(r: &mut Cursor<&Vec<u8>>, buf: &mut [u8]) -> io::Result<()> {
     r.read_exact(buf)

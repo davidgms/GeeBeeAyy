@@ -75,7 +75,7 @@ impl Cpu {
         self.svc_registers[0] = 0x0300_7FE0;
         self.irq_registers[0] = 0x0300_7FA0;
         self.registers[15] = 0x0800_0000; // PC = ROM entry point
-        self.cpsr = Mode::System as u32;  // System mode, IRQ disabled
+        self.cpsr = Mode::System as u32; // System mode, IRQ disabled
         self.halted = false;
     }
 
@@ -210,17 +210,33 @@ impl Cpu {
         }
     }
 
-    pub fn flag_n(&self) -> bool { self.cpsr & (1 << 31) != 0 }
-    pub fn flag_z(&self) -> bool { self.cpsr & (1 << 30) != 0 }
-    pub fn flag_c(&self) -> bool { self.cpsr & (1 << 29) != 0 }
-    pub fn flag_v(&self) -> bool { self.cpsr & (1 << 28) != 0 }
+    pub fn flag_n(&self) -> bool {
+        self.cpsr & (1 << 31) != 0
+    }
+    pub fn flag_z(&self) -> bool {
+        self.cpsr & (1 << 30) != 0
+    }
+    pub fn flag_c(&self) -> bool {
+        self.cpsr & (1 << 29) != 0
+    }
+    pub fn flag_v(&self) -> bool {
+        self.cpsr & (1 << 28) != 0
+    }
 
     pub fn set_flags(&mut self, n: bool, z: bool, c: bool, v: bool) {
         self.cpsr &= 0x0FFF_FFFF;
-        if n { self.cpsr |= 1 << 31; }
-        if z { self.cpsr |= 1 << 30; }
-        if c { self.cpsr |= 1 << 29; }
-        if v { self.cpsr |= 1 << 28; }
+        if n {
+            self.cpsr |= 1 << 31;
+        }
+        if z {
+            self.cpsr |= 1 << 30;
+        }
+        if c {
+            self.cpsr |= 1 << 29;
+        }
+        if v {
+            self.cpsr |= 1 << 28;
+        }
     }
 
     pub fn set_flag_nz(&mut self, result: u32) {
@@ -241,21 +257,21 @@ impl Cpu {
     /// Evaluate ARM condition code
     fn condition_met(&self, cond: u32) -> bool {
         match cond {
-            0b0000 => self.flag_z(),                     // EQ
-            0b0001 => !self.flag_z(),                    // NE
-            0b0010 => self.flag_c(),                     // CS/HS
-            0b0011 => !self.flag_c(),                    // CC/LO
-            0b0100 => self.flag_n(),                     // MI
-            0b0101 => !self.flag_n(),                    // PL
-            0b0110 => self.flag_v(),                     // VS
-            0b0111 => !self.flag_v(),                    // VC
-            0b1000 => self.flag_c() && !self.flag_z(),   // HI
-            0b1001 => !self.flag_c() || self.flag_z(),   // LS
-            0b1010 => self.flag_n() == self.flag_v(),    // GE
-            0b1011 => self.flag_n() != self.flag_v(),    // LT
+            0b0000 => self.flag_z(),                                      // EQ
+            0b0001 => !self.flag_z(),                                     // NE
+            0b0010 => self.flag_c(),                                      // CS/HS
+            0b0011 => !self.flag_c(),                                     // CC/LO
+            0b0100 => self.flag_n(),                                      // MI
+            0b0101 => !self.flag_n(),                                     // PL
+            0b0110 => self.flag_v(),                                      // VS
+            0b0111 => !self.flag_v(),                                     // VC
+            0b1000 => self.flag_c() && !self.flag_z(),                    // HI
+            0b1001 => !self.flag_c() || self.flag_z(),                    // LS
+            0b1010 => self.flag_n() == self.flag_v(),                     // GE
+            0b1011 => self.flag_n() != self.flag_v(),                     // LT
             0b1100 => !self.flag_z() && (self.flag_n() == self.flag_v()), // GT
             0b1101 => self.flag_z() || (self.flag_n() != self.flag_v()),  // LE
-            0b1110 => true,                              // AL (always)
+            0b1110 => true,                                               // AL (always)
             0b1111 => false,
             _ => false,
         }
@@ -264,58 +280,100 @@ impl Cpu {
     /// Barrel shifter: LSL
     pub fn lsl(&mut self, value: u32, shift: u32) -> BarrelShiftResult {
         if shift == 0 {
-            BarrelShiftResult { value, carry_out: self.flag_c() }
+            BarrelShiftResult {
+                value,
+                carry_out: self.flag_c(),
+            }
         } else if shift < 32 {
             let carry_out = (value >> (32 - shift)) & 1 == 1;
-            BarrelShiftResult { value: value << shift, carry_out }
+            BarrelShiftResult {
+                value: value << shift,
+                carry_out,
+            }
         } else if shift == 32 {
-            BarrelShiftResult { value: 0, carry_out: value & 1 == 1 }
+            BarrelShiftResult {
+                value: 0,
+                carry_out: value & 1 == 1,
+            }
         } else {
-            BarrelShiftResult { value: 0, carry_out: false }
+            BarrelShiftResult {
+                value: 0,
+                carry_out: false,
+            }
         }
     }
 
     /// Barrel shifter: LSR
     pub fn lsr(&mut self, value: u32, shift: u32) -> BarrelShiftResult {
         if shift == 0 {
-            BarrelShiftResult { value, carry_out: self.flag_c() }
+            BarrelShiftResult {
+                value,
+                carry_out: self.flag_c(),
+            }
         } else if shift < 32 {
             let carry_out = (value >> (shift - 1)) & 1 == 1;
-            BarrelShiftResult { value: value >> shift, carry_out }
+            BarrelShiftResult {
+                value: value >> shift,
+                carry_out,
+            }
         } else if shift == 32 {
-            BarrelShiftResult { value: 0, carry_out: value >> 31 == 1 }
+            BarrelShiftResult {
+                value: 0,
+                carry_out: value >> 31 == 1,
+            }
         } else {
-            BarrelShiftResult { value: 0, carry_out: false }
+            BarrelShiftResult {
+                value: 0,
+                carry_out: false,
+            }
         }
     }
 
     /// Barrel shifter: ASR
     pub fn asr(&mut self, value: u32, shift: u32) -> BarrelShiftResult {
         if shift == 0 {
-            BarrelShiftResult { value, carry_out: self.flag_c() }
+            BarrelShiftResult {
+                value,
+                carry_out: self.flag_c(),
+            }
         } else if shift < 32 {
             let carry_out = (value >> (shift - 1)) & 1 == 1;
             let result = ((value as i32) >> shift) as u32;
-            BarrelShiftResult { value: result, carry_out }
+            BarrelShiftResult {
+                value: result,
+                carry_out,
+            }
         } else {
             let carry_out = value >> 31 == 1;
             let result = if carry_out { 0xFFFFFFFF } else { 0 };
-            BarrelShiftResult { value: result, carry_out }
+            BarrelShiftResult {
+                value: result,
+                carry_out,
+            }
         }
     }
 
     /// Barrel shifter: ROR
     pub fn ror(&mut self, value: u32, shift: u32) -> BarrelShiftResult {
         if shift == 0 {
-            BarrelShiftResult { value, carry_out: self.flag_c() }
+            BarrelShiftResult {
+                value,
+                carry_out: self.flag_c(),
+            }
         } else {
             let shift = shift % 32;
             if shift == 0 {
-                BarrelShiftResult { value, carry_out: value >> 31 == 1 }
+                BarrelShiftResult {
+                    value,
+                    carry_out: value >> 31 == 1,
+                }
             } else {
                 let result = value.rotate_right(shift);
                 let carry_out = result >> 31 == 1;
-                BarrelShiftResult { value: result, carry_out }
+                BarrelShiftResult {
+                    value: result,
+                    carry_out,
+                }
             }
         }
     }
@@ -325,7 +383,10 @@ impl Cpu {
         let old_carry = self.flag_c() as u32;
         let result = (old_carry << 31) | (value >> 1);
         let carry_out = value & 1 == 1;
-        BarrelShiftResult { value: result, carry_out }
+        BarrelShiftResult {
+            value: result,
+            carry_out,
+        }
     }
 
     /// Decode immediate operand for ARM data processing (8-bit value + 4-bit rotation)
@@ -333,11 +394,17 @@ impl Cpu {
         let rotate = ((instruction >> 8) & 0xF) * 2;
         let imm8 = instruction & 0xFF;
         if rotate == 0 {
-            BarrelShiftResult { value: imm8, carry_out: self.flag_c() }
+            BarrelShiftResult {
+                value: imm8,
+                carry_out: self.flag_c(),
+            }
         } else {
             let result = imm8.rotate_right(rotate);
             let carry_out = result >> 31 == 1;
-            BarrelShiftResult { value: result, carry_out }
+            BarrelShiftResult {
+                value: result,
+                carry_out,
+            }
         }
     }
 
@@ -369,9 +436,15 @@ impl Cpu {
                     0b10 => self.asr(rm_val, shift_amount),
                     0b11 => {
                         if shift_amount == 0 {
-                            BarrelShiftResult { value: rm_val, carry_out: self.flag_c() }
+                            BarrelShiftResult {
+                                value: rm_val,
+                                carry_out: self.flag_c(),
+                            }
                         } else if shift_amount % 32 == 0 {
-                            BarrelShiftResult { value: rm_val, carry_out: rm_val >> 31 == 1 }
+                            BarrelShiftResult {
+                                value: rm_val,
+                                carry_out: rm_val >> 31 == 1,
+                            }
                         } else {
                             self.ror(rm_val, shift_amount)
                         }
@@ -458,7 +531,7 @@ impl Cpu {
 
         let old_cpsr = self.cpsr;
         let mut new_cpsr = (old_cpsr & !0x3F) | Mode::Irq as u32;
-        new_cpsr |= 0x80;  // mask further IRQs
+        new_cpsr |= 0x80; // mask further IRQs
         new_cpsr &= !0x20; // the vector at 0x18 is ARM code
         self.set_cpsr(new_cpsr);
 

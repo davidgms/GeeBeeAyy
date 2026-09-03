@@ -38,7 +38,11 @@ fn mode3_pixel_reaches_the_frame_buffer() {
 
     gba.run_frame();
 
-    assert_eq!(gba.bus.read16(0x0600_0000), 0xFFFF, "the ROM never wrote VRAM");
+    assert_eq!(
+        gba.bus.read16(0x0600_0000),
+        0xFFFF,
+        "the ROM never wrote VRAM"
+    );
 
     let fb = gba.frame_buffer();
     assert!(
