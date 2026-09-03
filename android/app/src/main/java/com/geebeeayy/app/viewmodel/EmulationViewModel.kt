@@ -91,8 +91,21 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
-    private val _isFastForward = MutableStateFlow(false)
-    val isFastForward: StateFlow<Boolean> = _isFastForward
+    /** 0 is normal speed; otherwise how many emulated frames run per real
+     *  frame tick - 2x, 4x or 8x, cycling in that order back to 0. Powers of
+     *  two: they are exact (no rounding in the frame count or the pacing
+     *  math below) and each step is still slow enough to follow by eye. */
+    private val _fastForwardSpeed = MutableStateFlow(0)
+    val fastForwardSpeed: StateFlow<Int> = _fastForwardSpeed
+
+    fun cycleFastForward() {
+        _fastForwardSpeed.value = when (_fastForwardSpeed.value) {
+            0 -> 2
+            2 -> 4
+            4 -> 8
+            else -> 0
+        }
+    }
 
     /** True while the player is holding the rewind button. */
     private val _isRewinding = MutableStateFlow(false)
@@ -347,7 +360,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // AudioTrack that stopEmulation() just stopped.
                     if (!isActive) continue
 
-                    val fastForward = isFastForward.value
+                    val speed = fastForwardSpeed.value
                     val rewinding = isRewinding.value
 
                     if (rewinding) {
@@ -366,8 +379,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         continue
                     }
 
-                    if (fastForward) {
-                        engine.runFrames(4)
+                    if (speed > 0) {
+                        engine.runFrames(speed)
                     } else {
                         engine.runFrame()
                     }
@@ -386,9 +399,21 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     val count = engine.readAudio(audioSamples)
                     // Fast forward would be held back to real time by a blocking
                     // audio write, so drop the samples and pace off the timer.
-                    val paced = !fastForward && audio.write(audioSamples, count)
+                    //
+                    // The timer always waits one real frame interval, whether
+                    // fast-forwarding or not - dividing it by the speed too,
+                    // on top of already running `speed` emulated frames per
+                    // iteration, used to compound into a speed the button's
+                    // label had no relation to (running 4 frames AND waiting
+                    // a quarter of the interval multiplied out to ~16x, not
+                    // 4x). `speed` frames landing inside one real interval is
+                    // what makes the multiplier exact instead of a guess -
+                    // and self-limiting on a device too slow to keep up,
+                    // since compute time then eats into the same window
+                    // rather than being added on top of it.
+                    val paced = speed == 0 && audio.write(audioSamples, count)
                     if (!paced) {
-                        delay(if (fastForward) (frameIntervalMs / 4).coerceAtLeast(1L) else frameIntervalMs)
+                        delay(frameIntervalMs)
                     }
                 }
             }
@@ -498,9 +523,6 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun toggleFastForward() {
-        _isFastForward.value = !_isFastForward.value
-    }
 
     /**
      * Hold to walk backwards through the rewind ring; release to resume.
@@ -509,7 +531,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun setRewinding(active: Boolean) {
         if (active) {
-            _isFastForward.value = false
+            _fastForwardSpeed.value = 0
         }
         _isRewinding.value = active
     }
