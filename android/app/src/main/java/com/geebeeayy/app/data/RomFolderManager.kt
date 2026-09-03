@@ -67,6 +67,8 @@ class RomFolderManager(private val context: Context) {
                             name = displayName,
                             fileName = name,
                             size = sizeStr,
+                            sizeBytes = file.length(),
+                            dateModifiedMillis = file.lastModified(),
                             filePath = file.absolutePath,
                         )
                     )

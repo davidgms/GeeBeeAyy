@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,6 +25,25 @@ import com.geebeeayy.app.data.RomArtwork
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.ui.theme.*
 
+/** A sort order for the ROM list, plus the comparator that applies it. */
+enum class RomSortOrder(val label: String) {
+    NAME_ASC("Name (A-Z)"),
+    NAME_DESC("Name (Z-A)"),
+    SIZE_DESC("Size (largest)"),
+    SIZE_ASC("Size (smallest)"),
+    DATE_DESC("Newest"),
+    DATE_ASC("Oldest");
+
+    fun sort(roms: List<RomEntry>): List<RomEntry> = when (this) {
+        NAME_ASC -> roms.sortedBy { it.name.lowercase() }
+        NAME_DESC -> roms.sortedByDescending { it.name.lowercase() }
+        SIZE_DESC -> roms.sortedByDescending { it.sizeBytes }
+        SIZE_ASC -> roms.sortedBy { it.sizeBytes }
+        DATE_DESC -> roms.sortedByDescending { it.dateModifiedMillis }
+        DATE_ASC -> roms.sortedBy { it.dateModifiedMillis }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RomBrowserScreen(
@@ -33,6 +53,18 @@ fun RomBrowserScreen(
     onDownloadClick: () -> Unit,
     onAboutClick: () -> Unit,
 ) {
+    var query by remember { mutableStateOf("") }
+    var sortOrder by remember { mutableStateOf(RomSortOrder.NAME_ASC) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
+
+    val visibleRoms = remember(roms, query, sortOrder) {
+        val filtered = if (query.isBlank()) {
+            roms
+        } else {
+            roms.filter { it.name.contains(query, ignoreCase = true) }
+        }
+        sortOrder.sort(filtered)
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -56,6 +88,29 @@ fun RomBrowserScreen(
                     titleContentColor = PineGlowMist,
                 ),
                 actions = {
+                    Box {
+                        IconButton(onClick = { sortMenuOpen = true }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Sort,
+                                contentDescription = "Sort",
+                                tint = AmberResin
+                            )
+                        }
+                        DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                            RomSortOrder.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.label) },
+                                    onClick = {
+                                        sortOrder = option
+                                        sortMenuOpen = false
+                                    },
+                                    leadingIcon = if (option == sortOrder) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = onDownloadClick) {
                         Icon(
                             Icons.Default.Download,
@@ -85,50 +140,63 @@ fun RomBrowserScreen(
         if (roms.isEmpty()) {
             EmptyState(modifier = Modifier.padding(padding))
         } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item {
-                    Text(
-                        text = "Your Games (${roms.size})",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GoldenSaplight,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                }
+            Column(modifier = Modifier.padding(padding)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    placeholder = { Text("Filter games...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = if (query.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear filter")
+                            }
+                        }
+                    } else null,
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PineGlowMist,
+                        unfocusedTextColor = PineGlowMist,
+                        focusedBorderColor = AmberResin,
+                        unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
+                        cursorColor = AmberResin,
+                    ),
+                )
 
-                val favorites = roms.filter { it.isFavorite }
-                if (favorites.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Favorites",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AmberResin,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                    }
-                    items(favorites) { rom ->
-                        RomCard(rom = rom, onClick = { onRomClick(rom) })
-                    }
-                }
-
-                item {
+                if (visibleRoms.isEmpty()) {
                     Text(
-                        text = "All ROMs",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = AmberResin,
-                        modifier = Modifier.padding(top = if (favorites.isNotEmpty()) 16.dp else 0.dp, bottom = 4.dp)
+                        text = "No games match \"$query\"",
+                        color = PineGlowMist.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(16.dp),
                     )
-                }
-                items(roms) { rom ->
-                    RomCard(rom = rom, onClick = { onRomClick(rom) })
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        val favorites = visibleRoms.filter { it.isFavorite }
+                        if (favorites.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Favorites",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AmberResin,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
+                            items(favorites) { rom ->
+                                RomCard(rom = rom, onClick = { onRomClick(rom) })
+                            }
+                        }
+                        items(visibleRoms) { rom ->
+                            RomCard(rom = rom, onClick = { onRomClick(rom) })
+                        }
+                    }
                 }
             }
         }
