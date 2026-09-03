@@ -31,6 +31,16 @@ pub struct Ppu {
     obj_window: [bool; SCREEN_WIDTH],
     /// Which layers each pixel of this scanline may show, from WININ/WINOUT.
     window: [u8; SCREEN_WIDTH],
+    /// Which layer wrote the pixel currently in `frame_buffer` at each x of
+    /// this scanline, one of the `LAYER_*` constants (or a BG index 0-3).
+    /// Only modes 1-5 use this - mode 0 already knows the top layer per pixel
+    /// from its own compositing stack and gates `blend()` on it directly.
+    /// Without this, `apply_brightness_inc`/`apply_brightness_dec` brightened
+    /// or darkened the whole scanline whenever BLDCNT selected the effect,
+    /// with no regard for which layers BLDCNT actually marked as a 1st
+    /// target - so a game pulsing BLDY to highlight one layer flashed the
+    /// entire screen instead.
+    scanline_layer: [usize; SCREEN_WIDTH],
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
@@ -116,6 +126,7 @@ impl Ppu {
             obj_pixel: [None; SCREEN_WIDTH],
             obj_window: [false; SCREEN_WIDTH],
             window: [0x3F; SCREEN_WIDTH],
+            scanline_layer: [LAYER_BD; SCREEN_WIDTH],
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
@@ -510,6 +521,7 @@ impl Ppu {
             self.frame_buffer[idx + 1] = bg_;
             self.frame_buffer[idx + 2] = bb;
         }
+        self.scanline_layer = [LAYER_BD; SCREEN_WIDTH];
 
         // The sprite pass comes first for every mode: mode 0 composites from
         // its result, the others overlay it, and OBJ-window sprites have to be
@@ -548,6 +560,7 @@ impl Ppu {
                     self.frame_buffer[idx] = rgb.0;
                     self.frame_buffer[idx + 1] = rgb.1;
                     self.frame_buffer[idx + 2] = rgb.2;
+                    self.scanline_layer[x] = LAYER_OBJ;
                 }
             }
         }
@@ -585,8 +598,16 @@ impl Ppu {
 
         // Mode 0 applies colour effects per pixel while it composites, which
         // is the only way to know which layer is under the top one. The other
-        // modes still use the scanline-wide approximation below.
-        if self.bg_mode != 0 && self.bldcnt & 0x0020 != 0 {
+        // modes still use the scanline-wide approximation below, now gated
+        // per-pixel on `scanline_layer` inside `apply_brightness_inc/dec`.
+        //
+        // This used to also gate the call itself on `bldcnt & 0x0020` - bit 5
+        // is BLDCNT's *backdrop* 1st-target-select bit, not a "some effect is
+        // active" flag, so the whole effect silently turned on and off with
+        // whatever unrelated thing the game did to the backdrop's target bit.
+        // `apply_color_effects` already no-ops on effect 0, so no bail-out is
+        // needed here.
+        if self.bg_mode != 0 {
             self.apply_color_effects(y);
         }
     }
@@ -851,6 +872,7 @@ impl Ppu {
                 self.frame_buffer[idx] = r;
                 self.frame_buffer[idx + 1] = g;
                 self.frame_buffer[idx + 2] = b;
+                self.scanline_layer[x] = bg;
                 break;
             }
 
@@ -961,6 +983,7 @@ impl Ppu {
         self.frame_buffer[idx] = ((color & 0x001F) as u8) << 3;
         self.frame_buffer[idx + 1] = (((color >> 5) & 0x001F) as u8) << 3;
         self.frame_buffer[idx + 2] = (((color >> 10) & 0x001F) as u8) << 3;
+        self.scanline_layer[screen_x] = bg;
     }
 
     // ========================================================================
@@ -1258,6 +1281,9 @@ impl Ppu {
             self.frame_buffer[idx + 1] = g;
             self.frame_buffer[idx + 2] = b;
         }
+        // Bitmap modes are BG2 top to bottom - no transparency to fall
+        // through to the backdrop.
+        self.scanline_layer = [2; SCREEN_WIDTH];
     }
 
     // ========================================================================
@@ -1282,6 +1308,7 @@ impl Ppu {
             self.frame_buffer[idx + 1] = g;
             self.frame_buffer[idx + 2] = b;
         }
+        self.scanline_layer = [2; SCREEN_WIDTH];
     }
 
     // ========================================================================
@@ -1322,6 +1349,7 @@ impl Ppu {
             self.frame_buffer[idx + 1] = g;
             self.frame_buffer[idx + 2] = b;
         }
+        self.scanline_layer = [2; SCREEN_WIDTH];
     }
 
     // ========================================================================
@@ -1353,6 +1381,14 @@ impl Ppu {
             return;
         }
         for x in 0..SCREEN_WIDTH {
+            // BLDCNT bits 0-5 are the 1st-target select, one bit per layer
+            // (BG0-3, OBJ, BD) - the same gate `blend()` uses for mode 0.
+            // Without it, this brightened every pixel on the scanline
+            // whenever BLDCNT selected the effect at all, so a game pulsing
+            // BLDY to highlight one layer flashed the whole screen instead.
+            if self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
+                continue;
+            }
             let idx = (y * SCREEN_WIDTH + x) * 3;
             let r = self.frame_buffer[idx] as u32;
             let g = self.frame_buffer[idx + 1] as u32;
@@ -1369,6 +1405,9 @@ impl Ppu {
             return;
         }
         for x in 0..SCREEN_WIDTH {
+            if self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
+                continue;
+            }
             let idx = (y * SCREEN_WIDTH + x) * 3;
             let r = self.frame_buffer[idx] as u32;
             let g = self.frame_buffer[idx + 1] as u32;

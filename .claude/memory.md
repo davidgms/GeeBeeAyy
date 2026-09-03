@@ -864,3 +864,39 @@ these produce the right output. Cost and robustness need a different kind of
 looking - read the hot loop for allocations, and read every length that comes
 from ROM data as hostile. Worth a deliberate pass rather than waiting for a
 symptom.
+
+### 2026-09-03 - Modes 1-5's colour effects brightened/darkened the whole
+screen, gated on the wrong BLDCNT bit entirely
+
+Device testing on Yggdra Union (Jaws of the Wolf battle screen) showed the
+whole screen strobing every other frame between normal colours and a
+washed-out version - white text unchanged, dark panels blown toward white.
+Two bugs stacked in `core/src/ppu/mod.rs`:
+
+1. The call to `apply_color_effects` for `bg_mode != 0` was gated on
+   `bldcnt & 0x0020` - bit 5 is BLDCNT's *backdrop* 1st-target-select bit, not
+   an "an effect is active" flag. The whole brighten/darken pass silently
+   turned on and off with whatever the game did to an unrelated bit.
+2. Even when it ran, `apply_brightness_inc`/`_dec` brightened or darkened
+   **every pixel on the scanline** with no idea which layer produced it - no
+   check against BLDCNT's 1st-target-select bits at all. Mode 0 already gets
+   this right (`blend()`, gated per-pixel on `top_layer` from its compositing
+   stack); modes 1-5 never tracked layer identity per pixel, so there was
+   nothing to gate on.
+
+Fix: added `scanline_layer: [usize; SCREEN_WIDTH]`, written at every BG/OBJ
+write site in the mode 1-5 renderers (bitmap modes are BG2 top to bottom, so
+just `[2; SCREEN_WIDTH]`; the OBJ overlay pass sets `LAYER_OBJ` after BG
+draws), then `apply_brightness_inc/_dec` gate each pixel on
+`bldcnt & (1 << scanline_layer[x])`, the same check `blend()` uses. Removed
+the wrong `& 0x0020` outer gate entirely - `apply_color_effects` already
+no-ops on effect 0. Regression test:
+`tests/ppu.rs::brighten_in_a_bitmap_mode_only_affects_the_selected_1st_target_layer`
+(mode 4 bitmap pixel + a non-overlapping sprite, only BG2 selected as 1st
+target - confirmed it fails on the pre-fix code with the OBJ pixel wrongly
+brightened).
+
+**Application**: any "scanline-wide approximation" comment in this PPU is a
+flag that per-pixel layer gating was skipped - check what BLDCNT's target
+bits are being checked against, if anything, before trusting a colour effect
+outside mode 0.

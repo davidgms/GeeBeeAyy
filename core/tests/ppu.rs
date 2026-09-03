@@ -661,6 +661,58 @@ fn a_semi_transparent_sprite_blends_without_bldcnt_asking() {
     );
 }
 
+/// Outside mode 0, colour effects used to run as a scanline-wide
+/// post-process with no idea which layer produced each pixel: brighten/darken
+/// applied to every pixel on the line whenever BLDCNT selected the effect at
+/// all, with no regard for BLDCNT's 1st-target-select bits. A game pulsing
+/// BLDY to highlight one layer flashed the whole screen instead - reported
+/// from a device as Yggdra Union's dialog panels strobing between normal and
+/// washed-out every other frame.
+#[test]
+fn brighten_in_a_bitmap_mode_only_affects_the_selected_1st_target_layer() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // BG2's mid-grey, at bitmap pixel (0, 0).
+    gba.bus.write16(0x0500_0002, 0x4210);
+    gba.bus.write8(0x0600_0000, 1);
+
+    // An 8x8 sprite at x=8 using the same mid-grey, so it does not overlap
+    // the bitmap pixel above. Bitmap modes reserve OBJ tiles below 512 for
+    // the frame buffer, so this one has to live at tile 512 (0x06014000).
+    gba.bus.write16(0x0500_0202, 0x4210);
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0601_4000 + i, 0x1111);
+    }
+    gba.bus.write16(0x0700_0000, 0x0000);
+    gba.bus.write16(0x0700_0002, 0x0008);
+    gba.bus.write16(0x0700_0004, 0x0200); // tile 512
+    for s in 1..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200); // disabled
+    }
+
+    // Mode 4, BG2 + OBJ on. Brighten (effect 2), BG2 the only 1st target.
+    gba.bus.write16(0x0400_0000, 0x1404);
+    gba.bus.write16(0x0400_0050, 0x0084); // effect 2, 1st target BG2 (bit 2)
+    gba.bus.write16(0x0400_0054, 16); // EVY = 16 (max)
+
+    gba.run_frame();
+    let fb = gba.frame_buffer();
+    let bg2_px = &fb[0..3];
+    let obj_px = &fb[8 * 3..8 * 3 + 3];
+
+    assert_eq!(
+        bg2_px,
+        [0xFF, 0xFF, 0xFF],
+        "BG2, the selected 1st target, should be brightened to white: {bg2_px:02X?}"
+    );
+    assert_eq!(
+        obj_px,
+        [0x80, 0x80, 0x80],
+        "OBJ is not a 1st target and must be left at its original grey: {obj_px:02X?}"
+    );
+}
+
 /// The same sprite over a layer that is *not* a selected 2nd target is drawn
 /// at full strength.
 #[test]
