@@ -56,20 +56,33 @@ fun SettingsScreen(
     var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
     var showScaleMenu by remember { mutableStateOf(false) }
     var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
+    var folderError by remember { mutableStateOf<String?>(null) }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
+            // A non-primary volume (an SD card) has a docId like
+            // "1A2B-3C4D:Roms", which maps to /storage/<volume>/... rather
+            // than /storage/emulated/0. Only "primary:" used to be handled and
+            // everything else fell through in silence, so picking a folder on
+            // a card closed the dialog and added nothing, with no explanation.
             val docId = DocumentsContract.getTreeDocumentId(it)
-            if (docId.startsWith("primary:")) {
-                val path = "/storage/emulated/0/" + docId.removePrefix("primary:")
-                val folder = File(path)
-                if (folder.isDirectory) {
-                    folderManager.addFolder(path)
-                    folders = folderManager.getFolderPaths()
-                    onFoldersChanged()
-                }
+            val volume = docId.substringBefore(':', "")
+            val relative = docId.substringAfter(':', "")
+            val path = when {
+                volume == "primary" -> "/storage/emulated/0/$relative"
+                volume.isNotEmpty() -> "/storage/$volume/$relative"
+                else -> ""
+            }.trimEnd('/')
+            val folder = if (path.isEmpty()) null else File(path)
+            if (folder != null && folder.isDirectory && folder.canRead()) {
+                folderManager.addFolder(path)
+                folders = folderManager.getFolderPaths()
+                onFoldersChanged()
+                folderError = null
+            } else {
+                folderError = "Could not read that folder. Pick one on internal storage."
             }
         }
     }
@@ -183,6 +196,15 @@ fun SettingsScreen(
                         color = AmberResin,
                     )
                 }
+            }
+
+            folderError?.let { message ->
+                Text(
+                    text = message,
+                    fontSize = 13.sp,
+                    color = AmberResin,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
             }
 
             SettingsSection(title = "Display") {
