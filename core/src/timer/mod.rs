@@ -46,26 +46,41 @@ impl Timer {
             let prescaler = self.prescaler[i];
             while self.tick_counters[i] >= prescaler {
                 self.tick_counters[i] -= prescaler;
-                self.counters[i] += 1;
-
-                // Timer overflow at 0x10000 (16-bit counter)
-                if self.counters[i] >= 0x10000 {
-                    self.counters[i] = self.reloads[i];
-                    self.overflow_flags[i] += 1;
-
-                    // Handle cascade to next timer
-                    if i < 3 && self.cascaded[i + 1] {
-                        self.counters[i + 1] += 1;
-                    }
-
-                    // GBATEK, GBA Interrupt Control: IF bits 3,4,5,6 are
-                    // Timer 0,1,2,3 overflow. IE and IME gate whether the CPU
-                    // takes the exception, never whether IF is set.
-                    if self.irq_enabled[i] {
-                        bus.io.request_interrupt(1 << (3 + i));
-                    }
-                }
+                self.increment(i, bus);
             }
+        }
+    }
+
+    /// Advance one timer by a single count, handling its overflow.
+    ///
+    /// The cascade used to be a bare `counters[i + 1] += 1` inside `tick`,
+    /// with no overflow check of its own - and `tick` skips cascaded timers,
+    /// so nothing else ever looked at that counter either. A cascaded timer
+    /// therefore counted past 0x10000 forever: never reloading, never setting
+    /// an overflow flag for DMA sound, and never raising its IRQ. Going
+    /// through the same function recursively gives the cascade target the
+    /// identical overflow handling, including cascading on to the next timer.
+    fn increment(&mut self, i: usize, bus: &mut super::memory::MemoryBus) {
+        self.counters[i] += 1;
+
+        // Timer overflow at 0x10000 (16-bit counter)
+        if self.counters[i] < 0x10000 {
+            return;
+        }
+        self.counters[i] = self.reloads[i];
+        self.overflow_flags[i] += 1;
+
+        // Handle cascade to next timer. A cascade target only counts up while
+        // it is itself enabled.
+        if i < 3 && self.cascaded[i + 1] && self.enabled[i + 1] {
+            self.increment(i + 1, bus);
+        }
+
+        // GBATEK, GBA Interrupt Control: IF bits 3,4,5,6 are Timer 0,1,2,3
+        // overflow. IE and IME gate whether the CPU takes the exception,
+        // never whether IF is set.
+        if self.irq_enabled[i] {
+            bus.io.request_interrupt(1 << (3 + i));
         }
     }
 
