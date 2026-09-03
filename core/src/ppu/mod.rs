@@ -41,6 +41,12 @@ pub struct Ppu {
     /// target - so a game pulsing BLDY to highlight one layer flashed the
     /// entire screen instead.
     scanline_layer: [usize; SCREEN_WIDTH],
+    /// The pixel each `scanline_layer` entry was drawn *over*, and which layer
+    /// that was. Modes 1-5 composite by overdraw rather than by sorting, so
+    /// this is the only record of the 2nd blend target once the top pixel has
+    /// been written; without it `apply_alpha_blend` had nothing to mix with.
+    scanline_second: [(u8, u8, u8); SCREEN_WIDTH],
+    scanline_second_layer: [usize; SCREEN_WIDTH],
     cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
@@ -127,6 +133,8 @@ impl Ppu {
             obj_window: [false; SCREEN_WIDTH],
             window: [0x3F; SCREEN_WIDTH],
             scanline_layer: [LAYER_BD; SCREEN_WIDTH],
+            scanline_second: [(0, 0, 0); SCREEN_WIDTH],
+            scanline_second_layer: [LAYER_BD; SCREEN_WIDTH],
             cycle_counter: 0,
             dispcnt: 0,
             force_blank: false,
@@ -522,6 +530,8 @@ impl Ppu {
             self.frame_buffer[idx + 2] = bb;
         }
         self.scanline_layer = [LAYER_BD; SCREEN_WIDTH];
+        self.scanline_second = [(br, bg_, bb); SCREEN_WIDTH];
+        self.scanline_second_layer = [LAYER_BD; SCREEN_WIDTH];
 
         // The sprite pass comes first for every mode: mode 0 composites from
         // its result, the others overlay it, and OBJ-window sprites have to be
@@ -556,45 +566,14 @@ impl Ppu {
                     continue;
                 }
                 if let Some((rgb, _, _)) = self.obj_pixel[x] {
-                    let idx = (y * SCREEN_WIDTH + x) * 3;
-                    self.frame_buffer[idx] = rgb.0;
-                    self.frame_buffer[idx + 1] = rgb.1;
-                    self.frame_buffer[idx + 2] = rgb.2;
-                    self.scanline_layer[x] = LAYER_OBJ;
+                    self.put_pixel(y, x, rgb, LAYER_OBJ);
                 }
             }
         }
 
-        // Apply windowing (mask pixels outside active windows)
-        let win0_en = self.dispcnt & 0x2000 != 0;
-        let win1_en = self.dispcnt & 0x4000 != 0;
-        let any_window = win0_en || win1_en;
-
-        if any_window {
-            for x in 0..SCREEN_WIDTH {
-                let in_win0 = win0_en
-                    && x >= self.win0h_left as usize
-                    && x < self.win0h_right as usize
-                    && y >= self.win0v_top as usize
-                    && y < self.win0v_bottom as usize;
-                let in_win1 = win1_en
-                    && x >= self.win1h_left as usize
-                    && x < self.win1h_right as usize
-                    && y >= self.win1v_top as usize
-                    && y < self.win1v_bottom as usize;
-
-                if !in_win0 && !in_win1 {
-                    // Outside all windows - apply WINOUT
-                    let winout_bg0 = self.winout & 0x0001 != 0;
-                    let winout_bg1 = self.winout & 0x0002 != 0;
-                    let winout_bg2 = self.winout & 0x0004 != 0;
-                    let winout_bg3 = self.winout & 0x0008 != 0;
-                    let winout_obj = self.winout & 0x0010 != 0;
-                    let _ = (winout_bg0, winout_bg1, winout_bg2, winout_bg3, winout_obj);
-                    // For now, just keep the pixel visible outside windows
-                }
-            }
-        }
+        // Windowing itself is done by `window_mask` before the mode renderers
+        // run; the loop that used to sit here recomputed the WINOUT bits per
+        // pixel and threw them all away.
 
         // Mode 0 applies colour effects per pixel while it composites, which
         // is the only way to know which layer is under the top one. The other
@@ -868,11 +847,7 @@ impl Ppu {
                 let r = ((color & 0x001F) as u8) << 3;
                 let g = (((color >> 5) & 0x001F) as u8) << 3;
                 let b = (((color >> 10) & 0x001F) as u8) << 3;
-                let idx = (y * SCREEN_WIDTH + x) * 3;
-                self.frame_buffer[idx] = r;
-                self.frame_buffer[idx + 1] = g;
-                self.frame_buffer[idx + 2] = b;
-                self.scanline_layer[x] = bg;
+                self.put_pixel(y, x, (r, g, b), bg);
                 break;
             }
 
@@ -979,11 +954,12 @@ impl Ppu {
         }
 
         let color = bus.read16(0x0500_0000 + color_index as u32 * 2);
-        let idx = (y * SCREEN_WIDTH + screen_x) * 3;
-        self.frame_buffer[idx] = ((color & 0x001F) as u8) << 3;
-        self.frame_buffer[idx + 1] = (((color >> 5) & 0x001F) as u8) << 3;
-        self.frame_buffer[idx + 2] = (((color >> 10) & 0x001F) as u8) << 3;
-        self.scanline_layer[screen_x] = bg;
+        let rgb = (
+            ((color & 0x001F) as u8) << 3,
+            (((color >> 5) & 0x001F) as u8) << 3,
+            (((color >> 10) & 0x001F) as u8) << 3,
+        );
+        self.put_pixel(y, screen_x, rgb, bg);
     }
 
     // ========================================================================
@@ -1276,14 +1252,10 @@ impl Ppu {
             let r = ((color & 0x001F) as u8) << 3;
             let g = (((color >> 5) & 0x001F) as u8) << 3;
             let b = (((color >> 10) & 0x001F) as u8) << 3;
-            let idx = (y * SCREEN_WIDTH + x) * 3;
-            self.frame_buffer[idx] = r;
-            self.frame_buffer[idx + 1] = g;
-            self.frame_buffer[idx + 2] = b;
+            // Bitmap modes are BG2 top to bottom - no transparency to fall
+            // through to the backdrop, which stays the 2nd blend target.
+            self.put_pixel(y, x, (r, g, b), 2);
         }
-        // Bitmap modes are BG2 top to bottom - no transparency to fall
-        // through to the backdrop.
-        self.scanline_layer = [2; SCREEN_WIDTH];
     }
 
     // ========================================================================
@@ -1303,12 +1275,8 @@ impl Ppu {
             let r = ((color & 0x001F) as u8) << 3;
             let g = (((color >> 5) & 0x001F) as u8) << 3;
             let b = (((color >> 10) & 0x001F) as u8) << 3;
-            let idx = (y * SCREEN_WIDTH + x) * 3;
-            self.frame_buffer[idx] = r;
-            self.frame_buffer[idx + 1] = g;
-            self.frame_buffer[idx + 2] = b;
+            self.put_pixel(y, x, (r, g, b), 2);
         }
-        self.scanline_layer = [2; SCREEN_WIDTH];
     }
 
     // ========================================================================
@@ -1333,10 +1301,7 @@ impl Ppu {
         for x in 0..SCREEN_WIDTH {
             // Only 160 pixels wide; beyond that, show black
             if x >= 160 {
-                let idx = (y * SCREEN_WIDTH + x) * 3;
-                self.frame_buffer[idx] = 0;
-                self.frame_buffer[idx + 1] = 0;
-                self.frame_buffer[idx + 2] = 0;
+                self.put_pixel(y, x, (0, 0, 0), 2);
                 continue;
             }
 
@@ -1344,17 +1309,30 @@ impl Ppu {
             let r = ((color & 0x001F) as u8) << 3;
             let g = (((color >> 5) & 0x001F) as u8) << 3;
             let b = (((color >> 10) & 0x001F) as u8) << 3;
-            let idx = (y * SCREEN_WIDTH + x) * 3;
-            self.frame_buffer[idx] = r;
-            self.frame_buffer[idx + 1] = g;
-            self.frame_buffer[idx + 2] = b;
+            self.put_pixel(y, x, (r, g, b), 2);
         }
-        self.scanline_layer = [2; SCREEN_WIDTH];
     }
 
     // ========================================================================
     // Color effects (alpha blend, brighten, darken)
     // ========================================================================
+
+    /// Write one composited pixel, pushing whatever was there down into the
+    /// 2nd-target buffers. Every overdraw path in modes 1-5 goes through here
+    /// so that `apply_alpha_blend` has a layer underneath to mix with.
+    fn put_pixel(&mut self, y: usize, x: usize, rgb: (u8, u8, u8), layer: usize) {
+        let idx = (y * SCREEN_WIDTH + x) * 3;
+        self.scanline_second[x] = (
+            self.frame_buffer[idx],
+            self.frame_buffer[idx + 1],
+            self.frame_buffer[idx + 2],
+        );
+        self.scanline_second_layer[x] = self.scanline_layer[x];
+        self.frame_buffer[idx] = rgb.0;
+        self.frame_buffer[idx + 1] = rgb.1;
+        self.frame_buffer[idx + 2] = rgb.2;
+        self.scanline_layer[x] = layer;
+    }
 
     fn apply_color_effects(&mut self, y: usize) {
         let effect = (self.bldcnt >> 6) & 3;
@@ -1368,15 +1346,30 @@ impl Ppu {
     }
 
     fn apply_alpha_blend(&mut self, y: usize) {
-        let eva = (self.bldalpha & 0x001F) as u32;
-        let evb = ((self.bldalpha >> 8) & 0x001F) as u32;
-        // Simplified: blend first two target pixels found
-        // Full implementation would track per-pixel layer info
-        let _ = (y, eva, evb);
+        for x in 0..SCREEN_WIDTH {
+            // BLDCNT bits 0-5 select the 1st target, one bit per layer.
+            if self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
+                continue;
+            }
+            let idx = (y * SCREEN_WIDTH + x) * 3;
+            let top = (
+                self.frame_buffer[idx],
+                self.frame_buffer[idx + 1],
+                self.frame_buffer[idx + 2],
+            );
+            let out = self.alpha_blend(top, self.scanline_second[x], self.scanline_second_layer[x]);
+            self.frame_buffer[idx] = out.0;
+            self.frame_buffer[idx + 1] = out.1;
+            self.frame_buffer[idx + 2] = out.2;
+        }
     }
 
     fn apply_brightness_inc(&mut self, y: usize) {
-        let ey = self.bldy as u32;
+        // GBATEK caps EVY at 16 even though BLDY holds 5 bits. Without the
+        // cap a game writing BLDY > 16 over-brightens here and *panics* in
+        // `apply_brightness_dec`, where the same uncapped EY underflows the
+        // u32 subtraction. `blend()` already caps the mode-0 path.
+        let ey = (self.bldy as u32).min(16);
         if ey == 0 {
             return;
         }
@@ -1400,7 +1393,7 @@ impl Ppu {
     }
 
     fn apply_brightness_dec(&mut self, y: usize) {
-        let ey = self.bldy as u32;
+        let ey = (self.bldy as u32).min(16);
         if ey == 0 {
             return;
         }
@@ -1412,9 +1405,9 @@ impl Ppu {
             let r = self.frame_buffer[idx] as u32;
             let g = self.frame_buffer[idx + 1] as u32;
             let b = self.frame_buffer[idx + 2] as u32;
-            self.frame_buffer[idx] = (r - r * ey / 16).max(0) as u8;
-            self.frame_buffer[idx + 1] = (g - g * ey / 16).max(0) as u8;
-            self.frame_buffer[idx + 2] = (b - b * ey / 16).max(0) as u8;
+            self.frame_buffer[idx] = (r - r * ey / 16) as u8;
+            self.frame_buffer[idx + 1] = (g - g * ey / 16) as u8;
+            self.frame_buffer[idx + 2] = (b - b * ey / 16) as u8;
         }
     }
 

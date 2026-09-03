@@ -740,3 +740,64 @@ fn a_semi_transparent_sprite_over_a_non_target_is_not_blended() {
         "with no second target the sprite must be drawn unblended"
     );
 }
+
+/// BLDY is a 5-bit field but EVY saturates at 16. Darkening with an
+/// out-of-range BLDY used to underflow a u32 subtraction and panic, taking the
+/// whole process down through JNI.
+#[test]
+fn a_bldy_above_16_darkens_to_black_instead_of_panicking() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    gba.bus.write16(0x0500_0002, 0x4210); // BG2 colour 1: mid-grey
+    gba.bus.write8(0x0600_0000, 1);
+    gba.bus.write16(0x0400_0000, 0x0404); // mode 4, BG2 on
+    gba.bus.write16(0x0400_0050, 0x00C4); // effect 3 (darken), 1st target BG2
+    gba.bus.write16(0x0400_0054, 0x001F); // BLDY = 31, above the EVY cap
+
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0x00, 0x00],
+        "EVY caps at 16, so a full darken must reach black"
+    );
+}
+
+/// The same, brightening: EVY over the cap used to over-brighten rather than
+/// saturating at the documented maximum.
+#[test]
+fn a_bldy_above_16_brightens_to_white() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    gba.bus.write16(0x0500_0002, 0x4210);
+    gba.bus.write8(0x0600_0000, 1);
+    gba.bus.write16(0x0400_0000, 0x0404);
+    gba.bus.write16(0x0400_0050, 0x0084); // effect 2 (brighten), 1st target BG2
+    gba.bus.write16(0x0400_0054, 0x001F);
+
+    gba.run_frame();
+    assert_eq!(&gba.frame_buffer()[0..3], [0xFF, 0xFF, 0xFF]);
+}
+
+/// Alpha blending outside mode 0 was a stub: `apply_alpha_blend` computed EVA
+/// and EVB and then threw them away, so a translucent layer in any affine or
+/// bitmap mode drew flat and opaque.
+#[test]
+fn alpha_blending_works_in_a_bitmap_mode() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    gba.bus.write16(0x0500_0000, 0x001F); // backdrop: red
+    gba.bus.write16(0x0500_0002, 0x7C00); // BG2 colour 1: blue
+    gba.bus.write8(0x0600_0000, 1);
+    gba.bus.write16(0x0400_0000, 0x0404); // mode 4, BG2 on
+                                          // Effect 1 (alpha), 1st target BG2 (bit 2), 2nd target backdrop (bit 13).
+    gba.bus.write16(0x0400_0050, 0x2044);
+    gba.bus.write16(0x0400_0052, 0x0808); // EVA = EVB = 8, an even mix
+
+    gba.run_frame();
+    let px = &gba.frame_buffer()[0..3];
+    assert_eq!(
+        px,
+        [0x7C, 0x00, 0x7C],
+        "half blue over half red should come out purple, not flat blue: {px:02X?}"
+    );
+}
