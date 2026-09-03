@@ -653,44 +653,47 @@ private fun LayoutEditBar(
             .background(BurntRoot.copy(alpha = 0.92f))
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
+        // The hint and the controls used to share one row with SpaceBetween.
+        // The text takes its full intrinsic width first, which left too little
+        // for five controls: "Reset" wrapped to two lines and "Done" was
+        // pushed off the right edge entirely, so there was no way out of edit
+        // mode. Giving the controls a row of their own fits them at any width.
+        Text(
+            text = "Touch a button, then drag it",
+            color = PineGlowMist,
+            fontSize = 14.sp,
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.End,
         ) {
-            Text(
-                text = "Touch a button, then drag it",
-                color = PineGlowMist,
-                fontSize = 14.sp,
-            )
-            Row {
-                IconButton(onClick = onCustomButtons) {
-                    Icon(
-                        Icons.Default.AddCircle,
-                        contentDescription = "Custom buttons",
-                        tint = AmberResin,
-                    )
-                }
-                IconButton(onClick = onUndo, enabled = canUndo) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo",
-                        tint = if (canUndo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
-                    )
-                }
-                IconButton(onClick = onRedo, enabled = canRedo) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo",
-                        tint = if (canRedo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
-                    )
-                }
-                TextButton(onClick = onReset) {
-                    Text("Reset", color = AmberResin)
-                }
-                TextButton(onClick = onDone) {
-                    Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
-                }
+            IconButton(onClick = onCustomButtons) {
+                Icon(
+                    Icons.Default.AddCircle,
+                    contentDescription = "Custom buttons",
+                    tint = AmberResin,
+                )
+            }
+            IconButton(onClick = onUndo, enabled = canUndo) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Undo,
+                    contentDescription = "Undo",
+                    tint = if (canUndo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+            IconButton(onClick = onRedo, enabled = canRedo) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Redo,
+                    contentDescription = "Redo",
+                    tint = if (canRedo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+            TextButton(onClick = onReset) {
+                Text("Reset", color = AmberResin)
+            }
+            TextButton(onClick = onDone) {
+                Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
             }
         }
     }
