@@ -40,6 +40,9 @@ import androidx.compose.foundation.layout.offset
 import com.geebeeayy.app.data.ControlButton
 import com.geebeeayy.app.data.ControlLayout
 import com.geebeeayy.app.data.ControlLayoutStore
+import com.geebeeayy.app.data.CustomButton
+import com.geebeeayy.app.data.CustomButtonMode
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
@@ -97,11 +100,35 @@ fun EmulationScreen(
     // every button being outlined at once.
     var selectedButton by remember { mutableStateOf<ControlButton?>(null) }
     val offsets = remember { mutableStateMapOf<ControlButton, Offset>() }
-    fun loadOffsets(layoutId: String) {
+    // Custom buttons (combos, sequences, hold toggles) belong to the layout
+    // the same way the real buttons' positions do. Their drag is separate
+    // from the real buttons' undo/redo/Done staging below - each drag saves
+    // its new position immediately, since there is no equivalent "abandon
+    // this edit" concern for a position with no default to revert to.
+    var customButtons by remember { mutableStateOf<List<CustomButton>>(emptyList()) }
+    val customOffsets = remember { mutableStateMapOf<String, Offset>() }
+    val heldToggles = remember { mutableStateMapOf<String, Boolean>() }
+    var selectedCustomId by remember { mutableStateOf<String?>(null) }
+    var customButtonsModalOpen by remember { mutableStateOf(false) }
+    fun loadLayout(layoutId: String) {
+        // A toggle-held custom button's keys are still down in the core -
+        // switching layouts out from under it must not leave them stuck.
+        heldToggles.forEach { (id, isHeld) ->
+            if (isHeld) {
+                customButtons.firstOrNull { it.id == id }?.keys?.forEach { key -> onKeyChange(key, false) }
+            }
+        }
         offsets.clear()
         ControlButton.entries.forEach { button ->
             val (x, y) = layoutStore.getControlOffset(layoutId, button)
             offsets[button] = Offset(x, y)
+        }
+        customButtons = layoutStore.getCustomButtons(layoutId)
+        customOffsets.clear()
+        heldToggles.clear()
+        customButtons.forEach { button ->
+            val (x, y) = layoutStore.getCustomButtonOffset(layoutId, button.id)
+            customOffsets[button.id] = Offset(x, y)
         }
     }
     // The ROM loads asynchronously - its key (and so which layout it uses)
@@ -109,7 +136,7 @@ fun EmulationScreen(
     LaunchedEffect(gameKey()) {
         val key = gameKey() ?: return@LaunchedEffect
         activeLayoutId = layoutStore.getLayoutForGame(key)
-        loadOffsets(activeLayoutId)
+        loadLayout(activeLayoutId)
     }
     // Undo/redo history for the current edit session: a stack of full-layout
     // snapshots taken before each change (a drag gesture or Reset), not one
@@ -139,6 +166,17 @@ fun EmulationScreen(
         selectedButton = button
     }
     val handleDragEnd: () -> Unit = { selectedButton = null }
+    // A custom button's position saves the moment the drag ends - there is
+    // no Done to stage it behind, so `selectedCustomId` still names the one
+    // that just finished when this fires.
+    val handleCustomDragStart: (String) -> Unit = { id -> selectedCustomId = id }
+    val handleCustomDragEnd: () -> Unit = {
+        selectedCustomId?.let { id ->
+            val pos = customOffsets[id] ?: Offset.Zero
+            layoutStore.setCustomButtonOffset(activeLayoutId, id, pos.x, pos.y)
+        }
+        selectedCustomId = null
+    }
     // Makes `layout` the current game's layout - a radio pick just switches
     // what is on screen; opening its editor also closes the modal and drops
     // straight into dragging, since there is no point editing a layout that
@@ -146,7 +184,7 @@ fun EmulationScreen(
     fun selectLayout(layout: ControlLayout, openEditor: Boolean) {
         activeLayoutId = layout.id
         gameKey()?.let { layoutStore.setLayoutForGame(it, layout.id) }
-        loadOffsets(layout.id)
+        loadLayout(layout.id)
         undoStack.clear()
         redoStack.clear()
         selectedButton = null
@@ -356,6 +394,36 @@ fun EmulationScreen(
             }
         }
 
+        // Custom buttons float over everything, positioned absolutely rather
+        // than nudged from a natural spot like the real buttons - a
+        // player-made button has no natural position to nudge from. Visible
+        // and live during play, not just while editing; only the drag
+        // affordance is gated on that.
+        customButtons.forEach { button ->
+            Box(
+                modifier = Modifier.movableControl(
+                    button.id,
+                    editingLayout,
+                    selectedCustomId,
+                    pillShape,
+                    customOffsets,
+                    handleCustomDragStart,
+                    handleCustomDragEnd,
+                )
+            ) {
+                CustomButtonView(
+                    button = button,
+                    held = heldToggles[button.id] == true,
+                    onToggleHeld = {
+                        val nowHeld = heldToggles[button.id] != true
+                        heldToggles[button.id] = nowHeld
+                        button.keys.forEach { key -> onKeyChange(key, nowHeld) }
+                    },
+                    onKeyChange = onKeyChange,
+                )
+            }
+        }
+
         if (editingLayout) {
             LayoutEditBar(
                 onDone = {
@@ -377,7 +445,32 @@ fun EmulationScreen(
                 canRedo = redoStack.isNotEmpty(),
                 onUndo = undoEdit,
                 onRedo = redoEdit,
+                onCustomButtons = { customButtonsModalOpen = true },
                 modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
+
+        if (customButtonsModalOpen) {
+            CustomButtonsListDialog(
+                buttons = customButtons,
+                onSave = { button ->
+                    layoutStore.saveCustomButton(activeLayoutId, button)
+                    customButtons = layoutStore.getCustomButtons(activeLayoutId)
+                    customOffsets.getOrPut(button.id) {
+                        val (x, y) = layoutStore.getCustomButtonOffset(activeLayoutId, button.id)
+                        Offset(x, y)
+                    }
+                },
+                onDelete = { button ->
+                    if (heldToggles[button.id] == true) {
+                        button.keys.forEach { key -> onKeyChange(key, false) }
+                    }
+                    layoutStore.deleteCustomButton(activeLayoutId, button.id)
+                    customButtons = layoutStore.getCustomButtons(activeLayoutId)
+                    customOffsets.remove(button.id)
+                    heldToggles.remove(button.id)
+                },
+                onDismiss = { customButtonsModalOpen = false },
             )
         }
 
@@ -536,6 +629,7 @@ private fun LayoutEditBar(
     canRedo: Boolean,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
+    onCustomButtons: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -555,6 +649,13 @@ private fun LayoutEditBar(
                 fontSize = 14.sp,
             )
             Row {
+                IconButton(onClick = onCustomButtons) {
+                    Icon(
+                        Icons.Default.AddCircle,
+                        contentDescription = "Custom buttons",
+                        tint = AmberResin,
+                    )
+                }
                 IconButton(onClick = onUndo, enabled = canUndo) {
                     Icon(
                         Icons.AutoMirrored.Filled.Undo,
@@ -703,13 +804,13 @@ fun GbaScreen(
  * also fire - you are moving it, not pressing it.
  */
 @Composable
-private fun Modifier.movableControl(
-    button: ControlButton,
+private fun <T> Modifier.movableControl(
+    button: T,
     editing: Boolean,
-    selected: ControlButton?,
+    selected: T?,
     shape: Shape,
-    offsets: MutableMap<ControlButton, Offset>,
-    onDragStart: (ControlButton) -> Unit = {},
+    offsets: MutableMap<T, Offset>,
+    onDragStart: (T) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ): Modifier {
     val offset = offsets[button] ?: Offset.Zero
@@ -892,6 +993,82 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
         Text(label, color = PineGlowMist, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }
+
+/**
+ * A player-defined [CustomButton]. Its gesture depends on [CustomButton.mode]:
+ * a combo presses and releases every key together like a real button would,
+ * a sequence fires once per tap and is not held, and a hold toggle flips
+ * [held] on tap rather than tracking the finger at all.
+ */
+@Composable
+fun CustomButtonView(
+    button: CustomButton,
+    held: Boolean,
+    onToggleHeld: () -> Unit,
+    onKeyChange: (Int, Boolean) -> Unit,
+) {
+    var isPressed by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Button(
+        onClick = { /* Handled via pointerInput; see below per mode. */ },
+        modifier = Modifier
+            .height(48.dp)
+            .widthIn(min = 64.dp)
+            .pointerInput(button.id, button.mode, button.keys) {
+                when (button.mode) {
+                    CustomButtonMode.COMBO -> awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val down = event.changes.any { it.pressed }
+                            if (down != isPressed) {
+                                isPressed = down
+                                button.keys.forEach { key -> onKeyChange(key, down) }
+                            }
+                        }
+                    }
+                    CustomButtonMode.TOGGLE_HOLD -> detectTapGestures(onTap = { onToggleHeld() })
+                    CustomButtonMode.SEQUENCE -> detectTapGestures(
+                        onTap = {
+                            scope.launch {
+                                for (key in button.keys) {
+                                    onKeyChange(key, true)
+                                    delay(SEQUENCE_PRESS_MS)
+                                    onKeyChange(key, false)
+                                    delay(SEQUENCE_GAP_MS)
+                                }
+                            }
+                        },
+                    )
+                }
+            },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = when {
+                held -> GoldenSaplight
+                isPressed -> AmberResin
+                else -> HoneyDark
+            },
+        ),
+        shape = pillShape,
+        contentPadding = PaddingValues(horizontal = 12.dp),
+    ) {
+        Text(
+            button.name,
+            color = if (held) BurntRoot else PineGlowMist,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** How long a scripted key-tap in a [CustomButtonMode.SEQUENCE] stays down,
+ *  and the gap before the next one - long enough for the core to register
+ *  each press as its own frame of input, short enough to still read as one
+ *  tap of the button. */
+private const val SEQUENCE_PRESS_MS = 60L
+private const val SEQUENCE_GAP_MS = 60L
 
 /** Pause/resume and fast-forward toggle buttons, shared by the portrait and landscape layouts. */
 @Composable
