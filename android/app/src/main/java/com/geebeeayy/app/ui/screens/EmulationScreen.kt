@@ -171,7 +171,13 @@ fun EmulationScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BurntRoot)
+            // Plain black rather than the palette's BurntRoot: this is the
+            // in-game screen, so the background should recede and let the
+            // palette-coloured icons and buttons be the only colour on it.
+            // Dialogs (save states, layouts) and overlay chrome (the state
+            // toast, the layout-edit bar) keep BurntRoot/HoneyDark - they are
+            // not this background.
+            .background(Color.Black)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Top bar
