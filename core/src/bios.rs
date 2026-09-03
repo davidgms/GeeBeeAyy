@@ -133,8 +133,12 @@ fn handle_div(cpu: &mut Cpu) -> bool {
         cpu.set_reg(0, 0);
         cpu.set_reg(1, 0);
     } else {
-        cpu.set_reg(0, (numerator / denominator) as u32);
-        cpu.set_reg(1, (numerator % denominator) as u32);
+        // `wrapping_*`, not `/` and `%`: the ARM7TDMI BIOS returns
+        // 0x80000000 for INT_MIN / -1, where Rust's `i32::div` panics with
+        // "attempt to divide with overflow" in release as well as debug -
+        // which aborts the whole process through JNI.
+        cpu.set_reg(0, numerator.wrapping_div(denominator) as u32);
+        cpu.set_reg(1, numerator.wrapping_rem(denominator) as u32);
     }
     true
 }
@@ -146,8 +150,12 @@ fn handle_div_arm(cpu: &mut Cpu) -> bool {
         cpu.set_reg(0, 0);
         cpu.set_reg(1, 0);
     } else {
-        cpu.set_reg(0, (numerator / denominator) as u32);
-        cpu.set_reg(1, (numerator % denominator) as u32);
+        // `wrapping_*`, not `/` and `%`: the ARM7TDMI BIOS returns
+        // 0x80000000 for INT_MIN / -1, where Rust's `i32::div` panics with
+        // "attempt to divide with overflow" in release as well as debug -
+        // which aborts the whole process through JNI.
+        cpu.set_reg(0, numerator.wrapping_div(denominator) as u32);
+        cpu.set_reg(1, numerator.wrapping_rem(denominator) as u32);
     }
     true
 }

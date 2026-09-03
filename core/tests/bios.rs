@@ -528,3 +528,25 @@ fn a_corrupt_decompression_header_cannot_ask_for_sixteen_megabytes() {
     // spends millions of iterations before returning.
     cpu.step(&mut bus);
 }
+
+// ---------------------------------------------------------------------------
+// SWI 0x06 / 0x07: Div overflow
+// ---------------------------------------------------------------------------
+
+#[test]
+fn div_of_int_min_by_minus_one_does_not_panic() {
+    // Rust's i32 `/` panics on INT_MIN / -1 in release as well as debug, which
+    // aborts the whole process through JNI. The BIOS wraps and returns
+    // 0x80000000 with a remainder of 0.
+    let (cpu, _) = run_swi(0x06, [0x8000_0000, 0xFFFF_FFFF, 0, 0]);
+    assert_eq!(cpu.registers[0], 0x8000_0000);
+    assert_eq!(cpu.registers[1], 0);
+}
+
+#[test]
+fn div_arm_of_int_min_by_minus_one_does_not_panic() {
+    // SWI 0x07 takes its operands the other way round: r0 is the denominator.
+    let (cpu, _) = run_swi(0x07, [0xFFFF_FFFF, 0x8000_0000, 0, 0]);
+    assert_eq!(cpu.registers[0], 0x8000_0000);
+    assert_eq!(cpu.registers[1], 0);
+}
