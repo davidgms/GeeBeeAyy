@@ -102,9 +102,12 @@ This **replaced** an opaque-handle API (`save_state_create` / `load_state` /
 free. States were not exportable to a file at all under that design, which is
 why "save states are not wired to a UI" understated the problem.
 
-A `-1` from `state_write` means the emulator is **partially restored**, not
-untouched: `SaveState::restore` writes into the live machine as it parses.
-Treat it as "reload the ROM", not "carry on". Fixing that is part of v3.
+A `-1` from `state_write` leaves the emulator **untouched**. `SaveState::restore`
+snapshots the machine before parsing and rolls back if the parse fails, so a
+bad file costs the load, not the session: report it and carry on. (This was
+once the other way round - a rejected state left a hybrid of two machines -
+and the frontends still carried "reload the ROM" wording long after the core
+stopped needing it.)
 
 There is deliberately **no path-taking FFI**. Android hands out content URIs
 and file descriptors, not paths the core can `fs::write`. Storage policy is the

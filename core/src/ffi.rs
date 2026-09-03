@@ -417,9 +417,10 @@ pub unsafe extern "C" fn geebeeayy_state_read(
 
 /// Restore a save state. Returns 0 on success, -1 if the data is rejected.
 ///
-/// A rejected state leaves the emulator **partially restored**: `restore`
-/// writes into the live machine as it parses. Treat -1 as "reload the ROM",
-/// not as "carry on". See `docs/save-data.md`.
+/// `restore` snapshots the machine before parsing and rolls back if the parse
+/// fails, so a rejected state leaves the emulator exactly as it was and -1
+/// means "that file was no good", not "reload the ROM". See
+/// `docs/save-data.md`.
 ///
 /// # Safety
 /// `ptr` must be a valid handle and `data` must point to `len` readable bytes.
