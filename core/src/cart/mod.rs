@@ -457,15 +457,18 @@ fn detect_save_type(rom: &[u8], title: &str) -> SaveType {
         }
     }
 
-    // Scan ROM for save type strings
-    let rom_str = String::from_utf8_lossy(rom);
-    if rom_str.contains("SRAM_V") {
+    // Scan ROM for save type strings. A byte-window search, not
+    // `String::from_utf8_lossy(rom)`: a ROM is never valid UTF-8, so that
+    // allocated a fresh String with every invalid byte expanded to a 3-byte
+    // replacement char - up to ~96 MB transiently for a 32 MB cart.
+    let contains = |pat: &str| rom.windows(pat.len()).any(|w| w == pat.as_bytes());
+    if contains("SRAM_V") {
         SaveType::Sram
-    } else if rom_str.contains("FLASH_V") || rom_str.contains("FLASH512_V") {
+    } else if contains("FLASH_V") || contains("FLASH512_V") {
         SaveType::Flash64
-    } else if rom_str.contains("FLASH1M_V") {
+    } else if contains("FLASH1M_V") {
         SaveType::Flash128
-    } else if rom_str.contains("EEPROM_V") {
+    } else if contains("EEPROM_V") {
         // Determine size from ROM size or game code
         if rom.len() > 0x1000000 {
             SaveType::Eeprom8k
