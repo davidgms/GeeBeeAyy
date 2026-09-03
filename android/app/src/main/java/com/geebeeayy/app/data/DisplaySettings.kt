@@ -47,32 +47,32 @@ class DisplaySettings(context: Context) {
     }
 
     /**
-     * Per-group nudge for the on-screen controls, in dp, on top of the default
-     * layout.
+     * Per-button nudge for the on-screen controls, in dp, on top of the
+     * default layout.
      *
      * An offset rather than an absolute position: the default arrangement
      * already adapts to the screen, and nudging it keeps that adaptation while
-     * letting a player move a group to where their thumb actually is. Groups
-     * are identified by [ControlGroup].
+     * letting a player move a button to where their thumb actually is.
+     * Buttons are identified by [ControlButton].
      */
-    fun getControlOffset(group: ControlGroup): Pair<Float, Float> = Pair(
-        prefs.getFloat("${KEY_OFFSET_PREFIX}${group.name}_x", 0f),
-        prefs.getFloat("${KEY_OFFSET_PREFIX}${group.name}_y", 0f),
+    fun getControlOffset(button: ControlButton): Pair<Float, Float> = Pair(
+        prefs.getFloat("${KEY_OFFSET_PREFIX}${button.name}_x", 0f),
+        prefs.getFloat("${KEY_OFFSET_PREFIX}${button.name}_y", 0f),
     )
 
-    fun setControlOffset(group: ControlGroup, x: Float, y: Float) {
+    fun setControlOffset(button: ControlButton, x: Float, y: Float) {
         prefs.edit()
-            .putFloat("${KEY_OFFSET_PREFIX}${group.name}_x", x)
-            .putFloat("${KEY_OFFSET_PREFIX}${group.name}_y", y)
+            .putFloat("${KEY_OFFSET_PREFIX}${button.name}_x", x)
+            .putFloat("${KEY_OFFSET_PREFIX}${button.name}_y", y)
             .apply()
     }
 
-    /** Put every group back where the default layout puts it. */
+    /** Put every button back where the default layout puts it. */
     fun resetControlOffsets() {
         val edit = prefs.edit()
-        ControlGroup.entries.forEach { group ->
-            edit.remove("${KEY_OFFSET_PREFIX}${group.name}_x")
-            edit.remove("${KEY_OFFSET_PREFIX}${group.name}_y")
+        ControlButton.entries.forEach { button ->
+            edit.remove("${KEY_OFFSET_PREFIX}${button.name}_x")
+            edit.remove("${KEY_OFFSET_PREFIX}${button.name}_y")
         }
         edit.apply()
     }

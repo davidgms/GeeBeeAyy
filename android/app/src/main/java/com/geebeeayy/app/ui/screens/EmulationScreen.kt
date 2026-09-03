@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -35,7 +36,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
-import com.geebeeayy.app.data.ControlGroup
+import com.geebeeayy.app.data.ControlButton
 import androidx.compose.ui.platform.LocalContext
 import com.geebeeayy.app.data.DisplaySettings
 import androidx.compose.ui.platform.LocalConfiguration
@@ -83,19 +84,23 @@ fun EmulationScreen(
     val context = LocalContext.current
     val settings = remember { DisplaySettings(context) }
     var editingLayout by remember { mutableStateOf(false) }
+    // The button currently being dragged, so only it gets the outline - a
+    // player touches a button, sees it highlight, then drags it, rather than
+    // every button being outlined at once.
+    var selectedButton by remember { mutableStateOf<ControlButton?>(null) }
     val offsets = remember {
-        mutableStateMapOf<ControlGroup, Offset>().apply {
-            ControlGroup.entries.forEach { group ->
-                val (x, y) = settings.getControlOffset(group)
-                put(group, Offset(x, y))
+        mutableStateMapOf<ControlButton, Offset>().apply {
+            ControlButton.entries.forEach { button ->
+                val (x, y) = settings.getControlOffset(button)
+                put(button, Offset(x, y))
             }
         }
     }
     // Undo/redo history for the current edit session: a stack of full-layout
     // snapshots taken before each change (a drag gesture or Reset), not one
     // per pixel of movement - a single drag is one undo step, not hundreds.
-    val undoStack = remember { mutableStateListOf<Map<ControlGroup, Offset>>() }
-    val redoStack = remember { mutableStateListOf<Map<ControlGroup, Offset>>() }
+    val undoStack = remember { mutableStateListOf<Map<ControlButton, Offset>>() }
+    val redoStack = remember { mutableStateListOf<Map<ControlButton, Offset>>() }
     val pushUndoSnapshot: () -> Unit = {
         undoStack.add(offsets.toMap())
         redoStack.clear()
@@ -114,6 +119,11 @@ fun EmulationScreen(
             offsets.putAll(next)
         }
     }
+    val handleDragStart: (ControlButton) -> Unit = { button ->
+        pushUndoSnapshot()
+        selectedButton = button
+    }
+    val handleDragEnd: () -> Unit = { selectedButton = null }
     var isFastForward by remember { mutableStateOf(false) }
     var showSlots by remember { mutableStateOf(false) }
 
@@ -281,7 +291,9 @@ fun EmulationScreen(
                     onKeyChange = onKeyChange,
                     editingLayout = editingLayout,
                     offsets = offsets,
-                    onDragStart = pushUndoSnapshot,
+                    selectedButton = selectedButton,
+                    onDragStart = handleDragStart,
+                    onDragEnd = handleDragEnd,
                 )
                 }
             }
@@ -290,18 +302,19 @@ fun EmulationScreen(
         if (editingLayout) {
             LayoutEditBar(
                 onDone = {
-                    ControlGroup.entries.forEach { group ->
-                        val o = offsets[group] ?: Offset.Zero
-                        settings.setControlOffset(group, o.x, o.y)
+                    ControlButton.entries.forEach { button ->
+                        val o = offsets[button] ?: Offset.Zero
+                        settings.setControlOffset(button, o.x, o.y)
                     }
                     editingLayout = false
+                    selectedButton = null
                     undoStack.clear()
                     redoStack.clear()
                 },
                 onReset = {
                     pushUndoSnapshot()
                     settings.resetControlOffsets()
-                    ControlGroup.entries.forEach { offsets[it] = Offset.Zero }
+                    ControlButton.entries.forEach { offsets[it] = Offset.Zero }
                 },
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty(),
@@ -354,6 +367,7 @@ fun EmulationScreen(
                         showMenu = false
                         undoStack.clear()
                         redoStack.clear()
+                        selectedButton = null
                         editingLayout = true
                     },
                     leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
@@ -455,7 +469,7 @@ private fun LayoutEditBar(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = "Drag the outlined controls",
+                text = "Touch a button, then drag it",
                 color = PineGlowMist,
                 fontSize = 14.sp,
             )
@@ -597,20 +611,27 @@ fun GbaScreen(
 }
 
 /**
- * Applies a control group's saved nudge, and in [editing] mode lets it be
- * dragged to a new one.
+ * Applies a button's saved nudge, and in [editing] mode lets it be dragged to
+ * a new one.
  *
- * The drag is consumed here, so while editing the buttons underneath do not
- * also fire - you are moving the D-pad, not pressing left.
+ * The outline only shows on [selected] - the one the player currently has a
+ * finger on - not on every button at once: touch a button, see it highlight,
+ * then drag it.
+ *
+ * The drag is consumed here, so while editing the button underneath does not
+ * also fire - you are moving it, not pressing it.
  */
 @Composable
-private fun Modifier.movableGroup(
-    group: ControlGroup,
+private fun Modifier.movableControl(
+    button: ControlButton,
     editing: Boolean,
-    offsets: MutableMap<ControlGroup, Offset>,
-    onDragStart: () -> Unit = {},
+    selected: ControlButton?,
+    shape: Shape,
+    offsets: MutableMap<ControlButton, Offset>,
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
 ): Modifier {
-    val offset = offsets[group] ?: Offset.Zero
+    val offset = offsets[button] ?: Offset.Zero
     return this
         .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
         .then(
@@ -618,14 +639,22 @@ private fun Modifier.movableGroup(
                 Modifier
             } else {
                 Modifier
-                    .border(2.dp, GoldenSaplight, RoundedCornerShape(8.dp))
-                    .pointerInput(group) {
+                    .then(
+                        if (selected == button) {
+                            Modifier.border(2.dp, GoldenSaplight, shape)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .pointerInput(button) {
                         detectDragGestures(
-                            onDragStart = { onDragStart() },
+                            onDragStart = { onDragStart(button) },
+                            onDragEnd = onDragEnd,
+                            onDragCancel = onDragEnd,
                         ) { change, drag ->
                             change.consume()
-                            val current = offsets[group] ?: Offset.Zero
-                            offsets[group] = current + drag
+                            val current = offsets[button] ?: Offset.Zero
+                            offsets[button] = current + drag
                         }
                     }
             }
@@ -642,15 +671,15 @@ fun GameControls(
     onRewind: (Boolean) -> Unit,
     onKeyChange: (Int, Boolean) -> Unit,
     editingLayout: Boolean = false,
-    offsets: MutableMap<ControlGroup, Offset> = mutableMapOf(),
-    onDragStart: () -> Unit = {},
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    selectedButton: ControlButton? = null,
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // Shoulder buttons sit above the rest, where the real hardware puts
         // them: L on the far left, R on the far right.
-        Box(modifier = Modifier.movableGroup(ControlGroup.SHOULDERS, editingLayout, offsets, onDragStart)) {
-            ShoulderRow(onKeyChange = onKeyChange)
-        }
+        ShoulderRow(onKeyChange, editingLayout, selectedButton, offsets, onDragStart, onDragEnd)
 
         // D-pad hard left, face buttons hard right, nothing between them -
         // the thumbs rest at the edges of the phone, not in the middle.
@@ -661,48 +690,89 @@ fun GameControls(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(modifier = Modifier.movableGroup(ControlGroup.DPAD, editingLayout, offsets, onDragStart)) {
-                DPad(onKeyChange = onKeyChange)
-            }
-            Box(modifier = Modifier.movableGroup(ControlGroup.ACTIONS, editingLayout, offsets, onDragStart)) {
-                ActionButtons(onKeyChange = onKeyChange)
-            }
+            DPad(
+                onKeyChange = onKeyChange,
+                editingLayout = editingLayout,
+                selectedButton = selectedButton,
+                offsets = offsets,
+                onDragStart = onDragStart,
+                onDragEnd = onDragEnd,
+            )
+            ActionButtons(onKeyChange, editingLayout, selectedButton, offsets, onDragStart, onDragEnd)
         }
 
         // Start and Select. Without these most games cannot get past a title
         // screen, so they are not optional extras.
-        Box(modifier = Modifier.movableGroup(ControlGroup.START_SELECT, editingLayout, offsets, onDragStart)) {
-            StartSelectRow(onKeyChange = onKeyChange)
-        }
+        StartSelectRow(onKeyChange, editingLayout, selectedButton, offsets, onDragStart, onDragEnd)
     }
 }
 
+private val pillShape = RoundedCornerShape(24.dp)
+
 /** L and R, pushed to the outer edges. */
 @Composable
-fun ShoulderRow(onKeyChange: (Int, Boolean) -> Unit) {
+fun ShoulderRow(
+    onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+    selectedButton: ControlButton? = null,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        PillButton("L", GbaEngine.KEY_L, onKeyChange)
-        PillButton("R", GbaEngine.KEY_R, onKeyChange)
+        Box(
+            modifier = Modifier.movableControl(
+                ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+            )
+        ) {
+            PillButton("L", GbaEngine.KEY_L, onKeyChange)
+        }
+        Box(
+            modifier = Modifier.movableControl(
+                ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+            )
+        ) {
+            PillButton("R", GbaEngine.KEY_R, onKeyChange)
+        }
     }
 }
 
 /** Start and Select, centred under the main controls. */
 @Composable
-fun StartSelectRow(onKeyChange: (Int, Boolean) -> Unit) {
+fun StartSelectRow(
+    onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+    selectedButton: ControlButton? = null,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.Center,
     ) {
-        PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
+        Box(
+            modifier = Modifier.movableControl(
+                ControlButton.SELECT, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+            )
+        ) {
+            PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
+        }
         Spacer(modifier = Modifier.width(24.dp))
-        PillButton("START", GbaEngine.KEY_START, onKeyChange)
+        Box(
+            modifier = Modifier.movableControl(
+                ControlButton.START, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+            )
+        ) {
+            PillButton("START", GbaEngine.KEY_START, onKeyChange)
+        }
     }
 }
 
@@ -744,7 +814,15 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
 
 /** Pause/resume and fast-forward toggle buttons, shared by the portrait and landscape layouts. */
 @Composable
-fun DPad(onKeyChange: (Int, Boolean) -> Unit, modifier: Modifier = Modifier) {
+fun DPad(
+    onKeyChange: (Int, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    editingLayout: Boolean = false,
+    selectedButton: ControlButton? = null,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
     val buttonColor = HoneyDark
     val pressColor = AmberResin
 
@@ -753,15 +831,39 @@ fun DPad(onKeyChange: (Int, Boolean) -> Unit, modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Up
-        DPadButton(Icons.Default.KeyboardArrowUp, "Up", GbaEngine.KEY_UP, buttonColor, pressColor, onKeyChange)
+        Box(
+            modifier = Modifier.movableControl(
+                ControlButton.DPAD_UP, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+            )
+        ) {
+            DPadButton(Icons.Default.KeyboardArrowUp, "Up", GbaEngine.KEY_UP, buttonColor, pressColor, onKeyChange)
+        }
         // Left, Center, Right
         Row {
-            DPadButton(Icons.Default.KeyboardArrowLeft, "Left", GbaEngine.KEY_LEFT, buttonColor, pressColor, onKeyChange)
+            Box(
+                modifier = Modifier.movableControl(
+                    ControlButton.DPAD_LEFT, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+                )
+            ) {
+                DPadButton(Icons.Default.KeyboardArrowLeft, "Left", GbaEngine.KEY_LEFT, buttonColor, pressColor, onKeyChange)
+            }
             Box(modifier = Modifier.size(48.dp))
-            DPadButton(Icons.Default.KeyboardArrowRight, "Right", GbaEngine.KEY_RIGHT, buttonColor, pressColor, onKeyChange)
+            Box(
+                modifier = Modifier.movableControl(
+                    ControlButton.DPAD_RIGHT, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+                )
+            ) {
+                DPadButton(Icons.Default.KeyboardArrowRight, "Right", GbaEngine.KEY_RIGHT, buttonColor, pressColor, onKeyChange)
+            }
         }
         // Down
-        DPadButton(Icons.Default.KeyboardArrowDown, "Down", GbaEngine.KEY_DOWN, buttonColor, pressColor, onKeyChange)
+        Box(
+            modifier = Modifier.movableControl(
+                ControlButton.DPAD_DOWN, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+            )
+        ) {
+            DPadButton(Icons.Default.KeyboardArrowDown, "Down", GbaEngine.KEY_DOWN, buttonColor, pressColor, onKeyChange)
+        }
     }
 }
 
@@ -806,7 +908,14 @@ fun DPadButton(
 }
 
 @Composable
-fun ActionButtons(onKeyChange: (Int, Boolean) -> Unit) {
+fun ActionButtons(
+    onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+    selectedButton: ControlButton? = null,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
     val buttonColor = HoneyDark
     val pressColor = GoldenSaplight
 
@@ -817,8 +926,14 @@ fun ActionButtons(onKeyChange: (Int, Boolean) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, Modifier, onKeyChange)
-        ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, Modifier, onKeyChange)
+        val aModifier = Modifier.movableControl(
+            ControlButton.BUTTON_A, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+        )
+        val bModifier = Modifier.movableControl(
+            ControlButton.BUTTON_B, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+        )
+        ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, aModifier, onKeyChange)
+        ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, bModifier, onKeyChange)
     }
 }
 
