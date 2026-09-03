@@ -180,6 +180,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     @Volatile
     private var romStateKey: String? = null
 
+    /** The loaded ROM's stable identity - title + game code, not its file
+     *  path - for anything keyed "per game" rather than per file, such as
+     *  which control layout it uses. Null until [loadRomFromPath] finishes. */
+    fun currentRomKey(): String? = romStateKey
+
     private val statesDir: File by lazy {
         File(getApplication<Application>().filesDir, "states").apply { mkdirs() }
     }

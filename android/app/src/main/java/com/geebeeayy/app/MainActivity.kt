@@ -232,6 +232,7 @@ fun GeeBeeAyyNavHost() {
                 stateSlots = { viewModel.stateSlots() },
                 onScreenshot = { viewModel.takeScreenshot() },
                 onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
+                gameKey = { viewModel.currentRomKey() },
             )
         }
 

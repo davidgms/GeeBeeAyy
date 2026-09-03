@@ -46,37 +46,6 @@ class DisplaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_FORCE_PORTRAIT, forced).apply()
     }
 
-    /**
-     * Per-button nudge for the on-screen controls, in dp, on top of the
-     * default layout.
-     *
-     * An offset rather than an absolute position: the default arrangement
-     * already adapts to the screen, and nudging it keeps that adaptation while
-     * letting a player move a button to where their thumb actually is.
-     * Buttons are identified by [ControlButton].
-     */
-    fun getControlOffset(button: ControlButton): Pair<Float, Float> = Pair(
-        prefs.getFloat("${KEY_OFFSET_PREFIX}${button.name}_x", 0f),
-        prefs.getFloat("${KEY_OFFSET_PREFIX}${button.name}_y", 0f),
-    )
-
-    fun setControlOffset(button: ControlButton, x: Float, y: Float) {
-        prefs.edit()
-            .putFloat("${KEY_OFFSET_PREFIX}${button.name}_x", x)
-            .putFloat("${KEY_OFFSET_PREFIX}${button.name}_y", y)
-            .apply()
-    }
-
-    /** Put every button back where the default layout puts it. */
-    fun resetControlOffsets() {
-        val edit = prefs.edit()
-        ControlButton.entries.forEach { button ->
-            edit.remove("${KEY_OFFSET_PREFIX}${button.name}_x")
-            edit.remove("${KEY_OFFSET_PREFIX}${button.name}_y")
-        }
-        edit.apply()
-    }
-
     fun getScreenFilter(): ScreenFilter =
         prefs.getString(KEY_SCREEN_FILTER, null)
             ?.let { saved -> runCatching { ScreenFilter.valueOf(saved) }.getOrNull() }
@@ -129,6 +98,5 @@ class DisplaySettings(context: Context) {
         private const val KEY_CONTROL_SCALE = "control_scale"
         private const val KEY_CONTROL_OPACITY = "control_opacity"
         private const val KEY_SCREEN_FILTER = "screen_filter"
-        private const val KEY_OFFSET_PREFIX = "control_offset_"
     }
 }

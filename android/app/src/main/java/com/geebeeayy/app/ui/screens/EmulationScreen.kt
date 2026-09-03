@@ -3,6 +3,7 @@ package com.geebeeayy.app.ui.screens
 import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -37,11 +38,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
 import com.geebeeayy.app.data.ControlButton
+import com.geebeeayy.app.data.ControlLayout
+import com.geebeeayy.app.data.ControlLayoutStore
 import androidx.compose.ui.platform.LocalContext
-import com.geebeeayy.app.data.DisplaySettings
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -75,6 +78,7 @@ fun EmulationScreen(
     stateSlots: () -> List<StateSlot> = { emptyList() },
     onScreenshot: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
+    gameKey: () -> String? = { null },
 ) {
     var isPaused by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
@@ -82,19 +86,29 @@ fun EmulationScreen(
     // Layout editing. The offsets are held here while dragging and written
     // back only on Done, so an abandoned edit leaves the saved layout alone.
     val context = LocalContext.current
-    val settings = remember { DisplaySettings(context) }
+    val layoutStore = remember { ControlLayoutStore(context) }
+    var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
+    var activeLayoutId by remember { mutableStateOf(ControlLayoutStore.DEFAULT_LAYOUT_ID) }
     var editingLayout by remember { mutableStateOf(false) }
+    var layoutsModalOpen by remember { mutableStateOf(false) }
     // The button currently being dragged, so only it gets the outline - a
     // player touches a button, sees it highlight, then drags it, rather than
     // every button being outlined at once.
     var selectedButton by remember { mutableStateOf<ControlButton?>(null) }
-    val offsets = remember {
-        mutableStateMapOf<ControlButton, Offset>().apply {
-            ControlButton.entries.forEach { button ->
-                val (x, y) = settings.getControlOffset(button)
-                put(button, Offset(x, y))
-            }
+    val offsets = remember { mutableStateMapOf<ControlButton, Offset>() }
+    fun loadOffsets(layoutId: String) {
+        offsets.clear()
+        ControlButton.entries.forEach { button ->
+            val (x, y) = layoutStore.getControlOffset(layoutId, button)
+            offsets[button] = Offset(x, y)
         }
+    }
+    // The ROM loads asynchronously - its key (and so which layout it uses)
+    // is not known on first composition, only once loading finishes.
+    LaunchedEffect(gameKey()) {
+        val key = gameKey() ?: return@LaunchedEffect
+        activeLayoutId = layoutStore.getLayoutForGame(key)
+        loadOffsets(activeLayoutId)
     }
     // Undo/redo history for the current edit session: a stack of full-layout
     // snapshots taken before each change (a drag gesture or Reset), not one
@@ -124,6 +138,22 @@ fun EmulationScreen(
         selectedButton = button
     }
     val handleDragEnd: () -> Unit = { selectedButton = null }
+    // Makes `layout` the current game's layout - a radio pick just switches
+    // what is on screen; opening its editor also closes the modal and drops
+    // straight into dragging, since there is no point editing a layout that
+    // is not the one loaded.
+    fun selectLayout(layout: ControlLayout, openEditor: Boolean) {
+        activeLayoutId = layout.id
+        gameKey()?.let { layoutStore.setLayoutForGame(it, layout.id) }
+        loadOffsets(layout.id)
+        undoStack.clear()
+        redoStack.clear()
+        selectedButton = null
+        if (openEditor) {
+            layoutsModalOpen = false
+            editingLayout = true
+        }
+    }
     var isFastForward by remember { mutableStateOf(false) }
     var showSlots by remember { mutableStateOf(false) }
 
@@ -223,6 +253,11 @@ fun EmulationScreen(
                     DPad(
                         onKeyChange = onKeyChange,
                         modifier = Modifier.padding(start = 16.dp),
+                        editingLayout = editingLayout,
+                        selectedButton = selectedButton,
+                        offsets = offsets,
+                        onDragStart = handleDragStart,
+                        onDragEnd = handleDragEnd,
                     )
                     ScreenContainer(
                         frameBuffer = frameBuffer,
@@ -243,7 +278,14 @@ fun EmulationScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.padding(end = 16.dp),
                     ) {
-                        ActionButtons(onKeyChange = onKeyChange)
+                        ActionButtons(
+                            onKeyChange = onKeyChange,
+                            editingLayout = editingLayout,
+                            selectedButton = selectedButton,
+                            offsets = offsets,
+                            onDragStart = handleDragStart,
+                            onDragEnd = handleDragEnd,
+                        )
                     }
                 }
             } else {
@@ -304,7 +346,7 @@ fun EmulationScreen(
                 onDone = {
                     ControlButton.entries.forEach { button ->
                         val o = offsets[button] ?: Offset.Zero
-                        settings.setControlOffset(button, o.x, o.y)
+                        layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
                     }
                     editingLayout = false
                     selectedButton = null
@@ -313,7 +355,7 @@ fun EmulationScreen(
                 },
                 onReset = {
                     pushUndoSnapshot()
-                    settings.resetControlOffsets()
+                    layoutStore.resetLayoutOffsets(activeLayoutId)
                     ControlButton.entries.forEach { offsets[it] = Offset.Zero }
                 },
                 canUndo = undoStack.isNotEmpty(),
@@ -321,6 +363,32 @@ fun EmulationScreen(
                 onUndo = undoEdit,
                 onRedo = redoEdit,
                 modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
+
+        if (layoutsModalOpen) {
+            LayoutsDialog(
+                layouts = layouts,
+                activeLayoutId = activeLayoutId,
+                onSelect = { layout -> selectLayout(layout, openEditor = false) },
+                onEdit = { layout -> selectLayout(layout, openEditor = true) },
+                onRename = { id, name ->
+                    layoutStore.renameLayout(id, name)
+                    layouts = layoutStore.getLayouts()
+                },
+                onDelete = { layout ->
+                    layoutStore.deleteLayout(layout.id)
+                    layouts = layoutStore.getLayouts()
+                    if (activeLayoutId == layout.id) {
+                        selectLayout(layouts.first { it.isDefault }, openEditor = false)
+                    }
+                },
+                onCreate = { name ->
+                    val created = layoutStore.createLayout(name, copyFrom = activeLayoutId)
+                    layouts = layoutStore.getLayouts()
+                    selectLayout(created, openEditor = true)
+                },
+                onDismiss = { layoutsModalOpen = false },
             )
         }
 
@@ -365,10 +433,8 @@ fun EmulationScreen(
                     text = { Text("Customise Layout") },
                     onClick = {
                         showMenu = false
-                        undoStack.clear()
-                        redoStack.clear()
-                        selectedButton = null
-                        editingLayout = true
+                        layouts = layoutStore.getLayouts()
+                        layoutsModalOpen = true
                     },
                     leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
                 )
@@ -1100,6 +1166,146 @@ private fun SaveStateDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Close", color = GoldenSaplight) }
+        },
+    )
+}
+
+/**
+ * Manages the saved touch-overlay layouts: which one plays this game, and
+ * creating, renaming or deleting any of them. Default can never be deleted -
+ * it is the fallback every game with no layout of its own uses.
+ *
+ * Picking a layout's radio button just switches to it; its edit icon does
+ * the same and also opens the drag editor, since editing only ever makes
+ * sense on the layout that is actually loaded.
+ */
+@Composable
+private fun LayoutsDialog(
+    layouts: List<ControlLayout>,
+    activeLayoutId: String,
+    onSelect: (ControlLayout) -> Unit,
+    onEdit: (ControlLayout) -> Unit,
+    onRename: (String, String) -> Unit,
+    onDelete: (ControlLayout) -> Unit,
+    onCreate: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var renamingLayout by remember { mutableStateOf<ControlLayout?>(null) }
+    var creatingLayout by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HoneyDark,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text("Control Layouts", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                layouts.forEach { layout ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = layout.id == activeLayoutId,
+                            onClick = { onSelect(layout) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = GoldenSaplight,
+                                unselectedColor = AmberResin,
+                            ),
+                        )
+                        Text(
+                            text = layout.name,
+                            color = PineGlowMist,
+                            fontSize = 14.sp,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onSelect(layout) },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        IconButton(onClick = { onEdit(layout) }) {
+                            Icon(Icons.Default.OpenWith, "Edit positions", tint = AmberResin)
+                        }
+                        IconButton(onClick = { renamingLayout = layout }) {
+                            Icon(Icons.Default.Edit, "Rename", tint = AmberResin)
+                        }
+                        IconButton(onClick = { onDelete(layout) }, enabled = !layout.isDefault) {
+                            Icon(
+                                Icons.Default.Delete,
+                                "Delete",
+                                tint = if (layout.isDefault) PineGlowMist.copy(alpha = 0.3f) else AmberResin,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { creatingLayout = true }) {
+                Text("+ New Layout", color = GoldenSaplight)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = PineGlowMist) }
+        },
+    )
+
+    renamingLayout?.let { layout ->
+        LayoutNameDialog(
+            title = "Rename layout",
+            initialName = layout.name,
+            onConfirm = { name -> onRename(layout.id, name); renamingLayout = null },
+            onDismiss = { renamingLayout = null },
+        )
+    }
+
+    if (creatingLayout) {
+        LayoutNameDialog(
+            title = "New layout",
+            initialName = "Layout ${layouts.size + 1}",
+            onConfirm = { name -> onCreate(name); creatingLayout = false },
+            onDismiss = { creatingLayout = false },
+        )
+    }
+}
+
+/** A single text field prompt, shared by renaming a layout and naming a new one. */
+@Composable
+private fun LayoutNameDialog(
+    title: String,
+    initialName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HoneyDark,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = PineGlowMist,
+                    unfocusedTextColor = PineGlowMist,
+                    focusedBorderColor = AmberResin,
+                    unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
+                    cursorColor = AmberResin,
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(name.trim().ifBlank { initialName }) },
+            ) { Text("Save", color = GoldenSaplight) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = PineGlowMist) }
         },
     )
 }
