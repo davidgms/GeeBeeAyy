@@ -524,3 +524,30 @@ fn the_eeprom_address_width_follows_the_dma_length() {
         "an 8 KB chip must still answer the 6-bit commands a game probes with"
     );
 }
+
+/// The length fields inside a save state come off disk unvalidated. A corrupt
+/// one used to be handed straight to `vec![0u8; len]`, so a state claiming
+/// 0xFFFFFFFF bytes asked for a 4 GB allocation and aborted the process
+/// instead of returning an error.
+#[test]
+fn a_save_state_with_an_absurd_length_field_is_rejected_not_allocated() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x400]).expect("ROM should load");
+    let mut bytes = gba.save_state().data;
+
+    // Tail layout is `save_len: u32` then `cycles: u64`; with no cartridge
+    // save present, `save_len` is zero, which pins the offset.
+    let at = bytes.len() - 12;
+    assert_eq!(
+        &bytes[at..at + 4],
+        &[0, 0, 0, 0],
+        "expected the save-length field at len-12"
+    );
+    bytes[at..at + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+    let state = geebeeayy_core::savestate::SaveState { data: bytes };
+    assert!(
+        state.restore(&mut gba).is_err(),
+        "a length past the end of the blob must be an error, not an allocation"
+    );
+}

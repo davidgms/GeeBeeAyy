@@ -268,7 +268,14 @@ impl SaveState {
         read_exact_vec(&mut cursor, &mut gba.bus.vram_data_mut())?;
         read_exact_vec(&mut cursor, &mut gba.bus.oam_data_mut())?;
 
+        // Bound the length against what is actually left: these come from a
+        // file on disk, and a corrupt or truncated state with a length field
+        // of 0xFFFFFFFF asked for a 4 GB allocation and aborted the process
+        // instead of returning Err.
         let apu_len = read_u32(&mut cursor)? as usize;
+        if apu_len > self.data.len().saturating_sub(cursor.position() as usize) {
+            return Err(SaveStateError::InsufficientData);
+        }
         let mut apu = vec![0u8; apu_len];
         read_exact_vec(&mut cursor, &mut apu)?;
         if !gba.apu.restore(&apu) {
@@ -276,6 +283,9 @@ impl SaveState {
         }
 
         let save_len = read_u32(&mut cursor)? as usize;
+        if save_len > self.data.len().saturating_sub(cursor.position() as usize) {
+            return Err(SaveStateError::InsufficientData);
+        }
         if save_len > 0 {
             let mut save = vec![0u8; save_len];
             read_exact_vec(&mut cursor, &mut save)?;
