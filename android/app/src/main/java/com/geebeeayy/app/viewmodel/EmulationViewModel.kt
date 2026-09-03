@@ -12,6 +12,9 @@ import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,9 +31,6 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "GeeBeeAyy/VM"
 
-        /** Ten slots per game, per the ROADMAP. */
-        const val STATE_SLOT_COUNT = 10
-
         /**
          * Rewind depth and cadence.
          *
@@ -39,8 +39,21 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
          * about ten seconds of history, which is the useful range for undoing
          * a mistake without turning the emulator into a memory hog.
          */
-        /** Slot 0 is the quick save; 1-7 are the named slots in the list. */
+        /**
+         * Slot 0 is the quick save; 1-7 are the named slots in the list.
+         *
+         * There used to be a second constant, `STATE_SLOT_COUNT = 10`, which
+         * `saveState`/`loadState` validated against while the slot list only
+         * enumerated 8. Slots 8 and 9 were writable and then invisible.
+         */
         const val SLOT_COUNT = 8
+
+        /**
+         * How long `onCleared()` waits for the emulation loop to leave native
+         * code before giving up and leaking the core handle. One frame is
+         * 16 ms; this is generous enough to cover a slow save-state write.
+         */
+        const val SHUTDOWN_JOIN_TIMEOUT_MS = 1_000L
 
         const val REWIND_DEPTH = 30
         const val REWIND_INTERVAL_FRAMES = 12
@@ -125,6 +138,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     val stateMessage: StateFlow<String?> = _stateMessage
 
     private var emulationJob: Job? = null
+
+    /**
+     * The loop that was asked to stop but may still be inside a native call.
+     * The next `startEmulation()` joins it before touching the engine.
+     */
+    private var stoppingJob: Job? = null
     private var romLoaded = false
 
     /** True if backgrounding paused a session the player had not paused themselves. */
@@ -331,7 +350,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             _isRunning.value = true
             audio.start()
             audio.resume()
+            // `stopEmulation()` only *requests* cancellation, and the loop
+            // rechecks `isActive` at the top - so a job parked inside
+            // `engine.runFrame()` is still in native code after it returns.
+            // Toggling pause twice quickly, or backgrounding and coming
+            // straight back, would start this loop alongside the old one and
+            // put two threads on the same `Gba` through a raw pointer. Wait
+            // the previous one out here, off the main thread.
+            val previous = stoppingJob
+            stoppingJob = null
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
+                previous?.cancelAndJoin()
                 while (isActive) {
                     // Applied here so every call into the core happens on this
                     // one thread. See the note on `keyState`.
@@ -491,7 +520,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun stopEmulation() {
-        emulationJob?.cancel()
+        emulationJob?.let {
+            it.cancel()
+            // Kept so the next `startEmulation()` can join it. Nulling this
+            // without a handle to join was what let two loops overlap.
+            stoppingJob = it
+        }
         emulationJob = null
         audio.stop()
         _isRunning.value = false
@@ -606,7 +640,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * when nothing else is running.
      */
     fun saveState(slot: Int) {
-        if (!romLoaded || slot !in 0 until STATE_SLOT_COUNT) return
+        if (!romLoaded || slot !in 0 until SLOT_COUNT) return
         if (_isRunning.value) {
             pendingStateCommand = StateCommand.Save(slot)
         } else {
@@ -639,7 +673,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * engine thread the same way [saveState] is.
      */
     fun loadState(slot: Int) {
-        if (!romLoaded || slot !in 0 until STATE_SLOT_COUNT) return
+        if (!romLoaded || slot !in 0 until SLOT_COUNT) return
         viewModelScope.launch(Dispatchers.IO) {
             val file = stateFile(slot)
             if (!file.exists()) {
@@ -667,14 +701,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         if (engine.writeState(bytes)) {
             _stateMessage.value = "Save state loaded"
         } else {
-            // The core's restore() writes into the live machine as it parses,
-            // so a rejected load (wrong version, truncated or corrupt file)
-            // can leave a hybrid of the old and new states, not the original
-            // untouched one. Stop rather than let the player keep going on a
-            // machine that is neither.
-            Log.e(TAG, "Save state load rejected; stopping emulation, ROM reload required")
-            _stateMessage.value = "Save state incompatible or corrupt - reload the ROM"
-            stopEmulation()
+            // `SaveState::restore` snapshots the machine and rolls back when
+            // the parse fails, so a rejected load (wrong version, truncated
+            // or corrupt file) is a no-op on a machine that is still valid.
+            // This used to call stopEmulation() and demand a ROM reload,
+            // which killed a perfectly healthy session over a bad file.
+            Log.e(TAG, "Save state load rejected; the machine is unchanged")
+            _stateMessage.value = "Save state incompatible or corrupt"
         }
     }
 
@@ -684,8 +717,20 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     override fun onCleared() {
         super.onCleared()
-        emulationJob?.cancel()
+        // `engine.destroy()` below frees the Box<GbaHandle>. Cancelling is a
+        // request, not a stop, so without waiting here the handle could be
+        // freed while the loop is still inside a native call. Blocking the
+        // main thread for at most one frame is the cost of not doing that;
+        // if the wait times out, leak the handle rather than free it live.
+        val job = emulationJob
         emulationJob = null
+        val stopped = runBlocking {
+            withTimeoutOrNull(SHUTDOWN_JOIN_TIMEOUT_MS) {
+                job?.cancelAndJoin()
+                stoppingJob?.cancelAndJoin()
+                true
+            }
+        } == true
         audio.stop()
         // viewModelScope is already cancelled by the time onCleared() runs -
         // ViewModel.clear() closes it before calling this - so a launched
@@ -693,6 +738,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // suspension points, so it is called directly instead.
         flushSaveNow()
         audio.release()
-        engine.destroy()
+        if (stopped) {
+            engine.destroy()
+        } else {
+            Log.w(TAG, "Emulation thread still running; leaking the core handle rather than freeing it under a live call")
+        }
     }
 }
