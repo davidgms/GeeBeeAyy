@@ -131,6 +131,21 @@ fun EmulationScreen(
             customOffsets[button.id] = Offset(x, y)
         }
     }
+    // Leaving the screen with a TOGGLE_HOLD button on used to leave those
+    // keys pressed in the ViewModel for the rest of the session: the release
+    // only ran on a layout switch or a delete, never on dispose.
+    DisposableEffect(Unit) {
+        onDispose {
+            heldToggles.forEach { (id, isHeld) ->
+                if (isHeld) {
+                    customButtons.firstOrNull { it.id == id }?.keys?.forEach { key ->
+                        onKeyChange(key, false)
+                    }
+                }
+            }
+        }
+    }
+
     // The ROM loads asynchronously - its key (and so which layout it uses)
     // is not known on first composition, only once loading finishes.
     LaunchedEffect(gameKey()) {
@@ -1017,25 +1032,44 @@ fun CustomButtonView(
             .widthIn(min = 64.dp)
             .pointerInput(button.id, button.mode, button.keys) {
                 when (button.mode) {
-                    CustomButtonMode.COMBO -> awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val down = event.changes.any { it.pressed }
-                            if (down != isPressed) {
-                                isPressed = down
-                                button.keys.forEach { key -> onKeyChange(key, down) }
+                    // The `finally` is not decoration: this loop is cancelled
+                    // whenever the pointerInput key changes or the button
+                    // leaves the composition, and it can be cancelled with the
+                    // combo's keys still pressed.
+                    CustomButtonMode.COMBO -> try {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val down = event.changes.any { it.pressed }
+                                if (down != isPressed) {
+                                    isPressed = down
+                                    button.keys.forEach { key -> onKeyChange(key, down) }
+                                }
                             }
+                        }
+                    } finally {
+                        if (isPressed) {
+                            isPressed = false
+                            button.keys.forEach { key -> onKeyChange(key, false) }
                         }
                     }
                     CustomButtonMode.TOGGLE_HOLD -> detectTapGestures(onTap = { onToggleHeld() })
                     CustomButtonMode.SEQUENCE -> detectTapGestures(
                         onTap = {
                             scope.launch {
-                                for (key in button.keys) {
-                                    onKeyChange(key, true)
-                                    delay(SEQUENCE_PRESS_MS)
-                                    onKeyChange(key, false)
-                                    delay(SEQUENCE_GAP_MS)
+                                try {
+                                    for (key in button.keys) {
+                                        onKeyChange(key, true)
+                                        delay(SEQUENCE_PRESS_MS)
+                                        onKeyChange(key, false)
+                                        delay(SEQUENCE_GAP_MS)
+                                    }
+                                } finally {
+                                    // Cancelled between a press and its
+                                    // release - the two `delay`s are the
+                                    // cancellation points - would otherwise
+                                    // leave that key down for good.
+                                    button.keys.forEach { key -> onKeyChange(key, false) }
                                 }
                             }
                         },
