@@ -746,7 +746,12 @@ fun GbaScreen(
 
     // A short buffer would throw out of the draw path and take the UI down; the
     // core has simply not produced a frame yet.
-    if (frameBuffer.size < width * height * 3) {
+    //
+    // Measured against the *source* frame, not `width`/`height`: those are
+    // already doubled for 2xSaI, so this asked for 460800 bytes of a buffer
+    // that is always 115200 and returned before drawing anything. Picking the
+    // 2xSaI filter left the play area black for the whole session.
+    if (frameBuffer.size < GbaEngine.FRAME_BUFFER_SIZE) {
         return
     }
 
