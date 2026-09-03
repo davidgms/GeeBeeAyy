@@ -1320,6 +1320,15 @@ impl Ppu {
     /// Write one composited pixel, pushing whatever was there down into the
     /// 2nd-target buffers. Every overdraw path in modes 1-5 goes through here
     /// so that `apply_alpha_blend` has a layer underneath to mix with.
+    ///
+    /// ponytail: the 2nd target here is whatever was painted over, i.e. draw
+    /// order, not the runner-up by BGxCNT priority the way mode 0's `blend`
+    /// finds it. The two agree unless a game gives a background a priority
+    /// that should put it under one drawn earlier. Upgrade path is to give
+    /// modes 1-5 mode 0's per-pixel priority sort - the same missing sort
+    /// that makes sprites always land on top in those modes - at which point
+    /// this pair of buffers is replaced by the sort's runner-up. Recorded in
+    /// ROADMAP.md's "Known accuracy gaps".
     fn put_pixel(&mut self, y: usize, x: usize, rgb: (u8, u8, u8), layer: usize) {
         let idx = (y * SCREEN_WIDTH + x) * 3;
         self.scanline_second[x] = (

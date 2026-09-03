@@ -17,13 +17,13 @@ as unverified.
 | Module | Lines | Status |
 |--------|-------|--------|
 | `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
-| `ppu/` | ~1040 | Mode 0 tiled output verified against three test ROMs. Modes 1, 2, 4, 5, sprites, windows, mosaic and blending remain unverified. |
+| `ppu/` | ~1130 | Mode 0 tiled output verified against three test ROMs. Windows, mosaic, sprites and the colour effects have regression tests in `core/tests/ppu.rs`; blending outside mode 0 mixes against draw order rather than layer priority. Modes 1, 2, 4 and 5 remain unverified against a reference image. |
 | `apu/` | ~800 | 4 PSG channels + FIFO A/B, full save-state serialisation, and a register map decoded at 16-bit granularity. A channel can be triggered and produces samples. Never driven by a real game. |
 | `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
 | `dma.rs` | ~300 | 4 channels wired to the bus, immediate/HBlank/VBlank/special, correct address control and repeat semantics. Raises IF bits 8-11. |
 | `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
 | `cart/` | ~480 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs, Flash chip ID, and EEPROM as the real serial protocol over DMA. |
-| `savestate.rs` | ~330 | Format v4: register banks, timers, DMA derived state, the whole `io_regs` file, the APU and the cartridge save. A rejected restore rolls back. Wired to ten UI slots. |
+| `savestate.rs` | ~330 | Format v4: register banks, timers, DMA derived state, the whole `io_regs` file, the APU and the cartridge save. A rejected restore rolls back. Wired to eight UI slots. |
 | `bios.rs` | ~450 | HLE SWIs including `CpuFastSet`, `ArcTan`/`ArcTan2` and the three diff unfilters. `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are still stubs; the sound-driver calls are absent. |
 | `ffi.rs` | ~560 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
 | `android/` | ~2900 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. **Builds, installs and emulates on a device.** |
@@ -165,8 +165,10 @@ was correct.
       the ROM header's title (0xA0) and game code (0xAC) so two carts cannot
       collide. Engine calls stay on the emulation thread via the same
       command-mailbox pattern as `keyState`; a rejected load (bad version,
-      truncated file) stops emulation and surfaces a message rather than
-      running on the hybrid state `SaveState::restore` can leave behind.
+      truncated file) surfaces a message and leaves the session running, since
+      `SaveState::restore` rolls the machine back rather than half-applying.
+      Eight slots, not ten: the two constants disagreed until 2026-09-03, and
+      anything written to slot 8 or 9 was never listed back.
       Verified on a device 2026-09-01: saved a state, force-stopped the app,
       relaunched, reloaded the ROM and restored it -
       `files/states/FANTASY_KNIT_FKNT_slot0.state`, 512,135 bytes.
@@ -258,7 +260,10 @@ is left is literally finishing the game, which needs a person playing it.
       group in `DisplaySettings`. **Untested on a device**, portrait only, and
       a group can be dragged off-screen with no clamping - see
       `temp/pending-device-tests.md`.
-      Still open: per-game layouts.
+      Per-game layouts landed 2026-09-03: named layouts in `ControlLayout.kt`
+      and `ControlLayoutStore.kt`, one active layout per ROM key, each of the
+      ten controls positioned individually, plus custom combo/sequence/hold
+      buttons. **Untested on a device.**
 - [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
       now supports Fit (largest size preserving 3:2, letterboxed), Integer
       (largest whole-number multiple, falling back to Fit below 240x160) and
@@ -398,10 +403,21 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
   cycle-shaped: PB and PD are accumulated once per scanline rather than being
   applied inside the line, which is right for the ordinary case and wrong for
   a game that rewrites the matrix mid-line.
-- **Colour effects outside mode 0 are a scanline-wide approximation.** Mode 0
-  composites the top two layers per pixel and blends correctly; every other
-  mode still applies brightness to the whole line and cannot alpha-blend at
-  all. Semi-transparent sprites (OBJ mode 1) are not blended in any mode.
+- **Colour effects outside mode 0 blend against draw order, not priority.**
+  Brightness and alpha both run per pixel in every mode as of 2026-09-03, and
+  both are gated on BLDCNT's 1st-target bits. What is still approximate is
+  *which* pixel counts as the 2nd target. Mode 0 sorts the enabled layers by
+  their BGxCNT priority and composites the top two, so its 2nd target is the
+  real runner-up. Modes 1-5 have no sort: each layer is painted over the last
+  in a fixed order, and `Ppu::put_pixel` records whatever it painted over as
+  the 2nd target. Those two agree whenever paint order happens to match
+  priority order, and disagree when a game gives a background a priority that
+  should put it underneath one drawn earlier. The fix is to give modes 1-5
+  mode 0's per-pixel priority sort, which is a rewrite of the five mode
+  renderers rather than a patch; it is the same missing sort that makes
+  sprites always land on top in those modes (see the sprite-priority entry
+  above), so both should be done together.
+  Semi-transparent sprites (OBJ mode 1) are still not blended in any mode.
 - **`BitUnPack` (SWI 0x10) is not a stub, it is wrong.** It copies bytes until
   it hits a zero, which is nothing like the real call - the real one expands
   1/2/4/8-bit source units into wider destination units using a five-byte
