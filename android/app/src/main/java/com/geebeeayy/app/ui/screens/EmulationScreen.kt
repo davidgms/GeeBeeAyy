@@ -194,7 +194,7 @@ fun EmulationScreen(
                     Icon(Icons.Default.Save, "Save state", tint = PineGlowMist)
                 }
                 IconButton(onClick = { onLoadState(0) }) {
-                    Icon(Icons.Default.FileUpload, "Load state", tint = PineGlowMist)
+                    Icon(Icons.Default.FolderOpen, "Load state", tint = PineGlowMist)
                 }
                 Box(
                     modifier = Modifier
