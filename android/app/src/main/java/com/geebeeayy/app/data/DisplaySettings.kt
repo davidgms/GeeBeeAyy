@@ -47,6 +47,46 @@ class DisplaySettings(context: Context) {
     }
 
     /**
+     * Per-group nudge for the on-screen controls, in dp, on top of the default
+     * layout.
+     *
+     * An offset rather than an absolute position: the default arrangement
+     * already adapts to the screen, and nudging it keeps that adaptation while
+     * letting a player move a group to where their thumb actually is. Groups
+     * are identified by [ControlGroup].
+     */
+    fun getControlOffset(group: ControlGroup): Pair<Float, Float> = Pair(
+        prefs.getFloat("${KEY_OFFSET_PREFIX}${group.name}_x", 0f),
+        prefs.getFloat("${KEY_OFFSET_PREFIX}${group.name}_y", 0f),
+    )
+
+    fun setControlOffset(group: ControlGroup, x: Float, y: Float) {
+        prefs.edit()
+            .putFloat("${KEY_OFFSET_PREFIX}${group.name}_x", x)
+            .putFloat("${KEY_OFFSET_PREFIX}${group.name}_y", y)
+            .apply()
+    }
+
+    /** Put every group back where the default layout puts it. */
+    fun resetControlOffsets() {
+        val edit = prefs.edit()
+        ControlGroup.entries.forEach { group ->
+            edit.remove("${KEY_OFFSET_PREFIX}${group.name}_x")
+            edit.remove("${KEY_OFFSET_PREFIX}${group.name}_y")
+        }
+        edit.apply()
+    }
+
+    fun getScreenFilter(): ScreenFilter =
+        prefs.getString(KEY_SCREEN_FILTER, null)
+            ?.let { saved -> runCatching { ScreenFilter.valueOf(saved) }.getOrNull() }
+            ?: ScreenFilter.NONE
+
+    fun setScreenFilter(filter: ScreenFilter) {
+        prefs.edit().putString(KEY_SCREEN_FILTER, filter.name).apply()
+    }
+
+    /**
      * Multiplier on the on-screen control sizes, [MIN_CONTROL_SCALE] to 1.0.
      *
      * Shrink only, because there is nowhere to grow: at 1.0 the button row
@@ -88,5 +128,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_FORCE_PORTRAIT = "force_portrait"
         private const val KEY_CONTROL_SCALE = "control_scale"
         private const val KEY_CONTROL_OPACITY = "control_opacity"
+        private const val KEY_SCREEN_FILTER = "screen_filter"
+        private const val KEY_OFFSET_PREFIX = "control_offset_"
     }
 }

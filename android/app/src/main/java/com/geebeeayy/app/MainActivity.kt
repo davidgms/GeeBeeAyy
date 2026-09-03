@@ -170,6 +170,7 @@ fun GeeBeeAyyNavHost() {
             // change in Settings takes effect the next time a game is opened.
             val controlScale = remember(filePath) { DisplaySettings(context).getControlScale() }
             val controlOpacity = remember(filePath) { DisplaySettings(context).getControlOpacity() }
+            val screenFilter = remember(filePath) { DisplaySettings(context).getScreenFilter() }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -198,6 +199,7 @@ fun GeeBeeAyyNavHost() {
                 errorMessage = errorMessage,
                 stateMessage = stateMessage,
                 scaleMode = scaleMode,
+                screenFilter = screenFilter,
                 onDismissStateMessage = { viewModel.clearStateMessage() },
                 onBack = {
                     viewModel.stopEmulation()

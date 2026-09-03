@@ -658,30 +658,42 @@ impl Ppu {
             // BG is the same than the priority of one of the background
             // layers, then the OBJ becomes higher priority" - so the sprite
             // goes ahead of the first background it ties with.
-            let mut stack: Vec<((u8, u8, u8), usize)> = Vec::with_capacity(3);
+            //
+            // A fixed array, not a `Vec`: this runs once per pixel, so a
+            // heap allocation here is 38,400 of them a frame.
+            let mut stack: [((u8, u8, u8), usize); 4] = [((0, 0, 0), LAYER_BD); 4];
+            let mut depth = 0usize;
+            let mut push = |entry: ((u8, u8, u8), usize)| {
+                if depth < stack.len() {
+                    stack[depth] = entry;
+                    depth += 1;
+                }
+            };
+
             let obj = if allow & 0x10 != 0 { self.obj_pixel[x] } else { None };
             let mut obj_placed = obj.is_none();
             for entry in hit.iter().flatten() {
                 let &(rgb, bg, bg_priority) = entry;
                 if let Some((obj_rgb, obj_priority, _)) = obj {
                     if !obj_placed && obj_priority <= bg_priority {
-                        stack.push((obj_rgb, LAYER_OBJ));
+                        push((obj_rgb, LAYER_OBJ));
                         obj_placed = true;
                     }
                 }
-                stack.push((rgb, bg));
+                push((rgb, bg));
             }
             if let Some((obj_rgb, _, _)) = obj {
                 if !obj_placed {
-                    stack.push((obj_rgb, LAYER_OBJ));
+                    push((obj_rgb, LAYER_OBJ));
                 }
             }
-            stack.push((backdrop, LAYER_BD));
+            push((backdrop, LAYER_BD));
+            drop(push);
 
             let (top, top_layer) = stack[0];
             // With nothing but the backdrop there is no second layer; the
             // backdrop stands in for itself, which is what hardware blends.
-            let (second, second_layer) = stack.get(1).copied().unwrap_or(stack[0]);
+            let (second, second_layer) = if depth > 1 { stack[1] } else { stack[0] };
 
             // WININ/WINOUT bit 5 is the colour special effect's own enable
             // for that region.

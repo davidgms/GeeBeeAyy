@@ -14,12 +14,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import com.geebeeayy.app.data.ControlGroup
+import androidx.compose.ui.platform.LocalContext
+import com.geebeeayy.app.data.DisplaySettings
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +35,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.data.ScreenFilter
 import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.ui.theme.*
@@ -40,6 +49,7 @@ fun EmulationScreen(
     errorMessage: String? = null,
     stateMessage: String? = null,
     scaleMode: ScaleMode = ScaleMode.INTEGER,
+    screenFilter: ScreenFilter = ScreenFilter.NONE,
     onDismissStateMessage: () -> Unit = {},
     onBack: () -> Unit,
     onPause: () -> Unit,
@@ -55,6 +65,20 @@ fun EmulationScreen(
 ) {
     var isPaused by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+
+    // Layout editing. The offsets are held here while dragging and written
+    // back only on Done, so an abandoned edit leaves the saved layout alone.
+    val context = LocalContext.current
+    val settings = remember { DisplaySettings(context) }
+    var editingLayout by remember { mutableStateOf(false) }
+    val offsets = remember {
+        mutableStateMapOf<ControlGroup, Offset>().apply {
+            ControlGroup.entries.forEach { group ->
+                val (x, y) = settings.getControlOffset(group)
+                put(group, Offset(x, y))
+            }
+        }
+    }
     var isFastForward by remember { mutableStateOf(false) }
 
     val isLandscape =
@@ -131,6 +155,7 @@ fun EmulationScreen(
                         errorMessage = errorMessage,
                         isPaused = isPaused,
                         scaleMode = scaleMode,
+                        screenFilter = screenFilter,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
@@ -165,6 +190,7 @@ fun EmulationScreen(
                     errorMessage = errorMessage,
                     isPaused = isPaused,
                     scaleMode = scaleMode,
+                    screenFilter = screenFilter,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -200,9 +226,28 @@ fun EmulationScreen(
                         onFastForward()
                     },
                     onKeyChange = onKeyChange,
+                    editingLayout = editingLayout,
+                    offsets = offsets,
                 )
                 }
             }
+        }
+
+        if (editingLayout) {
+            LayoutEditBar(
+                onDone = {
+                    ControlGroup.entries.forEach { group ->
+                        val o = offsets[group] ?: Offset.Zero
+                        settings.setControlOffset(group, o.x, o.y)
+                    }
+                    editingLayout = false
+                },
+                onReset = {
+                    settings.resetControlOffsets()
+                    ControlGroup.entries.forEach { offsets[it] = Offset.Zero }
+                },
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
         }
 
         // Dropdown menu
@@ -222,6 +267,11 @@ fun EmulationScreen(
                     leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = AmberResin) }
                 )
                 HorizontalDivider(color = HoneyMid)
+                DropdownMenuItem(
+                    text = { Text("Customise Layout") },
+                    onClick = { showMenu = false; editingLayout = true },
+                    leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
+                )
                 DropdownMenuItem(
                     text = { Text("Screenshot") },
                     onClick = { showMenu = false; onScreenshot() },
@@ -250,6 +300,7 @@ private fun ScreenContainer(
     errorMessage: String?,
     isPaused: Boolean,
     scaleMode: ScaleMode,
+    screenFilter: ScreenFilter = ScreenFilter.NONE,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -259,7 +310,7 @@ private fun ScreenContainer(
         contentAlignment = Alignment.Center,
     ) {
         if (frameBuffer != null) {
-            GbaScreen(frameBuffer = frameBuffer, scaleMode = scaleMode)
+            GbaScreen(frameBuffer = frameBuffer, scaleMode = scaleMode, filter = screenFilter)
         } else if (errorMessage != null) {
             Text(text = errorMessage, color = Color.Red, fontSize = 14.sp)
         } else if (isLoading) {
@@ -291,6 +342,42 @@ private fun ScreenContainer(
 }
 
 /**
+ * The banner shown while the touch overlay is being rearranged.
+ *
+ * Sits over the game rather than replacing it, so a player can see what the
+ * controls are covering while they move them.
+ */
+@Composable
+private fun LayoutEditBar(
+    onDone: () -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(BurntRoot.copy(alpha = 0.92f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = "Drag the outlined controls",
+            color = PineGlowMist,
+            fontSize = 14.sp,
+        )
+        Row {
+            TextButton(onClick = onReset) {
+                Text("Reset", color = AmberResin)
+            }
+            TextButton(onClick = onDone) {
+                Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/**
  * Largest width/height preserving the source aspect ratio that still fits
  * within [availW] x [availH].
  */
@@ -312,15 +399,24 @@ private fun integerSize(availW: Float, availH: Float, srcW: Int, srcH: Int): Pai
 }
 
 @Composable
-fun GbaScreen(frameBuffer: ByteArray, scaleMode: ScaleMode = ScaleMode.INTEGER) {
-    val width = GbaEngine.SCREEN_WIDTH
-    val height = GbaEngine.SCREEN_HEIGHT
+fun GbaScreen(
+    frameBuffer: ByteArray,
+    scaleMode: ScaleMode = ScaleMode.INTEGER,
+    filter: ScreenFilter = ScreenFilter.NONE,
+) {
+    val doubled = filter == ScreenFilter.SAI_2X
+    val width = if (doubled) GbaEngine.SCREEN_WIDTH * 2 else GbaEngine.SCREEN_WIDTH
+    val height = if (doubled) GbaEngine.SCREEN_HEIGHT * 2 else GbaEngine.SCREEN_HEIGHT
     // Reused across frames: the bitmap and its pixel staging buffer are each
     // allocated once and mutated in place, not recreated 60 times a second.
-    val bitmap = remember {
+    // Keyed on the filter because 2xSaI needs a bitmap four times the size.
+    val bitmap = remember(doubled) {
         android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
     }
-    val pixels = remember { IntArray(width * height) }
+    val pixels = remember { IntArray(GbaEngine.SCREEN_WIDTH * GbaEngine.SCREEN_HEIGHT) }
+    val scaled = remember(doubled) {
+        if (doubled) IntArray(width * height) else IntArray(0)
+    }
     // `asImageBitmap()` wraps the bitmap in a new object each call, so hoist it
     // out of the per-frame draw rather than allocating a wrapper 60 times a
     // second. It stays valid because the bitmap itself is mutated in place.
@@ -339,7 +435,12 @@ fun GbaScreen(frameBuffer: ByteArray, scaleMode: ScaleMode = ScaleMode.INTEGER) 
         val b = frameBuffer[o + 2].toInt() and 0xFF
         pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
-    bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    if (doubled) {
+        Sai2x.scale(pixels, scaled, GbaEngine.SCREEN_WIDTH, GbaEngine.SCREEN_HEIGHT)
+        bitmap.setPixels(scaled, 0, width, 0, 0, width, height)
+    } else {
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    }
 
     Canvas(modifier = Modifier.fillMaxSize()) {
         val (dstWidth, dstHeight) = when (scaleMode) {
@@ -357,9 +458,67 @@ fun GbaScreen(frameBuffer: ByteArray, scaleMode: ScaleMode = ScaleMode.INTEGER) 
             // native size; the default filter is bilinear and turns crisp
             // pixel art into mush. FilterQuality.None disables that sampling
             // so the game keeps its hard pixel edges.
-            filterQuality = FilterQuality.None,
+            // A 240x160 source stretched onto a phone screen is many times
+            // its native size; bilinear turns crisp pixel art to mush, so
+            // None is the default and Smooth is the opt-in.
+            filterQuality = if (filter == ScreenFilter.SMOOTH) {
+                FilterQuality.Low
+            } else {
+                FilterQuality.None
+            },
         )
+
+        if (filter == ScreenFilter.SCANLINES) {
+            // Darken every other output row. Drawn as rectangles rather than
+            // a per-pixel pass so the GPU does the work: the cost is one draw
+            // list, not 38,400 multiplies a frame.
+            val rowHeight = (dstHeight / GbaEngine.SCREEN_HEIGHT).coerceAtLeast(1f)
+            if (rowHeight >= 2f) {
+                var y = dstOffsetY + rowHeight / 2f
+                while (y < dstOffsetY + dstHeight) {
+                    drawRect(
+                        color = Color.Black.copy(alpha = 0.35f),
+                        topLeft = Offset(dstOffsetX, y),
+                        size = Size(dstWidth, rowHeight / 2f),
+                    )
+                    y += rowHeight
+                }
+            }
+        }
     }
+}
+
+/**
+ * Applies a control group's saved nudge, and in [editing] mode lets it be
+ * dragged to a new one.
+ *
+ * The drag is consumed here, so while editing the buttons underneath do not
+ * also fire - you are moving the D-pad, not pressing left.
+ */
+@Composable
+private fun Modifier.movableGroup(
+    group: ControlGroup,
+    editing: Boolean,
+    offsets: MutableMap<ControlGroup, Offset>,
+): Modifier {
+    val offset = offsets[group] ?: Offset.Zero
+    return this
+        .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+        .then(
+            if (!editing) {
+                Modifier
+            } else {
+                Modifier
+                    .border(2.dp, GoldenSaplight, RoundedCornerShape(8.dp))
+                    .pointerInput(group) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            val current = offsets[group] ?: Offset.Zero
+                            offsets[group] = current + drag
+                        }
+                    }
+            }
+        )
 }
 
 @Composable
@@ -371,11 +530,15 @@ fun GameControls(
     onToggleFastForward: () -> Unit,
     onRewind: (Boolean) -> Unit,
     onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+    offsets: MutableMap<ControlGroup, Offset> = mutableMapOf(),
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // Shoulder buttons sit above the rest, where the real hardware puts
         // them: L on the far left, R on the far right.
-        ShoulderRow(onKeyChange = onKeyChange)
+        Box(modifier = Modifier.movableGroup(ControlGroup.SHOULDERS, editingLayout, offsets)) {
+            ShoulderRow(onKeyChange = onKeyChange)
+        }
 
         Row(
             modifier = Modifier
@@ -384,21 +547,29 @@ fun GameControls(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DPad(onKeyChange = onKeyChange)
-            ActionButtons(onKeyChange = onKeyChange)
-            TransportControls(
-                isPaused = isPaused,
-                isFastForward = isFastForward,
-                isRewinding = isRewinding,
-                onTogglePause = onTogglePause,
-                onToggleFastForward = onToggleFastForward,
-                onRewind = onRewind,
-            )
+            Box(modifier = Modifier.movableGroup(ControlGroup.DPAD, editingLayout, offsets)) {
+                DPad(onKeyChange = onKeyChange)
+            }
+            Box(modifier = Modifier.movableGroup(ControlGroup.ACTIONS, editingLayout, offsets)) {
+                ActionButtons(onKeyChange = onKeyChange)
+            }
+            Box(modifier = Modifier.movableGroup(ControlGroup.TRANSPORT, editingLayout, offsets)) {
+                TransportControls(
+                    isPaused = isPaused,
+                    isFastForward = isFastForward,
+                    isRewinding = isRewinding,
+                    onTogglePause = onTogglePause,
+                    onToggleFastForward = onToggleFastForward,
+                    onRewind = onRewind,
+                )
+            }
         }
 
         // Start and Select. Without these most games cannot get past a title
         // screen, so they are not optional extras.
-        StartSelectRow(onKeyChange = onKeyChange)
+        Box(modifier = Modifier.movableGroup(ControlGroup.START_SELECT, editingLayout, offsets)) {
+            StartSelectRow(onKeyChange = onKeyChange)
+        }
     }
 }
 

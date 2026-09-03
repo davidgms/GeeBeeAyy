@@ -61,6 +61,11 @@ android {
 }
 
 dependencies {
+    // Pure-JVM unit tests. `Sai2x` is deliberately written against plain
+    // IntArrays so its arithmetic can be checked here rather than only by
+    // looking at a phone.
+    testImplementation("junit:junit:4.13.2")
+
     // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)

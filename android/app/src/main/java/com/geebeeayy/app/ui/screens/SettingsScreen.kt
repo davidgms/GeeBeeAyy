@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.data.ScaleMode
+import com.geebeeayy.app.data.ScreenFilter
 import com.geebeeayy.app.ui.theme.*
 import java.io.File
 
@@ -49,6 +50,8 @@ fun SettingsScreen(
 
     val displaySettings = remember { DisplaySettings(context) }
     var scaleMode by remember { mutableStateOf(displaySettings.getScaleMode()) }
+    var screenFilter by remember { mutableStateOf(displaySettings.getScreenFilter()) }
+    var showFilterMenu by remember { mutableStateOf(false) }
     var controlScale by remember { mutableFloatStateOf(displaySettings.getControlScale()) }
     var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
     var showScaleMenu by remember { mutableStateOf(false) }
@@ -206,12 +209,29 @@ fun SettingsScreen(
                         }
                     }
                 }
-                SettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = "Screen Filter",
-                    subtitle = "Nearest Neighbor (pixel perfect)",
-                    onClick = { }
-                )
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Tune,
+                        title = "Screen Filter",
+                        subtitle = screenFilter.label,
+                        onClick = { showFilterMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showFilterMenu,
+                        onDismissRequest = { showFilterMenu = false },
+                    ) {
+                        ScreenFilter.entries.forEach { f ->
+                            DropdownMenuItem(
+                                text = { Text(f.label) },
+                                onClick = {
+                                    screenFilter = f
+                                    displaySettings.setScreenFilter(f)
+                                    showFilterMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
                 SettingsSlider(
                     icon = Icons.Default.OpenInFull,
                     title = "Control Size",
