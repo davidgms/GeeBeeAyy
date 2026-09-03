@@ -495,3 +495,36 @@ fn rl_decompresses_into_vram_in_halfwords() {
     assert_eq!(bus.read16(0x0600_0000), 0x2211, "first halfword");
     assert_eq!(bus.read16(0x0600_0002), 0x4433, "second halfword");
 }
+
+/// The decompression header's size field is 24 bits, so a corrupt ROM can ask
+/// for 16 MB. Honouring that means a 16 MB allocation and millions of
+/// iterations inside a single SWI; no GBA destination is larger than EWRAM's
+/// 256 KB, so the size is clamped there.
+///
+/// This is a **cost** guard, not a correctness one: uncapped the call still
+/// returns, just around 70x slower (0.71 s against 0.01 s when this was
+/// measured), which inside one BIOS call is a visible freeze. The assertion is
+/// only that it completes without panicking - wall-clock assertions are
+/// flaky, so the number lives in this comment instead.
+#[test]
+fn a_corrupt_decompression_header_cannot_ask_for_sixteen_megabytes() {
+    let mut bus = MemoryBus::new();
+    bus.write32(BASE, arm_swi(0x11));
+
+    // Type 1, and the largest size the field can hold.
+    bus.write32(DATA, 0xFFFF_FF10);
+    // A flag byte of zero means eight literal bytes, so the stream never ends
+    // on its own - only the size cap stops it.
+    for i in 0..64u32 {
+        bus.write8(DATA + 4 + i, 0x00);
+    }
+
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[13] = 0x0300_7F00;
+    cpu.registers[0] = DATA;
+    cpu.registers[1] = DEST;
+    // Completing at all is the assertion: uncapped this allocates 16 MB and
+    // spends millions of iterations before returning.
+    cpu.step(&mut bus);
+}

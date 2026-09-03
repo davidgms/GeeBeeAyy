@@ -324,6 +324,17 @@ fn handle_lz77_uncomp_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     true
 }
 
+/// The decompressed byte count from a BIOS decompression header, clamped.
+///
+/// The field is 24 bits, so a corrupt or hostile ROM can ask for 16 MB - which
+/// this would then allocate and spend a long loop filling, on every call. No
+/// destination on a GBA is bigger than EWRAM, so anything past 256 KB is a
+/// malformed header rather than a request worth honouring.
+fn decompressed_size(header: u32) -> usize {
+    const MAX: usize = 0x4_0000;
+    ((header >> 8) as usize).min(MAX)
+}
+
 /// Write a decompressed block out to `dst`.
 ///
 /// This is why the BIOS has separate "Wram" and "Vram" decompressors at all:
@@ -363,8 +374,8 @@ fn write_block(dst: u32, data: &[u8], bus: &mut MemoryBus) {
 /// destination that mangles the writes, and the finished block goes out
 /// through [`write_block`] in units the destination accepts.
 fn lz77_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
-    let size = (bus.read32(src) >> 8) as usize;
-    let mut out: Vec<u8> = Vec::with_capacity(size.min(0x40000));
+    let size = decompressed_size(bus.read32(src));
+    let mut out: Vec<u8> = Vec::with_capacity(size);
     let mut src_pos = src + 4;
     while out.len() < size {
         let flags = bus.read8(src_pos);
@@ -420,8 +431,8 @@ fn handle_rl_uncomp_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 /// repeated N times". The header carries no unit-size flag; bits 8-31 are the
 /// decompressed size, which is what ends the stream.
 fn rl_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
-    let size = (bus.read32(src) >> 8) as usize;
-    let mut out: Vec<u8> = Vec::with_capacity(size.min(0x40000));
+    let size = decompressed_size(bus.read32(src));
+    let mut out: Vec<u8> = Vec::with_capacity(size);
     let mut src_pos = src + 4;
     while out.len() < size {
         let flag = bus.read8(src_pos);
