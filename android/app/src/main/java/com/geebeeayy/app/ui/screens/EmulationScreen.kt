@@ -469,6 +469,16 @@ fun EmulationScreen(
             CustomButtonsListDialog(
                 buttons = customButtons,
                 onSave = { button ->
+                    // Release first, like onDelete does. Editing a held
+                    // TOGGLE_HOLD button replaces its key list and restarts
+                    // its pointerInput, so whatever it was holding would never
+                    // be released - rebinding a held button from L to R left L
+                    // down for the session.
+                    if (heldToggles[button.id] == true) {
+                        customButtons.firstOrNull { it.id == button.id }?.keys
+                            ?.forEach { key -> onKeyChange(key, false) }
+                        heldToggles.remove(button.id)
+                    }
                     layoutStore.saveCustomButton(activeLayoutId, button)
                     customButtons = layoutStore.getCustomButtons(activeLayoutId)
                     customOffsets.getOrPut(button.id) {
@@ -996,14 +1006,27 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
             .height(48.dp)
             .widthIn(min = 72.dp)
             .pointerInput(key) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val down = event.changes.any { it.pressed }
-                        if (down != isPressed) {
-                            isPressed = down
-                            onKeyChange(key, down)
+                // The `finally` is what stops a key sticking down: this
+                // loop is cancelled when the pointerInput key changes or the
+                // button leaves the composition, and it can be cancelled with
+                // a finger still on the button. Rotating the screen with the
+                // D-pad held disposes the whole control block, so without
+                // this the key stayed pressed for the rest of the session.
+                try {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val down = event.changes.any { it.pressed }
+                            if (down != isPressed) {
+                                isPressed = down
+                                onKeyChange(key, down)
+                            }
                         }
+                    }
+                } finally {
+                    if (isPressed) {
+                        isPressed = false
+                        onKeyChange(key, false)
                     }
                 }
             },
@@ -1186,14 +1209,27 @@ fun DPadButton(
         modifier = Modifier
             .size(48.dp)
             .pointerInput(key) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pressed = event.changes.any { it.pressed }
-                        if (pressed != isPressed) {
-                            isPressed = pressed
-                            onKeyChange(key, pressed)
+                // The `finally` is what stops a key sticking down: this
+                // loop is cancelled when the pointerInput key changes or the
+                // button leaves the composition, and it can be cancelled with
+                // a finger still on the button. Rotating the screen with the
+                // D-pad held disposes the whole control block, so without
+                // this the key stayed pressed for the rest of the session.
+                try {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.any { it.pressed }
+                            if (pressed != isPressed) {
+                                isPressed = pressed
+                                onKeyChange(key, pressed)
+                            }
                         }
+                    }
+                } finally {
+                    if (isPressed) {
+                        isPressed = false
+                        onKeyChange(key, false)
                     }
                 }
             },
@@ -1253,14 +1289,27 @@ fun ActionButton(
         modifier = modifier
             .size(56.dp)
             .pointerInput(key) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pressed = event.changes.any { it.pressed }
-                        if (pressed != isPressed) {
-                            isPressed = pressed
-                            onKeyChange(key, pressed)
+                // The `finally` is what stops a key sticking down: this
+                // loop is cancelled when the pointerInput key changes or the
+                // button leaves the composition, and it can be cancelled with
+                // a finger still on the button. Rotating the screen with the
+                // D-pad held disposes the whole control block, so without
+                // this the key stayed pressed for the rest of the session.
+                try {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.any { it.pressed }
+                            if (pressed != isPressed) {
+                                isPressed = pressed
+                                onKeyChange(key, pressed)
+                            }
                         }
+                    }
+                } finally {
+                    if (isPressed) {
+                        isPressed = false
+                        onKeyChange(key, false)
                     }
                 }
             },
