@@ -131,6 +131,11 @@ there.
 - [ ] Google Play Store distribution
 
 ### Phase 3 - iOS Frontend
+
+**Parked.** iOS is not being worked on and does not start until the Android app
+ships on Google Play, and then only if the repository owner says so. It has its
+own file: [`ROADMAP-ios.md`](ROADMAP-ios.md).
+
 - [ ] Swift + SwiftUI UI
 - [ ] MFi controller support
 - [ ] Touch controls + gesture support
@@ -418,7 +423,8 @@ Contributions are welcome! Please read the contributing guidelines before submit
 
 - [ ] Phase 1: Core emulation (CPU, PPU, APU, Memory)
 - [ ] Phase 2: Android frontend with touch controls
-- [ ] Phase 3: iOS frontend with SwiftUI
+- [ ] Phase 3: iOS frontend with SwiftUI - parked behind the Play Store
+      release, see [`ROADMAP-ios.md`](ROADMAP-ios.md)
 - [ ] Phase 4: Advanced features (JIT, link cable, cheats)
 - [ ] Phase 5: Performance optimization + community features
 
