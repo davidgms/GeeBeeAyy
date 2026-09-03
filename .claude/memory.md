@@ -828,3 +828,39 @@ reach it" - rewind had no FFI, and the audio buffer had no one asking whether
 `getMinBufferSize` was the right number for a fast track. Same shape as the
 seven core features that had no caller. When a layer boundary exists, check
 both sides of it.
+
+### 2026-09-02 - JVM unit tests exist for Android now, and what they bought
+
+`android/app/src/test/` did not exist and there was no JUnit dependency: the
+Kotlin side had never been testable without a device. Added
+`testImplementation("junit:junit:4.13.2")` and `Sai2xTest`, six cases, run with
+`gradle testDebugUnitTest`.
+
+That was worth doing the moment there was non-trivial Kotlin logic. `Sai2x` is
+deliberately written as free functions over plain `IntArray`s rather than
+anything Compose- or Bitmap-shaped, precisely so it can be exercised on the
+JVM. The tests pin the properties that distinguish 2xSaI from a blur - a flat
+image stays flat, a hard edge stays hard away from the seam, every output pixel
+is written, a short destination is left untouched.
+
+**Application**: when adding frontend logic that is not just wiring, put the
+arithmetic in a plain function over plain arrays and test it here. The device
+round-trip is minutes; this is seconds.
+
+### 2026-09-02 - Two defects the tests could never have caught
+
+A self-review of the branch found two things no test would have flagged,
+because neither changes a result:
+
+1. **`render_mode0_scanline` allocated a `Vec` per pixel** - 38,400 heap
+   allocations a frame, 2.3M a second, in the hottest loop in the emulator. It
+   arrived with the sprite-priority work. Now a fixed `[_; 4]` array.
+2. **The BIOS decompressors trusted the header's 24-bit size field**, so a
+   corrupt ROM could make one SWI allocate 16 MB and loop - measured at 0.71 s
+   against 0.01 s. Clamped to 256 KB, which is larger than any GBA destination.
+
+**Application**: the test suite answers "is the output right", and both of
+these produce the right output. Cost and robustness need a different kind of
+looking - read the hot loop for allocations, and read every length that comes
+from ROM data as hostile. Worth a deliberate pass rather than waiting for a
+symptom.
