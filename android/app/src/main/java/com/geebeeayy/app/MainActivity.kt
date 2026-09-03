@@ -145,7 +145,22 @@ fun GeeBeeAyyNavHost() {
                 onSettingsClick = {
                     navController.navigate("settings")
                 },
+                onDownloadClick = {
+                    navController.navigate("homebrew")
+                },
                 onAboutClick = { },
+            )
+        }
+
+        composable("homebrew") {
+            // Downloads land in the first configured ROM folder; the scan that
+            // follows is the same one the browser uses, so a finished download
+            // shows up without leaving the app.
+            val destination = folderManager.getFolderPaths().firstOrNull()?.let { java.io.File(it) }
+            HomebrewScreen(
+                destination = destination,
+                onBack = { navController.popBackStack() },
+                onDownloaded = { rescanRoms() },
             )
         }
 

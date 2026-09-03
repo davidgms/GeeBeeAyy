@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.geebeeayy.app">
 
+    <!-- Downloading freely distributable homebrew from the built-in catalogue.
+         Nothing else in the app makes a network request. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 

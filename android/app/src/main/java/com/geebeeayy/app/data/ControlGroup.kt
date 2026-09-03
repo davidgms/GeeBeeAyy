@@ -10,7 +10,6 @@ package com.geebeeayy.app.data
 enum class ControlGroup {
     DPAD,
     ACTIONS,
-    TRANSPORT,
     SHOULDERS,
     START_SELECT,
     ;
@@ -19,7 +18,6 @@ enum class ControlGroup {
         get() = when (this) {
             DPAD -> "D-Pad"
             ACTIONS -> "A / B"
-            TRANSPORT -> "Pause / Speed"
             SHOULDERS -> "L / R"
             START_SELECT -> "Start / Select"
         }

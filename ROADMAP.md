@@ -286,7 +286,12 @@ is left is literally finishing the game, which needs a person playing it.
       inside composition, so its cost is the open question. See
       `temp/pending-device-tests.md`. CRT beyond scanlines - curvature, mask,
       bloom - is not done and wants a real shader.
-- [ ] ROM library with cover art and metadata.
+- [x] ROM library with cover art (`data/RomArtwork.kt`: `<name>.png|jpg|jpeg|webp`
+      beside the ROM, or in a `covers/` subfolder). Metadata beyond what the
+      folder scan already reads is still open.
+- [x] Homebrew downloader (`data/HomebrewCatalog.kt`, `HomebrewDownloader.kt`,
+      `ui/screens/HomebrewScreen.kt`). Freely distributable ROMs only - the
+      catalogue is not, and will not become, an index of commercial games.
 - [x] **Landscape/portrait handling** - `kotlin-specialist`. The manifest no
       longer hard-locks `screenOrientation="portrait"`;  `MainActivity`
       applies the lock at runtime instead, from a `DisplaySettings.forcePortrait`

@@ -17,6 +17,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
+import com.geebeeayy.app.data.RomArtwork
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.ui.theme.*
 
@@ -26,6 +30,7 @@ fun RomBrowserScreen(
     roms: List<RomEntry>,
     onRomClick: (RomEntry) -> Unit,
     onSettingsClick: () -> Unit,
+    onDownloadClick: () -> Unit,
     onAboutClick: () -> Unit,
 ) {
     Scaffold(
@@ -51,6 +56,13 @@ fun RomBrowserScreen(
                     titleContentColor = PineGlowMist,
                 ),
                 actions = {
+                    IconButton(onClick = onDownloadClick) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = "Homebrew downloads",
+                            tint = AmberResin
+                        )
+                    }
                     IconButton(onClick = onSettingsClick) {
                         Icon(
                             Icons.Default.Settings,
@@ -140,6 +152,10 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Cover art if the player supplied one next to the ROM,
+            // otherwise the cartridge placeholder. Decoding is keyed on the
+            // path so scrolling does not re-read the file every frame.
+            val artwork = remember(rom.filePath) { RomArtwork.load(rom.filePath) }
             Box(
                 modifier = Modifier
                     .size(56.dp)
@@ -147,12 +163,21 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
                     .background(AmberResin.copy(alpha = 0.3f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Default.VideogameAsset,
-                    contentDescription = null,
-                    tint = GoldenSaplight,
-                    modifier = Modifier.size(32.dp)
-                )
+                if (artwork != null) {
+                    Image(
+                        bitmap = artwork.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.VideogameAsset,
+                        contentDescription = null,
+                        tint = GoldenSaplight,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -227,7 +252,7 @@ fun EmptyState(modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Go to Settings → ROM Folders\nto add your game folders.\n\nBzzt! Your games await!",
+            text = "Go to Settings → ROM Folders\nto add your game folders,\nor tap ⬇ for free homebrew.\n\nBzzt! Your games await!",
             fontSize = 14.sp,
             color = PineGlowMist.copy(alpha = 0.7f),
             lineHeight = 20.sp,

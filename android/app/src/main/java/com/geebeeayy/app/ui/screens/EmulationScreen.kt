@@ -109,12 +109,57 @@ fun EmulationScreen(
                     Icon(Icons.Default.ArrowBack, "Back", tint = PineGlowMist)
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = "GeeBeeAyy!",
-                    color = GoldenSaplight,
-                    fontSize = 16.sp,
-                )
-                Spacer(modifier = Modifier.weight(1f))
+
+                // Save, load, rewind, fast forward and pause live up here
+                // rather than among the game buttons: they are things you do
+                // *to* the emulator, and putting them beside A and B is how
+                // you fast-forward when you meant to jump.
+                IconButton(onClick = { onSaveState(0) }) {
+                    Icon(Icons.Default.Save, "Save state", tint = PineGlowMist)
+                }
+                IconButton(onClick = { onLoadState(0) }) {
+                    Icon(Icons.Default.FileUpload, "Load state", tint = PineGlowMist)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    onRewind(true)
+                                    tryAwaitRelease()
+                                    onRewind(false)
+                                },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.FastRewind,
+                        "Rewind",
+                        tint = if (isRewinding) GoldenSaplight else PineGlowMist,
+                    )
+                }
+                IconButton(onClick = {
+                    isFastForward = !isFastForward
+                    onFastForward()
+                }) {
+                    Icon(
+                        Icons.Default.FastForward,
+                        "Fast forward",
+                        tint = if (isFastForward) GoldenSaplight else PineGlowMist,
+                    )
+                }
+                IconButton(onClick = {
+                    isPaused = !isPaused
+                    onPause()
+                }) {
+                    Icon(
+                        if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        if (isPaused) "Resume" else "Pause",
+                        tint = if (isPaused) GoldenSaplight else PineGlowMist,
+                    )
+                }
                 IconButton(onClick = { showMenu = !showMenu }) {
                     Icon(Icons.Default.MoreVert, "Menu", tint = PineGlowMist)
                 }
@@ -161,26 +206,14 @@ fun EmulationScreen(
                             .fillMaxHeight()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
+                    // Landscape has the transport in the top bar too, so the
+                    // right-hand column is just the face buttons.
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.padding(end = 16.dp),
                     ) {
                         ActionButtons(onKeyChange = onKeyChange)
-                        TransportControls(
-                            isPaused = isPaused,
-                            isFastForward = isFastForward,
-                            isRewinding = isRewinding,
-                            onRewind = onRewind,
-                            onTogglePause = {
-                                isPaused = !isPaused
-                                onPause()
-                            },
-                            onToggleFastForward = {
-                                isFastForward = !isFastForward
-                                onFastForward()
-                            },
-                        )
                     }
                 }
             } else {
@@ -540,11 +573,13 @@ fun GameControls(
             ShoulderRow(onKeyChange = onKeyChange)
         }
 
+        // D-pad hard left, face buttons hard right, nothing between them -
+        // the thumbs rest at the edges of the phone, not in the middle.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+                .padding(horizontal = 24.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(modifier = Modifier.movableGroup(ControlGroup.DPAD, editingLayout, offsets)) {
@@ -552,16 +587,6 @@ fun GameControls(
             }
             Box(modifier = Modifier.movableGroup(ControlGroup.ACTIONS, editingLayout, offsets)) {
                 ActionButtons(onKeyChange = onKeyChange)
-            }
-            Box(modifier = Modifier.movableGroup(ControlGroup.TRANSPORT, editingLayout, offsets)) {
-                TransportControls(
-                    isPaused = isPaused,
-                    isFastForward = isFastForward,
-                    isRewinding = isRewinding,
-                    onTogglePause = onTogglePause,
-                    onToggleFastForward = onToggleFastForward,
-                    onRewind = onRewind,
-                )
             }
         }
 
@@ -640,85 +665,6 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
 
 /** Pause/resume and fast-forward toggle buttons, shared by the portrait and landscape layouts. */
 @Composable
-fun TransportControls(
-    isPaused: Boolean,
-    isFastForward: Boolean,
-    isRewinding: Boolean,
-    onTogglePause: () -> Unit,
-    onToggleFastForward: () -> Unit,
-    onRewind: (Boolean) -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        // Pause/Play
-        Button(
-            onClick = onTogglePause,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isPaused) GoldenSaplight else AmberResin,
-            ),
-            modifier = Modifier.size(48.dp),
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
-        ) {
-            Icon(
-                if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                contentDescription = if (isPaused) "Resume" else "Pause",
-                tint = BurntRoot,
-            )
-        }
-
-        // Fast Forward
-        Button(
-            onClick = onToggleFastForward,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isFastForward) GoldenSaplight else HoneyMid,
-            ),
-            modifier = Modifier.size(48.dp),
-            shape = CircleShape,
-            contentPadding = PaddingValues(0.dp),
-        ) {
-            Icon(
-                Icons.Default.FastForward,
-                contentDescription = "Fast Forward",
-                // The container changes with state, so the tint has to as
-                // well: BurntRoot on HoneyMid is 2.34:1, under the 3:1 that
-                // WCAG 2.1 SC 1.4.11 requires of a graphical control.
-                // PineGlowMist on HoneyMid is 7.52:1 and BurntRoot on
-                // GoldenSaplight is 12.33:1.
-                tint = if (isFastForward) BurntRoot else PineGlowMist,
-            )
-        }
-
-        // Rewind. Held rather than toggled: you hold it until the mistake is
-        // undone and let go, the way every emulator that has this does it.
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(if (isRewinding) GoldenSaplight else HoneyMid)
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onPress = {
-                            onRewind(true)
-                            tryAwaitRelease()
-                            onRewind(false)
-                        },
-                    )
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.FastRewind,
-                contentDescription = "Rewind",
-                tint = if (isRewinding) BurntRoot else PineGlowMist,
-            )
-        }
-    }
-}
-
-@Composable
 fun DPad(onKeyChange: (Int, Boolean) -> Unit, modifier: Modifier = Modifier) {
     val buttonColor = HoneyDark
     val pressColor = AmberResin
@@ -785,11 +731,15 @@ fun ActionButtons(onKeyChange: (Int, Boolean) -> Unit) {
     val buttonColor = HoneyDark
     val pressColor = GoldenSaplight
 
-    Box(modifier = Modifier.size(120.dp)) {
-        // B button (left)
-        ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, Modifier.align(Alignment.CenterStart), onKeyChange)
-        // A button (right)
-        ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, Modifier.align(Alignment.CenterEnd), onKeyChange)
+    // A above B in a single column. Side by side reads left-to-right as "B
+    // then A", which is the wrong way round from the hardware and puts the
+    // button you press most under the weaker part of the thumb's arc.
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, Modifier, onKeyChange)
+        ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, Modifier, onKeyChange)
     }
 }
 
