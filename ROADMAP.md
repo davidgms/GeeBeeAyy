@@ -1,6 +1,15 @@
-# GeeBeeAyy! - Development Roadmap
+# GeeBeeAyy! - Android Roadmap
 
 The plan, ordered by what actually blocks the next milestone.
+
+**This file is Android only.** Every phase below - the emulation core included,
+since the core exists to be played on a phone - is scoped to shipping the
+Android app on Google Play. iOS has its own file,
+[`ROADMAP-ios.md`](ROADMAP-ios.md), and it is **deliberately not being worked
+on**. Nothing in it starts until Phase 4 here is finished and the app is live
+on Play, and then only after asking the repository owner whether the iOS work
+should begin at all. Do not open iOS tasks before that gate; do not treat an
+idle moment on Android as a reason to start them.
 
 **How to read this file.** A box is ticked only when something verifies it - a
 test in `core/tests/`, or a measurement on a device. Code existing is not the
@@ -28,7 +37,10 @@ as unverified.
 | `ffi.rs` | ~560 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
 | `android/` | ~2900 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. **Builds, installs and emulates on a device.** |
 | `rewind.rs` | ~80 | Bounded ring of save states; cadence left to the frontend. Not wired to any UI. |
-| `ios/` | ~750 | SwiftUI views and an engine wrapper. **No Xcode project - has never been compiled.** |
+
+`ios/` is not tracked here. It is ~750 lines of SwiftUI with no Xcode project
+and has never been compiled; its status lives in
+[`ROADMAP-ios.md`](ROADMAP-ios.md).
 
 **Verified on the host 2026-08-30**: *Yggdra Union* boots to its title screen,
 and `waimanu`, `jumpingbarnabe` and `powerpig` render. See Phase 0's exit
@@ -322,38 +334,9 @@ is left is literally finishing the game, which needs a person playing it.
       figure has not been measured, and doing it honestly needs a high-speed
       camera or a hardware loopback rather than more `dumpsys`. Runahead
       remains unconsidered.
-- [ ] Icon and store asset set - `visual-asset-generator`.
-
 ---
 
-## Phase 3 - iOS
-
-The iOS target has never been compiled. Owned by `swift-expert`, with
-`mobile-app-developer` on the build.
-
-**How to do any of this without a Mac or an iPhone is researched in
-[`temp/ios-without-a-mac.md`](../temp/ios-without-a-mac.md).** The short of it:
-step 1 below is free and needs no Apple hardware, because Rust does not need
-Apple's SDK the way Swift does. Everything after it needs a rented Mac - about
-EUR 1 of hourly Scaleway time to create the Xcode project once, then GitHub
-Actions' free macOS minutes as a compile gate. Note that the Simulator plays
-audio through the *host* Mac's stack, so it cannot reproduce iPhone CoreAudio
-latency - which, for an emulator whose timing model is "audio is the timing
-master", makes it close to worthless for the bugs this project actually hits.
-
-- [ ] Create the Xcode project (or `Package.swift`) - there is currently
-      neither.
-- [ ] Build the core as a static library for `aarch64-apple-ios` and the
-      simulator target.
-- [ ] Verify the bridging header against the real C ABI in `core/src/ffi.rs`.
-- [ ] Audio via `AVAudioEngine`, mirroring Android's blocking-write approach
-      so the audio device is the timing master.
-- [ ] Touch controls, MFi controllers, save states, iCloud sync.
-- [ ] TestFlight, then App Store.
-
----
-
-## Phase 4 - Advanced
+## Phase 3 - Advanced
 
 - [x] **Rewind** - `core/src/rewind.rs` is a bounded ring of save states with
       the cadence left to the frontend, same as save flushing. A state
@@ -377,6 +360,54 @@ master", makes it close to worthless for the bugs this project actually hits.
       Verified on a device. Screen *recording* is still undone.
 - [ ] Debug tools: breakpoints, memory viewer, register inspector.
 - [ ] RetroAchievements.
+
+---
+
+## Phase 4 - Ship it on Google Play
+
+The last Android phase, and the gate in front of everything iOS. Owned by
+`mobile-app-developer`, with `visual-asset-generator` on the artwork.
+
+Nothing here is emulation work. It is the difference between an APK that runs
+on one developer's phone and an app a stranger can install.
+
+- [ ] **Icon and store asset set** - `visual-asset-generator`. The full mipmap
+      set, the adaptive icon's foreground and background, the feature graphic
+      and the screenshots. The pixel bee identity already exists in
+      `docs/logo.png` and `docs/bee-icon.png`; this is producing every size and
+      density Play demands from it.
+- [ ] **Release signing** - an upload key kept out of the repository, wired
+      through `android/app/build.gradle.kts` from a properties file or the CI
+      secret store, never a checked-in keystore.
+- [ ] **A signed App Bundle that actually contains both ABIs.** `.so` files are
+      gitignored and only exist wherever a build last ran, so the AAB is the
+      first artefact where "did the native library ship" is a real question.
+      Verify `arm64-v8a` and `armeabi-v7a` are both inside the bundle before
+      uploading anything.
+- [ ] **R8 / ProGuard rules that do not break JNI.** `GbaEngine`'s `external
+      fun` declarations are matched by name from Rust; a rename or a strip
+      turns into an `UnsatisfiedLinkError` that only appears in the release
+      build, never in debug.
+- [ ] **Play Console listing** - description, screenshots, content rating and
+      the data-safety form. The honest answer to the data-safety questions is
+      that the app collects nothing and sends nothing anywhere; keep it that
+      way, because it is also the easiest form to fill in.
+- [ ] **No ROMs, ever.** The homebrew catalogue is freely distributable
+      homebrew only and is not, and will not become, an index of commercial
+      games. Play removes emulators over exactly this.
+- [ ] **Internal testing track first**, on a device that is not the
+      development phone, then production.
+
+**Exit criterion:** a stranger can install GeeBeeAyy! from Google Play, point
+it at their own legally dumped ROM, and play it.
+
+### The iOS gate
+
+When that criterion is met, and **not before**, ask the repository owner
+whether to start [`ROADMAP-ios.md`](ROADMAP-ios.md). It is a real decision with
+a real cost - it needs a Mac, an Apple Developer account and a second frontend
+to keep at parity forever - so it is theirs to make, not something to drift
+into because Android went quiet.
 
 ---
 
@@ -445,7 +476,7 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 |------|-------|
 | `core/` - emulation, decoders, FFI | `rust-engineer` |
 | Android frontend | `kotlin-specialist` |
-| iOS frontend | `swift-expert` |
+| iOS frontend | `swift-expert` - **parked**, see [`ROADMAP-ios.md`](ROADMAP-ios.md) |
 | Storage, lifecycle, battery, permissions across both platforms | `mobile-developer` |
 | Build, release, device testing, platform parity | `mobile-app-developer` |
 | GBA hardware questions, GBATEK, reference emulators | `search-specialist` |
