@@ -12,8 +12,9 @@ import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,14 +33,6 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         private const val TAG = "GeeBeeAyy/VM"
 
         /**
-         * Rewind depth and cadence.
-         *
-         * A snapshot is around 500 KB, so 20 of them is roughly 10 MB - the
-         * whole budget for this feature. At one every 30 frames that buys
-         * about ten seconds of history, which is the useful range for undoing
-         * a mistake without turning the emulator into a memory hog.
-         */
-        /**
          * Slot 0 is the quick save; 1-7 are the named slots in the list.
          *
          * There used to be a second constant, `STATE_SLOT_COUNT = 10`, which
@@ -55,6 +48,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
          */
         const val SHUTDOWN_JOIN_TIMEOUT_MS = 1_000L
 
+        /**
+         * Rewind depth and cadence.
+         *
+         * A snapshot is about 500 KB, so 30 of them is roughly 15 MB - the
+         * whole budget for this feature. At one every 12 frames that buys
+         * about six seconds of history, which is the useful range for undoing
+         * a mistake without turning the emulator into a memory hog.
+         */
         const val REWIND_DEPTH = 30
         const val REWIND_INTERVAL_FRAMES = 12
 
@@ -140,10 +141,23 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private var emulationJob: Job? = null
 
     /**
-     * The loop that was asked to stop but may still be inside a native call.
-     * The next `startEmulation()` joins it before touching the engine.
+     * Serialises every call into [engine].
+     *
+     * `GbaEngine` hands the core a raw pointer, so two threads inside it at
+     * once is memory corruption, not a race on a value. Cancelling the loop
+     * only *requests* a stop, and a job parked in `engine.runFrame()` is still
+     * in native code long after `stopEmulation()` returns - so pausing and
+     * resuming quickly, or `loadRomFromPath` running while the loop is alive,
+     * could put two threads on the same `Gba`.
+     *
+     * Handing the next loop the previous job to join was the first attempt and
+     * it does not hold: only the most recent cancelled job was kept, and the
+     * join ran inside the new job, so a job cancelled before it was ever
+     * dispatched dropped its predecessor unjoined. A lock has no such ordering
+     * to get wrong. It is taken per frame rather than for the whole loop, so
+     * the blocking audio write never holds it.
      */
-    private var stoppingJob: Job? = null
+    private val engineLock = Mutex()
     private var romLoaded = false
 
     /** True if backgrounding paused a session the player had not paused themselves. */
@@ -257,17 +271,23 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     _isLoading.value = false
                     return@launch
                 }
-                val success = engine.loadRom(data)
+                // Stop first, then take the lock: a running loop is calling
+                // into the same handle, and loading a ROM under it is the one
+                // engine access that was never funnelled onto the loop thread.
+                stopEmulation()
+                val success = engineLock.withLock { engine.loadRom(data) }
                 if (success) {
                     romLoaded = true
                     LastPlayed(getApplication()).record(filePath)
-                    // A fresh ROM means a fresh history; the ring is allocated
-                    // here rather than at create() so a cold handle costs
-                    // nothing.
-                    engine.rewindConfigure(REWIND_DEPTH)
-                    rewindFrameCounter = 0
-                    resolveSavePaths(file, data)
-                    loadExistingSave()
+                    engineLock.withLock {
+                        // A fresh ROM means a fresh history; the ring is
+                        // allocated here rather than at create() so a cold
+                        // handle costs nothing.
+                        engine.rewindConfigure(REWIND_DEPTH)
+                        rewindFrameCounter = 0
+                        resolveSavePaths(file, data)
+                        loadExistingSave()
+                    }
                     _isLoading.value = false
                     startEmulation()
                 } else {
@@ -350,57 +370,71 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             _isRunning.value = true
             audio.start()
             audio.resume()
-            // `stopEmulation()` only *requests* cancellation, and the loop
-            // rechecks `isActive` at the top - so a job parked inside
-            // `engine.runFrame()` is still in native code after it returns.
-            // Toggling pause twice quickly, or backgrounding and coming
-            // straight back, would start this loop alongside the old one and
-            // put two threads on the same `Gba` through a raw pointer. Wait
-            // the previous one out here, off the main thread.
-            val previous = stoppingJob
-            stoppingJob = null
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
-                previous?.cancelAndJoin()
                 while (isActive) {
-                    // Applied here so every call into the core happens on this
-                    // one thread. See the note on `keyState`.
-                    // Held keys, plus anything pressed and released since the
-                    // last frame, which `keyState` alone has already forgotten.
-                    engine.setKeys(keyState or transientPresses.getAndSet(0))
-
-                    pendingStateCommand?.let { cmd ->
-                        pendingStateCommand = null
-                        when (cmd) {
-                            is StateCommand.Save -> performSaveState(cmd.slot)
-                            is StateCommand.LoadBytes -> {
-                applyStateBytes(cmd.bytes)
-                // The history belongs to the timeline we just left.
-                engine.rewindClear()
-                rewindFrameCounter = 0
-            }
-                        }
-                    }
-
-                    // A rejected load stops emulation from inside the block
-                    // above. Job.cancel() flips isActive synchronously but
-                    // this while loop only rechecks it at the top, so without
-                    // this guard the loop would run one more frame on a
-                    // machine just declared unreliable, and write audio to an
-                    // AudioTrack that stopEmulation() just stopped.
-                    if (!isActive) continue
-
                     val speed = fastForwardSpeed.value
                     val rewinding = isRewinding.value
 
-                    if (rewinding) {
-                        // Walking back through the ring one snapshot at a
-                        // time, paced so REWIND_INTERVAL_FRAMES of play take
-                        // REWIND_INTERVAL_FRAMES / REWIND_SPEED to undo.
-                        // Reaching the oldest snapshot holds there rather
-                        // than resuming play under the player's finger.
-                        if (engine.rewindPop()) {
-                            _frameBuffer.value = engine.getFrameBuffer().copyOf()
+                    // Everything that reaches into the core happens under the
+                    // lock. The blocking audio write below deliberately does
+                    // not: it is the frame clock, and holding the lock across
+                    // it would stall a ROM load for as long as the device
+                    // takes to drain its buffer.
+                    val count = engineLock.withLock {
+                        // Applied here so every call into the core happens on
+                        // this one thread. See the note on `keyState`.
+                        // Held keys, plus anything pressed and released since
+                        // the last frame, which `keyState` alone has already
+                        // forgotten.
+                        engine.setKeys(keyState or transientPresses.getAndSet(0))
+
+                        pendingStateCommand?.let { cmd ->
+                            pendingStateCommand = null
+                            when (cmd) {
+                                is StateCommand.Save -> performSaveState(cmd.slot)
+                                is StateCommand.LoadBytes -> {
+                                    applyStateBytes(cmd.bytes)
+                                    // The history belongs to the timeline we
+                                    // just left.
+                                    engine.rewindClear()
+                                    rewindFrameCounter = 0
+                                }
+                            }
                         }
+
+                        if (rewinding) {
+                            // Walking back through the ring one snapshot at a
+                            // time, paced so REWIND_INTERVAL_FRAMES of play
+                            // take REWIND_INTERVAL_FRAMES / REWIND_SPEED to
+                            // undo. Reaching the oldest snapshot holds there
+                            // rather than resuming play under the finger.
+                            if (engine.rewindPop()) {
+                                _frameBuffer.value = engine.getFrameBuffer().copyOf()
+                            }
+                            -1
+                        } else {
+                            if (speed > 0) {
+                                engine.runFrames(speed)
+                            } else {
+                                engine.runFrame()
+                            }
+                            _frameBuffer.value = engine.getFrameBuffer().copyOf()
+
+                            // Snapshot on a cadence, not every frame: a state
+                            // is about 500 KB, so REWIND_DEPTH * the interval
+                            // decides both the memory cost and how far back
+                            // the player can go.
+                            if (++rewindFrameCounter >= REWIND_INTERVAL_FRAMES) {
+                                rewindFrameCounter = 0
+                                engine.rewindPush()
+                            }
+
+                            checkSaveDirty()
+                            engine.readAudio(audioSamples)
+                        }
+                    }
+
+                    if (count < 0) {
                         delay(
                             (frameIntervalMs * REWIND_INTERVAL_FRAMES / REWIND_SPEED)
                                 .coerceAtLeast(1L)
@@ -408,24 +442,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         continue
                     }
 
-                    if (speed > 0) {
-                        engine.runFrames(speed)
-                    } else {
-                        engine.runFrame()
-                    }
-                    _frameBuffer.value = engine.getFrameBuffer().copyOf()
+                    // A rejected load stops emulation from inside the block
+                    // above. Job.cancel() flips isActive synchronously but
+                    // this while loop only rechecks it at the top, so without
+                    // this guard the loop would write audio to an AudioTrack
+                    // that stopEmulation() just stopped.
+                    if (!isActive) continue
 
-                    // Snapshot on a cadence, not every frame: a state is about
-                    // 500 KB, so REWIND_DEPTH * REWIND_INTERVAL decides both
-                    // the memory cost and how far back the player can go.
-                    if (++rewindFrameCounter >= REWIND_INTERVAL_FRAMES) {
-                        rewindFrameCounter = 0
-                        engine.rewindPush()
-                    }
-
-                    checkSaveDirty()
-
-                    val count = engine.readAudio(audioSamples)
                     // Fast forward would be held back to real time by a blocking
                     // audio write, so drop the samples and pace off the timer.
                     //
@@ -520,12 +543,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun stopEmulation() {
-        emulationJob?.let {
-            it.cancel()
-            // Kept so the next `startEmulation()` can join it. Nulling this
-            // without a handle to join was what let two loops overlap.
-            stoppingJob = it
-        }
+        // A cancelled loop may still be inside a native call; `engineLock` is
+        // what keeps the next one out of the engine until it leaves, so there
+        // is nothing to join here.
+        emulationJob?.cancel()
         emulationJob = null
         audio.stop()
         _isRunning.value = false
@@ -722,26 +743,29 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // freed while the loop is still inside a native call. Blocking the
         // main thread for at most one frame is the cost of not doing that;
         // if the wait times out, leak the handle rather than free it live.
-        val job = emulationJob
+        emulationJob?.cancel()
         emulationJob = null
-        val stopped = runBlocking {
-            withTimeoutOrNull(SHUTDOWN_JOIN_TIMEOUT_MS) {
-                job?.cancelAndJoin()
-                stoppingJob?.cancelAndJoin()
-                true
-            }
-        } == true
         audio.stop()
+        // Acquiring the lock is the proof the loop has left native code -
+        // stronger than joining the job, which says nothing about a coroutine
+        // parked inside `engine.runFrame()`.
+        val stopped = runBlocking {
+            withTimeoutOrNull(SHUTDOWN_JOIN_TIMEOUT_MS) { engineLock.lock(); true }
+        } == true
         // viewModelScope is already cancelled by the time onCleared() runs -
         // ViewModel.clear() closes it before calling this - so a launched
         // coroutine here would silently never run. flushSaveNow() has no
         // suspension points, so it is called directly instead.
         flushSaveNow()
-        audio.release()
         if (stopped) {
+            // `audio.release()` belongs here too, not before the check: a loop
+            // that has not stopped in a second is almost certainly blocked in
+            // `AudioTrack.write`, and releasing the track under a live write
+            // is a native crash. Leaking both beats a SIGSEGV on the way out.
+            audio.release()
             engine.destroy()
         } else {
-            Log.w(TAG, "Emulation thread still running; leaking the core handle rather than freeing it under a live call")
+            Log.w(TAG, "Emulation thread still running; leaking the core handle and the audio track rather than freeing them under a live call")
         }
     }
 }
