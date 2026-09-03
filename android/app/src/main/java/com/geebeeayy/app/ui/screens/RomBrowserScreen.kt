@@ -11,6 +11,8 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -201,7 +203,11 @@ fun RomBrowserScreen(
                                 RomCard(rom = rom, onClick = { onRomClick(rom) })
                             }
                         }
-                        items(visibleRoms) { rom ->
+                        // The rest, not all of them: `favorites` is a subset of
+                        // `visibleRoms`, so listing the whole list here drew
+                        // every favourite a second time. Latent only because
+                        // nothing sets `isFavorite` yet.
+                        items(visibleRoms.filterNot { it.isFavorite }) { rom ->
                             RomCard(rom = rom, onClick = { onRomClick(rom) })
                         }
                     }
@@ -232,9 +238,17 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Cover art if the player supplied one next to the ROM,
-            // otherwise the cartridge placeholder. Decoding is keyed on the
-            // path so scrolling does not re-read the file every frame.
-            val artwork = remember(rom.filePath) { RomArtwork.load(rom.filePath) }
+            // otherwise the cartridge placeholder.
+            //
+            // Loaded in a LaunchedEffect rather than straight in composition:
+            // `RomArtwork.load` probes several paths and decodes a bitmap, and
+            // doing that synchronously meant every row scrolling into view did
+            // disk I/O and a decode on the UI thread. The placeholder shows
+            // until it arrives.
+            var artwork by remember(rom.filePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
+            LaunchedEffect(rom.filePath) {
+                artwork = withContext(Dispatchers.IO) { RomArtwork.load(rom.filePath) }
+            }
             Box(
                 modifier = Modifier
                     .size(56.dp)
@@ -242,9 +256,10 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
                     .background(AmberResin.copy(alpha = 0.3f)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (artwork != null) {
+                val art = artwork
+                if (art != null) {
                     Image(
-                        bitmap = artwork.asImageBitmap(),
+                        bitmap = art.asImageBitmap(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
