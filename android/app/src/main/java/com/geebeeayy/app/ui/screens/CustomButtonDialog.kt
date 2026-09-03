@@ -201,8 +201,22 @@ private fun CustomButtonEditDialog(
                                 selected = mode == m,
                                 onClick = {
                                     if (mode != m) {
+                                        // Only a move across the SEQUENCE
+                                        // boundary invalidates the picks:
+                                        // SEQUENCE keeps an ordered list that
+                                        // may repeat a key, the other two an
+                                        // unordered set. Clearing on every
+                                        // change meant editing a button just
+                                        // to switch COMBO to TOGGLE_HOLD
+                                        // silently dropped its keys and left
+                                        // Save disabled.
+                                        val crossesSequence =
+                                            (mode == CustomButtonMode.SEQUENCE) !=
+                                                (m == CustomButtonMode.SEQUENCE)
                                         mode = m
-                                        keys = emptyList()
+                                        if (crossesSequence) {
+                                            keys = emptyList()
+                                        }
                                     }
                                 },
                                 colors = RadioButtonDefaults.colors(
