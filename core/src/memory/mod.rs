@@ -206,7 +206,16 @@ impl MemoryBus {
     /// it needs the 16-bit path rather than the byte path the other save types
     /// use. On a cart without EEPROM the region stays a ROM mirror.
     fn is_eeprom_region(&self, address: u32) -> bool {
-        (0x0D00_0000..=0x0DFF_FFFF).contains(&address) && self.cart.uses_eeprom()
+        self.cart.uses_eeprom()
+            && (self.cart.eeprom_window_start()..=0x0DFF_FFFF).contains(&address)
+    }
+
+    /// The DMA unit announcing a transfer that touches the EEPROM window, so
+    /// the cart can read the command's address width off its length.
+    pub fn eeprom_begin_dma(&mut self, address: u32, words: usize) {
+        if self.is_eeprom_region(address) {
+            self.cart.eeprom_begin_dma(words);
+        }
     }
 
     /// 16-bit read that can advance the EEPROM state machine. Reading EEPROM

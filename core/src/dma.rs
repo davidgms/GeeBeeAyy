@@ -208,6 +208,15 @@ impl Dma {
         let src_adj = ch.src_adj;
         let dst_adj = ch.dst_adj;
         let dst_save = ch.dest;
+        let source = ch.source;
+        let dest = ch.dest;
+
+        // EEPROM reads the command's address width off the transfer length,
+        // so it has to be told before the first bit is clocked. Either end of
+        // the transfer can be the chip: a write DMAs into it, a read out of
+        // it.
+        bus.eeprom_begin_dma(dest, count as usize);
+        bus.eeprom_begin_dma(source, count as usize);
 
         for _ in 0..count {
             if word_size == 4 {

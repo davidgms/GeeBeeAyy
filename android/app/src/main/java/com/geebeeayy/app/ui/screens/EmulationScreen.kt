@@ -21,6 +21,13 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
@@ -37,6 +44,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.geebeeayy.app.data.ScreenFilter
+import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.ui.theme.*
@@ -61,6 +69,7 @@ fun EmulationScreen(
     controlOpacity: Float = 1f,
     onSaveState: (Int) -> Unit,
     onLoadState: (Int) -> Unit,
+    stateSlots: () -> List<StateSlot> = { emptyList() },
     onScreenshot: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
 ) {
@@ -81,6 +90,7 @@ fun EmulationScreen(
         }
     }
     var isFastForward by remember { mutableStateOf(false) }
+    var showSlots by remember { mutableStateOf(false) }
 
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -163,28 +173,6 @@ fun EmulationScreen(
                 }
                 IconButton(onClick = { showMenu = !showMenu }) {
                     Icon(Icons.Default.MoreVert, "Menu", tint = PineGlowMist)
-                }
-            }
-
-            if (stateMessage != null) {
-                // The banner sits above the screen and shrinks it, so it
-                // cannot be left standing until someone taps the X.
-                LaunchedEffect(stateMessage) {
-                    delay(3000)
-                    onDismissStateMessage()
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(HoneyDark)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(text = stateMessage, color = PineGlowMist, fontSize = 13.sp)
-                    IconButton(onClick = onDismissStateMessage, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Close, "Dismiss", tint = PineGlowMist)
-                    }
                 }
             }
 
@@ -290,6 +278,21 @@ fun EmulationScreen(
             )
         }
 
+        StateToast(
+            message = stateMessage,
+            onDismiss = onDismissStateMessage,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+
+        if (showSlots) {
+            SaveStateDialog(
+                slots = stateSlots(),
+                onSave = { slot -> showSlots = false; onSaveState(slot) },
+                onLoad = { slot -> showSlots = false; onLoadState(slot) },
+                onDismiss = { showSlots = false },
+            )
+        }
+
         // Dropdown menu
         if (showMenu) {
             DropdownMenu(
@@ -305,6 +308,11 @@ fun EmulationScreen(
                     text = { Text("Load State") },
                     onClick = { showMenu = false; onLoadState(0) },
                     leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = AmberResin) }
+                )
+                DropdownMenuItem(
+                    text = { Text("Save States...") },
+                    onClick = { showMenu = false; showSlots = true },
+                    leadingIcon = { Icon(Icons.Default.Bookmarks, null, tint = AmberResin) }
                 )
                 HorizontalDivider(color = HoneyMid)
                 DropdownMenuItem(
@@ -790,4 +798,129 @@ fun ActionButton(
             fontWeight = FontWeight.Bold,
         )
     }
+}
+
+/**
+ * A floating confirmation over the play area.
+ *
+ * It replaces a full-width banner that sat in the layout column: that pushed
+ * the screen down every time it appeared, and stayed until someone tapped an
+ * X. This one floats, fades, and clears itself.
+ */
+@Composable
+private fun StateToast(
+    message: String?,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Held locally so the pill can finish fading out after the message is
+    // already gone from the ViewModel.
+    var shown by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(message) {
+        if (message != null) {
+            shown = message
+            delay(2200)
+            onDismiss()
+        }
+    }
+
+    AnimatedVisibility(
+        visible = message != null,
+        enter = fadeIn(tween(150)) + slideInVertically(tween(180)) { -it / 2 },
+        exit = fadeOut(tween(220)),
+        modifier = modifier.padding(top = 56.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(HoneyDark)
+                .border(1.dp, GoldenSaplight.copy(alpha = 0.45f), RoundedCornerShape(50))
+                .padding(horizontal = 16.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = GoldenSaplight,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = shown.orEmpty(),
+                color = PineGlowMist,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
+/**
+ * The slot list behind the menu's "Save States...".
+ *
+ * Slot 0 is the same state the toolbar's save and load buttons use, so a
+ * quick save shows up here and a slot written here can be loaded from the
+ * toolbar. The rest are only reachable from this list.
+ */
+@Composable
+private fun SaveStateDialog(
+    slots: List<StateSlot>,
+    onSave: (Int) -> Unit,
+    onLoad: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val formatter = remember {
+        java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault())
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HoneyDark,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text("Save states", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                slots.forEach { slot ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (slot.index == 0) "Quick save" else "Slot ${slot.index}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PineGlowMist,
+                            )
+                            Text(
+                                text = if (slot.exists) {
+                                    formatter.format(java.util.Date(slot.savedAt))
+                                } else {
+                                    "Empty"
+                                },
+                                fontSize = 11.sp,
+                                color = AmberResin,
+                            )
+                        }
+                        TextButton(onClick = { onSave(slot.index) }) {
+                            Text("Save", color = GoldenSaplight, fontSize = 13.sp)
+                        }
+                        TextButton(
+                            onClick = { onLoad(slot.index) },
+                            enabled = slot.exists,
+                        ) {
+                            Text(
+                                "Load",
+                                color = if (slot.exists) GoldenSaplight else AmberResin,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = GoldenSaplight) }
+        },
+    )
 }

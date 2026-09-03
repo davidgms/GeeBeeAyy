@@ -40,6 +40,9 @@ pub struct Cartridge {
     /// Serial EEPROM state. Unlike SRAM and Flash, EEPROM is not addressable
     /// memory - it is a one-bit serial device driven by DMA.
     eeprom_state: EepromState,
+    /// Address width of the command currently being clocked in, taken from
+    /// the length of the DMA that carries it. `None` until a DMA says.
+    eeprom_addr_bits: Option<usize>,
 }
 
 /// The header's complement check, per GBATEK: subtract every byte from 0xA0 to
@@ -70,6 +73,7 @@ impl Cartridge {
             save_dirty: false,
             flash_id_mode: false,
             eeprom_state: EepromState::new(),
+            eeprom_addr_bits: None,
         }
     }
 
@@ -124,6 +128,7 @@ impl Cartridge {
             save_dirty: false,
             flash_id_mode: false,
             eeprom_state: EepromState::new(),
+            eeprom_addr_bits: None,
         })
     }
 
@@ -163,11 +168,43 @@ impl Cartridge {
     }
 
     /// Address width in bits: 6 for a 512-byte EEPROM, 14 for an 8 KB one.
+    ///
+    /// The chip size is only a fallback. What actually decides it is the
+    /// length of the DMA carrying the command, because a game detects the
+    /// chip by trying both widths and believing whichever answers - so a
+    /// cartridge with an 8 KB part is still addressed with 6 bits during
+    /// detection, and hardcoding 14 desynchronises the whole bit stream.
     fn eeprom_address_bits(&self) -> usize {
-        if self.eeprom.len() > 512 {
-            14
-        } else {
-            6
+        self.eeprom_addr_bits.unwrap_or({
+            if self.eeprom.len() > 512 {
+                14
+            } else {
+                6
+            }
+        })
+    }
+
+    /// Told by the DMA unit how long the transfer driving the EEPROM is, in
+    /// halfwords, before a single bit is clocked.
+    ///
+    /// GBATEK, *GBA Cart Backup EEPROM*: a set-address command is 2 opcode
+    /// bits + address + 1 stop, and a write is that plus 64 data bits. So the
+    /// length names the address width outright:
+    ///
+    /// | words | command | address bits |
+    /// | --- | --- | --- |
+    /// | 9  | set read address | 6 |
+    /// | 17 | set read address | 14 |
+    /// | 73 | write | 6 |
+    /// | 81 | write | 14 |
+    ///
+    /// A 68-word read-back carries no address, so it says nothing and is
+    /// left alone.
+    pub fn eeprom_begin_dma(&mut self, words: usize) {
+        match words {
+            9 | 73 => self.eeprom_addr_bits = Some(6),
+            17 | 81 => self.eeprom_addr_bits = Some(14),
+            _ => {}
         }
     }
 
@@ -192,6 +229,25 @@ impl Cartridge {
     /// `0x0D000000` rather than the usual save region.
     pub fn uses_eeprom(&self) -> bool {
         matches!(self.save_type, SaveType::Eeprom512 | SaveType::Eeprom8k)
+    }
+
+    /// First address of the EEPROM window.
+    ///
+    /// GBATEK, *GBA Cart Backup EEPROM*: the chip answers anywhere in
+    /// `0x0D000000-0x0DFFFFFF` **only** on a cartridge of 16 MB or less. Past
+    /// that the ROM itself reaches into the same addresses through the WS2
+    /// mirror, and the window shrinks to the last 256 bytes.
+    ///
+    /// Getting this wrong is not a subtle timing issue: on a 32 MB ROM the
+    /// whole upper half of the cartridge reads back as EEPROM bits instead of
+    /// code, and every command the game sends lands in a state machine that
+    /// the ROM reads have already desynchronised.
+    pub fn eeprom_window_start(&self) -> u32 {
+        if self.rom.len() > 16 * 1024 * 1024 {
+            0x0DFF_FF00
+        } else {
+            0x0D00_0000
+        }
     }
 
     /// Read a byte from save memory

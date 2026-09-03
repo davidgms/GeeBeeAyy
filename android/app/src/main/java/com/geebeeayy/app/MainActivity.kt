@@ -153,12 +153,10 @@ fun GeeBeeAyyNavHost() {
         }
 
         composable("homebrew") {
-            // Downloads land in the first configured ROM folder; the scan that
-            // follows is the same one the browser uses, so a finished download
-            // shows up without leaving the app.
-            val destination = folderManager.getFolderPaths().firstOrNull()?.let { java.io.File(it) }
+            // The scan that follows a download is the same one the browser
+            // uses, so a finished download shows up without leaving the app.
             HomebrewScreen(
-                destination = destination,
+                folders = folderManager.getFolderPaths(),
                 onBack = { navController.popBackStack() },
                 onDownloaded = { rescanRoms() },
             )
@@ -228,6 +226,7 @@ fun GeeBeeAyyNavHost() {
                 controlOpacity = controlOpacity,
                 onSaveState = { slot -> viewModel.saveState(slot) },
                 onLoadState = { slot -> viewModel.loadState(slot) },
+                stateSlots = { viewModel.stateSlots() },
                 onScreenshot = { viewModel.takeScreenshot() },
                 onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
             )

@@ -2,6 +2,8 @@ package com.geebeeayy.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -36,11 +38,16 @@ import java.io.File
  */
 @Composable
 fun HomebrewScreen(
-    destination: File?,
+    folders: List<String>,
     onBack: () -> Unit,
     onDownloaded: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    // Which folder downloads land in. With one configured folder there is
+    // nothing to choose; with several, picking silently was how a download
+    // ended up somewhere the player was not looking.
+    var destinationPath by remember(folders) { mutableStateOf(folders.firstOrNull()) }
+    val destination = destinationPath?.let { File(it) }
     var busy by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -78,6 +85,38 @@ fun HomebrewScreen(
                 modifier = Modifier.padding(16.dp),
             )
             return@Column
+        }
+
+        if (folders.size > 1) {
+            Text(
+                text = "Download to",
+                color = AmberResin,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                folders.forEach { path ->
+                    val selected = path == destinationPath
+                    FilterChip(
+                        selected = selected,
+                        onClick = { destinationPath = path },
+                        enabled = busy == null,
+                        label = { Text(path.substringAfterLast('/'), fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = HoneyDark,
+                            labelColor = PineGlowMist,
+                            selectedContainerColor = GoldenSaplight,
+                            selectedLabelColor = BurntRoot,
+                        ),
+                    )
+                }
+            }
         }
 
         message?.let {

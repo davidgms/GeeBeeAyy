@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +38,21 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
          * about ten seconds of history, which is the useful range for undoing
          * a mistake without turning the emulator into a memory hog.
          */
-        const val REWIND_DEPTH = 20
-        const val REWIND_INTERVAL_FRAMES = 30
+        /** Slot 0 is the quick save; 1-7 are the named slots in the list. */
+        const val SLOT_COUNT = 8
+
+        const val REWIND_DEPTH = 30
+        const val REWIND_INTERVAL_FRAMES = 12
+
+        /**
+         * How many times faster than real time the rewind runs.
+         *
+         * Popping one snapshot per frame made the whole ring unwind in about
+         * a third of a second: 10 seconds of play vanished before the finger
+         * left the button. Pacing the pops against the snapshot interval
+         * gives a rewind you can aim.
+         */
+        const val REWIND_SPEED = 4
 
         /**
          * A game saving touches thousands of bytes across many CPU cycles;
@@ -330,15 +344,18 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     val rewinding = isRewinding.value
 
                     if (rewinding) {
-                        // Walking back through the ring: each step is a whole
-                        // snapshot, so this runs at the snapshot cadence
-                        // rather than the frame rate, and stops at the oldest
-                        // one rather than doing nothing visible.
-                        if (!engine.rewindPop()) {
-                            _isRewinding.value = false
+                        // Walking back through the ring one snapshot at a
+                        // time, paced so REWIND_INTERVAL_FRAMES of play take
+                        // REWIND_INTERVAL_FRAMES / REWIND_SPEED to undo.
+                        // Reaching the oldest snapshot holds there rather
+                        // than resuming play under the player's finger.
+                        if (engine.rewindPop()) {
+                            _frameBuffer.value = engine.getFrameBuffer().copyOf()
                         }
-                        _frameBuffer.value = engine.getFrameBuffer().copyOf()
-                        delay(frameIntervalMs)
+                        delay(
+                            (frameIntervalMs * REWIND_INTERVAL_FRAMES / REWIND_SPEED)
+                                .coerceAtLeast(1L)
+                        )
                         continue
                     }
 
@@ -491,6 +508,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun stateFile(slot: Int): File = File(statesDir, "${romStateKey}_slot$slot.state")
+
+    /**
+     * What each save-state slot holds, for the slot list.
+     *
+     * Slot 0 is the quick-save the toolbar writes; the rest exist only
+     * through the slot list.
+     */
+    fun stateSlots(): List<StateSlot> = (0 until SLOT_COUNT).map { slot ->
+        val file = stateFile(slot)
+        StateSlot(slot, file.isFile && file.length() > 0, file.lastModified())
+    }
 
     /**
      * Write the current frame to the device's Pictures/GeeBeeAyy folder as a

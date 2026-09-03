@@ -428,3 +428,99 @@ fn the_header_checksum_covers_only_0xa0_to_0xbc() {
     gba.load_rom(&rom).expect("ROM should load");
     assert_eq!(gba.cartridge().title(), "CHECKSUMTEST");
 }
+
+/// A ROM larger than 16 MB, carrying the EEPROM marker, with `filler` written
+/// at the ROM offset that the WS2 mirror puts at 0x0D000000.
+fn big_eeprom_rom(filler: u8) -> Vec<u8> {
+    let mut data = vec![0u8; 17 * 1024 * 1024];
+    data[0x100..0x100 + 11].copy_from_slice(b"EEPROM_V126");
+    data[0x0100_0000] = filler;
+    data
+}
+
+/// GBATEK, *GBA Cart Backup EEPROM*: on a cartridge over 16 MB the chip
+/// answers only at 0x0DFFFF00-0x0DFFFFFF, because the ROM itself reaches the
+/// rest of that range through the WS2 mirror.
+///
+/// This is the bug that stopped Yggdra Union (32 MB, EEPROM_V126) saving: the
+/// window covered all of 0x0D000000-0x0DFFFFFF, so the upper half of the
+/// cartridge read back as EEPROM bits and every command the game sent landed
+/// in an already-desynchronised state machine.
+#[test]
+fn a_large_rom_keeps_its_ws2_mirror_outside_the_eeprom_window() {
+    let mut gba = Gba::new();
+    gba.load_rom(&big_eeprom_rom(0xA5))
+        .expect("ROM should load");
+    assert!(gba.cartridge().uses_eeprom());
+
+    assert_eq!(
+        gba.bus.read8(0x0D00_0000),
+        0xA5,
+        "0x0D000000 on a 17 MB cart is the ROM's WS2 mirror, not the EEPROM"
+    );
+    assert_eq!(
+        gba.bus.read16_mut(0x0D00_0000),
+        0x00A5,
+        "a halfword read of the mirror must not clock the EEPROM either"
+    );
+
+    // The chip is still reachable at the top of the window: idle EEPROM
+    // reports ready.
+    assert_eq!(gba.bus.read16_mut(0x0DFF_FF00) & 1, 1);
+}
+
+/// A 16 MB-or-smaller cartridge keeps the whole region, which is where every
+/// small EEPROM game talks to its chip.
+#[test]
+fn a_small_rom_keeps_the_whole_eeprom_window() {
+    let mut gba = gba_with("EEPROM_V122");
+    assert_eq!(gba.bus.read16_mut(0x0D00_0000) & 1, 1);
+}
+
+/// The address width comes from the DMA's length, not from the chip size.
+///
+/// A game detects its EEPROM by trying a 6-bit command first, so an 8 KB part
+/// has to answer 6-bit commands during detection. Deriving the width from the
+/// chip size alone makes every one of those commands land at the wrong phase.
+#[test]
+fn the_eeprom_address_width_follows_the_dma_length() {
+    let mut gba = Gba::new();
+    gba.load_rom(&big_eeprom_rom(0)).expect("ROM should load");
+
+    let window = 0x0DFF_FF00;
+    let payload: u64 = 0xCAFE_BABE_1234_5678;
+
+    // 73 halfwords = 2 opcode + 6 address + 64 data + 1 stop: a 6-bit write.
+    let mut write = vec![true, false];
+    write.extend(bits_of(9, 6));
+    write.extend(bits_of(payload, 64));
+    write.push(false);
+    assert_eq!(write.len(), 73);
+    gba.bus.eeprom_begin_dma(window, write.len());
+    for &b in &write {
+        gba.bus.write16(window, b as u16);
+    }
+
+    // 9 halfwords = 2 + 6 + 1: a 6-bit set-read-address.
+    let mut read = vec![true, true];
+    read.extend(bits_of(9, 6));
+    read.push(false);
+    assert_eq!(read.len(), 9);
+    gba.bus.eeprom_begin_dma(window, read.len());
+    for &b in &read {
+        gba.bus.write16(window, b as u16);
+    }
+
+    gba.bus.eeprom_begin_dma(window, 68);
+    let out: Vec<bool> = (0..68)
+        .map(|_| gba.bus.read16_mut(window) & 1 == 1)
+        .collect();
+    let mut got: u64 = 0;
+    for &b in &out[4..] {
+        got = (got << 1) | b as u64;
+    }
+    assert_eq!(
+        got, payload,
+        "an 8 KB chip must still answer the 6-bit commands a game probes with"
+    );
+}
