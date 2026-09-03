@@ -275,7 +275,15 @@ is left is literally finishing the game, which needs a person playing it.
       Per-game layouts landed 2026-09-03: named layouts in `ControlLayout.kt`
       and `ControlLayoutStore.kt`, one active layout per ROM key, each of the
       ten controls positioned individually, plus custom combo/sequence/hold
-      buttons. **Untested on a device.**
+      buttons.
+      **Verified on a device 2026-09-03** on a Xiaomi Mi 10T Pro against
+      *Yggdra Union*: create, rename and select a layout; drag a control and
+      undo/redo it; a layout survives an app restart; a custom Combo button
+      presses both its keys and releases them; a Toggle hold releases its keys
+      when the screen is left. Two bugs the device found and that the emulator
+      alone never would have: the edit bar pushed **Done** off the right edge,
+      so edit mode could not be left at all, and changing a custom button's
+      behaviour discarded the keys it already had. Both fixed.
 - [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
       now supports Fit (largest size preserving 3:2, letterboxed), Integer
       (largest whole-number multiple, falling back to Fit below 240x160) and
