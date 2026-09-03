@@ -163,10 +163,9 @@ class GbaEngine {
      * Restore the machine from a byte blob produced by [readState].
      *
      * A `false` result means the load was rejected (bad version, truncated
-     * or corrupt data) - and because the core's restore writes into the live
-     * machine as it parses, a rejected load can leave a hybrid of the old
-     * and new states rather than the original untouched. Callers must treat
-     * the session as unreliable rather than let emulation continue on it.
+     * or corrupt data). `SaveState::restore` snapshots the machine first and
+     * rolls back on failure, so a rejected load leaves it exactly as it was
+     * and emulation can carry on.
      *
      * @return true on success.
      */
@@ -200,7 +199,13 @@ class GbaEngine {
      */
     fun rewindPop(): Boolean {
         ensureHandle()
-        return nativeRewindPop(handle) == 1
+        if (nativeRewindPop(handle) != 1) return false
+        // Same as [runFrame]: the native side does not push pixels, the copy
+        // does. Without it [getFrameBuffer] kept returning the frame from
+        // before the rewind started, so holding the button rewound the
+        // machine behind a frozen screen.
+        nativeFrameBufferCopy(handle, frameBuffer)
+        return true
     }
 
     /** Drop every snapshot, for a ROM change or a save-state load. */
