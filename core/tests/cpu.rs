@@ -600,3 +600,38 @@ fn thumb_backward_unconditional_branch() {
     cpu.step(&mut bus);
     assert_eq!(cpu.registers[2], 9, "backward B did not execute its target");
 }
+
+/// THUMB Format 15 `LDMIA Rn!, {…}` with Rn in the register list: on ARM7TDMI
+/// the loaded value wins and the writeback is suppressed. This used to
+/// overwrite the loaded base with `base + 4 * count`, so the ARM and THUMB
+/// LDM paths disagreed on the same program.
+#[test]
+fn thumb_ldmia_does_not_write_back_over_a_loaded_base() {
+    const DATA: u32 = 0x0300_1000;
+    // ldmia r0!, {r0, r1}
+    let (mut cpu, mut bus) = setup_thumb(&[0xC803]);
+    bus.write32(DATA, 0xDEAD_BEEF);
+    bus.write32(DATA + 4, 0x1234_5678);
+    cpu.registers[0] = DATA;
+    cpu.step(&mut bus);
+    assert_eq!(
+        cpu.registers[0], 0xDEAD_BEEF,
+        "r0 is in the list, so it must keep the word loaded into it"
+    );
+    assert_eq!(cpu.registers[1], 0x1234_5678);
+}
+
+/// The ordinary case still writes back.
+#[test]
+fn thumb_ldmia_writes_back_when_the_base_is_not_loaded() {
+    const DATA: u32 = 0x0300_1000;
+    // ldmia r0!, {r1, r2}
+    let (mut cpu, mut bus) = setup_thumb(&[0xC806]);
+    bus.write32(DATA, 0xAAAA_AAAA);
+    bus.write32(DATA + 4, 0xBBBB_BBBB);
+    cpu.registers[0] = DATA;
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], DATA + 8);
+    assert_eq!(cpu.registers[1], 0xAAAA_AAAA);
+    assert_eq!(cpu.registers[2], 0xBBBB_BBBB);
+}

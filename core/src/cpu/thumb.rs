@@ -354,7 +354,13 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         addr = addr.wrapping_add(4);
                     }
                 }
-                cpu.set_reg(rn, addr);
+                // On ARM7TDMI, when Rn is in the register list the loaded
+                // value wins and no writeback happens. The ARM-mode LDM in
+                // arm.rs already does this; THUMB overwrote the loaded base
+                // with base + 4 * count.
+                if reg_list & (1 << rn) == 0 {
+                    cpu.set_reg(rn, addr);
+                }
                 2 + reg_count
             } else {
                 for i in 0..8u16 {
@@ -368,46 +374,29 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             }
         }
 
-        // Format 16/17/18/19: Conditional branch, SWI, Unconditional branch, Long branch
+        // Format 16/17: Conditional branch, SWI. (Format 19's long branch is
+        // the 0b1111 arm below; this one used to carry a second, unreachable
+        // copy of it behind `if bits15_12 == 0b1101`, which is the value being
+        // matched and so is always true.)
         0b1101 => {
-            if bits15_12 == 0b1101 {
-                let cond = (instruction >> 8) & 0xF;
-                if cond == 0b1111 {
-                    // Format 17: SWI
-                    let comment = instruction & 0xFF;
-                    cpu.swi(comment as u32, bus);
-                    3
-                } else if cond == 0b1110 {
-                    // Undefined, treat as NOP
-                    1
-                } else if cpu.condition_met(cond as u32) {
-                    // Format 16: Conditional branch
-                    let offset = (instruction & 0xFF) as i8 as i32;
-                    let pc = cpu.registers[15];
-                    let target = pc.wrapping_add((offset << 1) as u32);
-                    cpu.set_reg(15, target);
-                    3
-                } else {
-                    1
-                }
-            } else {
-                // Format 19: Long branch with link (first part: 11110 or 11101)
-                let h = (instruction >> 11) & 1;
-                if h == 0 {
-                    let offset11 = (instruction & 0x7FF) as u32;
-                    let pc = cpu.registers[15];
-                    let offset = (offset11 << 12) as i32;
-                    let lr = pc.wrapping_add(offset as u32);
-                    cpu.set_reg(14, lr);
-                } else {
-                    let offset11 = (instruction & 0x7FF) as u32;
-                    let lr = cpu.registers[14];
-                    let old_pc = cpu.registers[15];
-                    let pc = lr.wrapping_add(offset11 << 1);
-                    cpu.set_reg(14, old_pc | 1);
-                    cpu.set_reg(15, pc);
-                }
+            let cond = (instruction >> 8) & 0xF;
+            if cond == 0b1111 {
+                // Format 17: SWI
+                let comment = instruction & 0xFF;
+                cpu.swi(comment as u32, bus);
                 3
+            } else if cond == 0b1110 {
+                // Undefined, treat as NOP
+                1
+            } else if cpu.condition_met(cond as u32) {
+                // Format 16: Conditional branch
+                let offset = (instruction & 0xFF) as i8 as i32;
+                let pc = cpu.registers[15];
+                let target = pc.wrapping_add((offset << 1) as u32);
+                cpu.set_reg(15, target);
+                3
+            } else {
+                1
             }
         }
 
