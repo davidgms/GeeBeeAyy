@@ -75,6 +75,31 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         const val REWIND_SPEED = 4
 
         /**
+         * One GBA frame in nanoseconds: 280896 cycles at 16.78 MHz, which is
+         * 59.7275 Hz rather than 60. This, not the display's refresh rate, is
+         * the period fast-forward paces against - the multiplier on the
+         * button has to mean "N times the console's speed", and the console
+         * does not care what the panel runs at.
+         */
+        const val GBA_FRAME_NANOS = 16_743_006L
+
+        /**
+         * Carry a pacing deadline forward by one `period`, or snap it to
+         * `now` when the work already overran it.
+         *
+         * Carrying it forward rather than restarting from `now` is what keeps
+         * the multiplier honest: a batch that finished 2 ms late shortens the
+         * next sleep by 2 ms instead of letting the error accumulate. Snapping
+         * when already behind is the other half - without it a device that
+         * cannot reach the requested speed builds an ever-growing debt and
+         * then sprints through frames trying to repay it.
+         */
+        fun advanceDeadline(deadline: Long, now: Long, period: Long): Long {
+            val next = deadline + period
+            return if (next <= now) now else next
+        }
+
+        /**
          * A game saving touches thousands of bytes across many CPU cycles;
          * waiting this long after the last dirty flag before writing avoids a
          * file write per byte.
@@ -370,6 +395,36 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Wall-clock instant the batch being paced is allowed to end. */
+    private var frameDeadlineNanos = 0L
+
+    /**
+     * Sleep whatever is left of this batch's slice, and no more.
+     *
+     * RetroArch's `limit_frame_time` and DeSmuME's `SpeedThrottle` both carry
+     * a deadline forward by a fixed period and sleep only the remainder. The
+     * loop used to sleep a whole period *after* the work instead, which adds
+     * the emulation time to the wait rather than hiding it inside: a device
+     * needing 60 ms to emulate 8 frames spent 60 ms plus a full interval on
+     * them, so the "8x" button delivered under 2x.
+     *
+     * A batch of `speed` frames is one console frame period wide, so the
+     * multiplier is exact - the display still gets ~60 updates a second while
+     * the core runs `speed` times as many frames. Falling behind snaps the
+     * deadline to now rather than building up a debt the loop would then try
+     * to sprint off, and that is also what makes the speed self-limiting on a
+     * device that cannot reach the requested multiplier.
+     */
+    private suspend fun delayUntilDeadline(speed: Int) {
+        val period = if (speed > 0) GBA_FRAME_NANOS else frameIntervalMs * 1_000_000L
+        val now = System.nanoTime()
+        frameDeadlineNanos = advanceDeadline(frameDeadlineNanos, now, period)
+        val remaining = frameDeadlineNanos - now
+        if (remaining > 0L) {
+            delay(remaining / 1_000_000L)
+        }
+    }
+
     fun startEmulation() {
         if (romLoaded && emulationJob == null) {
             _isRunning.value = true
@@ -455,22 +510,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     if (!isActive) continue
 
                     // Fast forward would be held back to real time by a blocking
-                    // audio write, so drop the samples and pace off the timer.
-                    //
-                    // The timer always waits one real frame interval, whether
-                    // fast-forwarding or not - dividing it by the speed too,
-                    // on top of already running `speed` emulated frames per
-                    // iteration, used to compound into a speed the button's
-                    // label had no relation to (running 4 frames AND waiting
-                    // a quarter of the interval multiplied out to ~16x, not
-                    // 4x). `speed` frames landing inside one real interval is
-                    // what makes the multiplier exact instead of a guess -
-                    // and self-limiting on a device too slow to keep up,
-                    // since compute time then eats into the same window
-                    // rather than being added on top of it.
+                    // audio write, so drop the samples and pace off the clock.
                     val paced = speed == 0 && audio.write(audioSamples, count)
                     if (!paced) {
-                        delay(frameIntervalMs)
+                        delayUntilDeadline(speed)
                     }
                 }
             }

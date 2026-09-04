@@ -24,12 +24,6 @@ pub struct MemoryBus {
     /// history, so no timer a game started ever ran: no timer interrupt, and
     /// no DMA sound, which is driven entirely by timer overflows.
     timer_writes: Vec<(usize, bool, u16)>,
-    prefetch_enabled: bool,
-    prefetch_seq_count: u32,
-    prefetch_cyc: u32,
-    iwram_prefetch: [u32; 8],
-    iwram_prefetch_pos: usize,
-    iwram_prefetch_count: usize,
     pub io: super::io::IoHandler,
 }
 
@@ -49,12 +43,6 @@ impl MemoryBus {
             sound_writes: Vec::new(),
             dma_writes: Vec::new(),
             timer_writes: Vec::new(),
-            prefetch_enabled: false,
-            prefetch_seq_count: 0,
-            prefetch_cyc: 0,
-            iwram_prefetch: [0; 8],
-            iwram_prefetch_pos: 0,
-            iwram_prefetch_count: 0,
             io: super::io::IoHandler::new(),
         };
         bus.init_bios();
@@ -321,10 +309,8 @@ impl MemoryBus {
                     }
                 } else if offset == 0x204 {
                     self.waitcnt = (self.waitcnt & 0xFF00) | (value as u16);
-                    self.prefetch_enabled = self.waitcnt & 0x4000 != 0;
                 } else if offset == 0x205 {
                     self.waitcnt = (self.waitcnt & 0x00FF) | ((value as u16) << 8);
-                    self.prefetch_enabled = self.waitcnt & 0x4000 != 0;
                 }
                 self.io_regs[offset] = value;
                 match offset {
@@ -476,16 +462,6 @@ impl MemoryBus {
 
     pub fn drain_dma_writes(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.dma_writes)
-    }
-
-    /// Advance the gamepak prefetch buffer by one cycle.
-    pub fn prefetch_tick(&mut self) {
-        if !self.prefetch_enabled {
-            return;
-        }
-        if self.prefetch_cyc > 0 {
-            self.prefetch_cyc -= 1;
-        }
     }
 
     pub fn io_regs_data(&self) -> &[u8] {

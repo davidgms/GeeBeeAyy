@@ -110,10 +110,6 @@ impl Gba {
         self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
         self.apu.tick(cycles as u32);
 
-        for _ in 0..cycles {
-            self.bus.prefetch_tick();
-        }
-
         self.post_tick();
 
         // Deliver IRQs to CPU

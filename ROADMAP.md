@@ -437,6 +437,13 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 `subs pc, lr, #4` return.
 
 - No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
+- **The gamepak prefetch buffer is not modelled.** WAITCNT bit 14 is stored
+  and ignored. There used to be a `MemoryBus::prefetch_tick` called once per
+  CPU cycle, but it only ever decremented a counter nothing read, so it
+  bought no accuracy and cost about 5% of the emulation budget; it was
+  deleted on 2026-09-04. Modelling prefetch properly means giving the bus a
+  real 8-halfword FIFO that fills during non-sequential ROM access, and it
+  belongs with the wait-state work, not on its own.
 - No BIOS execute permission checks.
 - Sprite priority against backgrounds is correct in **mode 0 only**. The other
   modes lay sprites on top of everything instead of ordering them, which is
