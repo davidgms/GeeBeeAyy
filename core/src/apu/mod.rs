@@ -4,6 +4,12 @@
 /// The GBA system clock.
 const GBA_CLOCK: u64 = 16_777_216;
 
+/// Channel 3's "force 75%" (SOUND3CNT_H bit 15) as an internal volume code.
+///
+/// Kept outside the 0-3 range the two-bit volume field uses so the two cannot
+/// collide; it is never a value read from or written to a register.
+const FORCE_75_VOLUME_CODE: u8 = 4;
+
 /// The rate the core hands samples to the frontend.
 ///
 /// 48 kHz is what Android's mixer runs at natively. The old rate was
@@ -341,7 +347,16 @@ impl Apu {
             // SOUND3CNT_H - length and volume
             0x72 => {
                 self.ch3.length_counter = value & 0xFF;
-                self.ch3.volume_code = ((value >> 13) & 0x07) as u8;
+                // GBATEK, SOUND3CNT_H: bits 13-14 are the volume (0 = mute,
+                // 1 = 100%, 2 = 50%, 3 = 25%) and bit 15 is a separate
+                // "force 75%" that overrides them. Masking three bits folded
+                // the override into the volume field, so a game asking for
+                // 75% produced codes 4-7, which the mixer treated as mute.
+                self.ch3.volume_code = if value & 0x8000 != 0 {
+                    FORCE_75_VOLUME_CODE
+                } else {
+                    ((value >> 13) & 0x03) as u8
+                };
             }
             // SOUND3CNT_X - frequency and control
             0x74 => self.write_frequency_control(2, value),
@@ -632,14 +647,18 @@ impl Apu {
                 } else {
                     wave_byte & 0x0F
                 };
-                let vol_shift = match self.ch3.volume_code {
-                    0 => 4,
-                    1 => 3,
-                    2 => 2,
-                    3 => 1,
-                    _ => 4,
+                // A gain, not a shift: code 0 is silence, and the bit-15
+                // override is 75%, which no power-of-two divisor expresses.
+                // The old table mapped code 0 to a quarter volume instead of
+                // to nothing, and had 1 and 3 the wrong way round.
+                let gain = match self.ch3.volume_code {
+                    1 => 1.0,
+                    2 => 0.5,
+                    3 => 0.25,
+                    FORCE_75_VOLUME_CODE => 0.75,
+                    _ => 0.0,
                 };
-                sample += ((nibble as f32 / 15.0) - 0.5) * (1.0 / vol_shift as f32);
+                sample += ((nibble as f32 / 15.0) - 0.5) * gain;
             }
 
             // Channel 4: Noise
