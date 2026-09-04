@@ -1357,7 +1357,12 @@ impl Ppu {
     fn apply_alpha_blend(&mut self, y: usize) {
         for x in 0..SCREEN_WIDTH {
             // BLDCNT bits 0-5 select the 1st target, one bit per layer.
-            if self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
+            // `window[x] & 0x20` as well as the 1st-target bit: bit 5 of the
+            // window mask is the per-pixel colour-special-effect enable, which
+            // mode 0's `blend()` honours and these passes did not. A game
+            // using WININ/WINOUT to keep one region out of a fade got the fade
+            // across the whole scanline in every mode but 0.
+            if self.window[x] & 0x20 == 0 || self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
                 continue;
             }
             let idx = (y * SCREEN_WIDTH + x) * 3;
@@ -1388,7 +1393,12 @@ impl Ppu {
             // Without it, this brightened every pixel on the scanline
             // whenever BLDCNT selected the effect at all, so a game pulsing
             // BLDY to highlight one layer flashed the whole screen instead.
-            if self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
+            // `window[x] & 0x20` as well as the 1st-target bit: bit 5 of the
+            // window mask is the per-pixel colour-special-effect enable, which
+            // mode 0's `blend()` honours and these passes did not. A game
+            // using WININ/WINOUT to keep one region out of a fade got the fade
+            // across the whole scanline in every mode but 0.
+            if self.window[x] & 0x20 == 0 || self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
                 continue;
             }
             let idx = (y * SCREEN_WIDTH + x) * 3;
@@ -1407,7 +1417,12 @@ impl Ppu {
             return;
         }
         for x in 0..SCREEN_WIDTH {
-            if self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
+            // `window[x] & 0x20` as well as the 1st-target bit: bit 5 of the
+            // window mask is the per-pixel colour-special-effect enable, which
+            // mode 0's `blend()` honours and these passes did not. A game
+            // using WININ/WINOUT to keep one region out of a fade got the fade
+            // across the whole scanline in every mode but 0.
+            if self.window[x] & 0x20 == 0 || self.bldcnt & (1 << self.scanline_layer[x]) == 0 {
                 continue;
             }
             let idx = (y * SCREEN_WIDTH + x) * 3;
