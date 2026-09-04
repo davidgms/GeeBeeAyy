@@ -1,4 +1,4 @@
-use crate::{savestate::SaveState, Gba};
+use crate::Gba;
 use std::ffi::c_void;
 
 // ─── C FFI (used by iOS via bridging header, and by Android via JNI) ────────
