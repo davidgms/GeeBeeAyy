@@ -4,6 +4,9 @@
 /// The GBA system clock.
 const GBA_CLOCK: u64 = 16_777_216;
 
+/// One wave-RAM bank. The chip has two, and `wave_ram` holds both back to back.
+const WAVE_BANK_BYTES: usize = 16;
+
 /// Channel 3's "force 75%" (SOUND3CNT_H bit 15) as an internal volume code.
 ///
 /// Kept outside the 0-3 range the two-bit volume field uses so the two cannot
@@ -64,6 +67,8 @@ struct SoundChannel2 {
 struct SoundChannel3 {
     enabled: bool,
     bank_select: bool,
+    /// SOUND3CNT_L bit 5: false = one bank / 32 samples, true = two banks / 64.
+    two_banks: bool,
     volume_code: u8,
     length_counter: u16,
     length_enabled: bool,
@@ -230,6 +235,7 @@ impl Apu {
             ch3: SoundChannel3 {
                 enabled: false,
                 bank_select: false,
+                two_banks: false,
                 volume_code: 0,
                 length_counter: 0,
                 length_enabled: false,
@@ -341,6 +347,11 @@ impl Apu {
 
             // SOUND3CNT_L - wave RAM bank and enable
             0x70 => {
+                // GBATEK, SOUND3CNT_L: bit 5 is the Wave RAM Dimension
+                // (0 = one bank / 32 digits, 1 = two banks / 64) and bit 6 is
+                // the Bank Number. The dimension bit was not read at all, so
+                // 64-digit mode did not exist.
+                self.ch3.two_banks = value & 0x0020 != 0;
                 self.ch3.bank_select = value & 0x0040 != 0;
                 self.ch3.enabled = value & 0x0080 != 0;
             }
@@ -389,7 +400,16 @@ impl Apu {
 
             // Wave RAM, which the routing table used to drop entirely.
             0x90..=0x9F => {
-                let idx = (reg - 0x90) as usize;
+                // GBATEK: "The currently selected Bank Number (Bit 6) will be
+                // played back, while reading/writing to/from wave RAM will
+                // address the other (not selected) bank." Writing to a fixed
+                // offset 0 instead is why the upper 16 bytes were dead.
+                let base = if self.ch3.bank_select {
+                    0
+                } else {
+                    WAVE_BANK_BYTES
+                };
+                let idx = base + (reg - 0x90) as usize;
                 if idx + 1 < self.ch3.wave_ram.len() {
                     self.ch3.wave_ram[idx] = (value & 0xFF) as u8;
                     self.ch3.wave_ram[idx + 1] = (value >> 8) as u8;
@@ -640,8 +660,19 @@ impl Apu {
 
             // Channel 3: Wave
             if self.ch3.enabled {
-                let wave_idx = (self.ch3.sample_idx % 32) as usize;
-                let wave_byte = self.ch3.wave_ram[wave_idx / 2];
+                // GBATEK: playback starts at the selected bank, and in
+                // two-bank mode continues into the other one before wrapping.
+                // The nibble order below is already what GBATEK describes -
+                // "MSBs of 1st byte, followed by LSBs of 1st byte" - so an
+                // even index takes the high nibble.
+                let span = if self.ch3.two_banks { 64 } else { 32 };
+                let wave_idx = (self.ch3.sample_idx % span) as usize;
+                let base = if self.ch3.bank_select {
+                    WAVE_BANK_BYTES
+                } else {
+                    0
+                };
+                let wave_byte = self.ch3.wave_ram[(base + wave_idx / 2) % self.ch3.wave_ram.len()];
                 let nibble = if wave_idx % 2 == 0 {
                     wave_byte >> 4
                 } else {
@@ -880,6 +911,7 @@ impl SoundChannel3 {
     fn write_state(&self, buf: &mut Vec<u8>) {
         buf.push(self.enabled as u8);
         buf.push(self.bank_select as u8);
+        buf.push(self.two_banks as u8);
         buf.extend_from_slice(&self.volume_code.to_le_bytes());
         buf.extend_from_slice(&self.length_counter.to_le_bytes());
         buf.push(self.length_enabled as u8);
@@ -893,6 +925,7 @@ impl SoundChannel3 {
     fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
         self.enabled = take(cur, 1)?[0] != 0;
         self.bank_select = take(cur, 1)?[0] != 0;
+        self.two_banks = take(cur, 1)?[0] != 0;
         self.volume_code = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
         self.length_counter = u16::from_le_bytes(take(cur, 2)?.try_into().ok()?);
         self.length_enabled = take(cur, 1)?[0] != 0;

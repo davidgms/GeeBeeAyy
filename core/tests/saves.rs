@@ -551,3 +551,72 @@ fn a_save_state_with_an_absurd_length_field_is_rejected_not_allocated() {
         "a length past the end of the blob must be an error, not an allocation"
     );
 }
+
+/// Wave RAM is two banks of 16 bytes, and GBATEK is explicit that the CPU
+/// window at 0x04000090 addresses the bank that is **not** playing: "The
+/// currently selected Bank Number (Bit 6) will be played back, while
+/// reading/writing to/from wave RAM will address the other (not selected)
+/// bank." Writes used to land at a fixed offset 0 whatever the bank bit said,
+/// so the upper 16 bytes were dead and only one waveform ever existed.
+#[test]
+fn wave_ram_writes_reach_the_bank_that_is_not_playing() {
+    /// Where in the APU snapshot a marker written through the register window
+    /// ends up, with `select` as the bank bit of SOUND3CNT_L.
+    fn marker_offset(select: u16) -> usize {
+        let mut gba = gba_with("SRAM_V100");
+        gba.bus.write16(0x0400_0070, select);
+        gba.bus.write16(0x0400_0090, 0xABCD);
+        // Sound register writes are queued and applied by the frame, not at
+        // the store, so nothing reaches the APU until this runs.
+        gba.run_frame();
+        let snap = gba.apu.snapshot();
+        snap.iter()
+            .position(|&b| b == 0xCD)
+            .expect("the marker never reached wave RAM at all")
+    }
+
+    let bank1 = marker_offset(0x0000); // bank 0 plays, so the CPU sees bank 1
+    let bank0 = marker_offset(0x0040); // bank 1 plays, so the CPU sees bank 0
+
+    assert_eq!(
+        bank1 - bank0,
+        16,
+        "the two bank selections must write 16 bytes apart; landing at the \
+         same offset means the bank bit is ignored and half of wave RAM is dead"
+    );
+}
+
+/// SOUND3CNT_L bit 5 is the Wave RAM Dimension, and it was not read at all -
+/// 64-digit mode did not exist, so the second bank never sounded.
+#[test]
+fn two_bank_mode_plays_a_different_waveform_than_one_bank_mode() {
+    fn play(dimension: u16) -> Vec<f32> {
+        let mut gba = gba_with("SRAM_V100");
+        gba.bus.write16(0x0400_0084, 0x0080);
+        gba.bus.write16(0x0400_0080, 0x0077);
+
+        // Bank 0 selected, so the window writes bank 1: fill it flat.
+        gba.bus.write16(0x0400_0070, 0x0000);
+        for i in (0..16u32).step_by(2) {
+            gba.bus.write16(0x0400_0090 + i, 0x0000);
+        }
+        // Bank 1 selected, so the window writes bank 0: fill it loud.
+        gba.bus.write16(0x0400_0070, 0x0040);
+        for i in (0..16u32).step_by(2) {
+            gba.bus.write16(0x0400_0090 + i, 0xFFFF);
+        }
+        // Play bank 0 (the loud one), with the dimension under test.
+        gba.bus.write16(0x0400_0070, dimension | 0x0080);
+        gba.bus.write16(0x0400_0072, 0x2000);
+        gba.bus.write16(0x0400_0074, 0x8400);
+        gba.run_frame();
+        gba.apu_samples().to_vec()
+    }
+
+    let one_bank = play(0x0000);
+    let two_banks = play(0x0020);
+    assert_ne!(
+        one_bank, two_banks,
+        "the dimension bit had no effect, so 64-digit mode is still missing"
+    );
+}
