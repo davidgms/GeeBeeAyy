@@ -37,6 +37,13 @@ android {
         debug {
             isDebuggable = true
             isJniDebuggable = true
+            // x86_64 as well, so a debug build installs on an emulator. Real
+            // devices are ARM, so release stays ARM-only and ships nothing
+            // extra. The .so only exists if cargo-ndk was asked for the
+            // target, and a missing ABI is not an error here.
+            ndk {
+                abiFilters += "x86_64"
+            }
         }
     }
 
