@@ -801,3 +801,76 @@ fn alpha_blending_works_in_a_bitmap_mode() {
         "half blue over half red should come out purple, not flat blue: {px:02X?}"
     );
 }
+
+/// OBJ mosaic is per sprite: OAM attr0 bit 12 turns it on, and MOSAIC bits
+/// 8-15 give the block size. `mosaic_obj` existed but had no callers, and was
+/// gated on a field `sync_from_bus` hardcoded to true, so sprite mosaic was a
+/// silent no-op.
+#[test]
+fn obj_mosaic_only_applies_to_the_sprites_that_asked_for_it() {
+    /// One 8x8 sprite at (0, 0) whose first dot is red and whose remaining
+    /// seven are green. A 4-wide mosaic makes dots 1-3 sample the red one, so
+    /// the red block widens - something no tile boundary can imitate.
+    fn first_row(mosaic: bool) -> Vec<(u8, u8, u8)> {
+        let mut gba = Gba::new();
+        gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+        // OBJ palette: 1 = red, 2 = green.
+        gba.bus.write16(0x0500_0202, 0x001F);
+        gba.bus.write16(0x0500_0204, 0x03E0);
+
+        // 4bpp: one byte holds two dots, low nibble first. Dot 0 = colour 1,
+        // dots 1-7 = colour 2. write16, since a byte store into VRAM is
+        // duplicated across the halfword rather than doing what it looks like.
+        for row in 0..8u32 {
+            let base = 0x0601_0000 + row * 4;
+            gba.bus.write16(base, 0x2221);
+            gba.bus.write16(base + 2, 0x2222);
+        }
+
+        // attr0: y=0, normal, 4bpp, square; bit 12 is the mosaic enable.
+        gba.bus
+            .write16(0x0700_0000, if mosaic { 0x1000 } else { 0x0000 });
+        gba.bus.write16(0x0700_0002, 0x0000); // attr1: x=0, size 0 -> 8x8
+        gba.bus.write16(0x0700_0004, 0x0000); // attr2: tile 0, palette 0
+        for s in 1..128u32 {
+            gba.bus.write16(0x0700_0000 + s * 8, 0x0200); // disabled
+        }
+
+        // MOSAIC: OBJ H-size 3 -> blocks of 4. Deliberately not 8, so the
+        // block cannot coincide with a tile edge.
+        gba.bus.write16(0x0400_004C, 0x0300);
+        gba.bus.write16(0x0400_0000, 0x1040); // mode 0, OBJ on, 1D mapping
+
+        gba.run_frame();
+        let fb = gba.frame_buffer();
+        (0..8)
+            .map(|x| {
+                let i = x * 3;
+                (fb[i], fb[i + 1], fb[i + 2])
+            })
+            .collect()
+    }
+
+    let red = (0xF8, 0x00, 0x00);
+    let green = (0x00, 0xF8, 0x00);
+
+    let plain = first_row(false);
+    assert_eq!(plain[0], red, "dot 0 should be red: {plain:02X?}");
+    assert_eq!(plain[1], green, "dot 1 should be green without mosaic");
+
+    let mosaiced = first_row(true);
+    assert_eq!(
+        mosaiced[0], red,
+        "the block's own dot is unchanged: {mosaiced:02X?}"
+    );
+    assert_eq!(
+        mosaiced[1], red,
+        "a 4-wide mosaic makes dot 1 sample dot 0, so it must be red too"
+    );
+    assert_eq!(mosaiced[3], red, "still inside the first 4-wide block");
+    assert_eq!(
+        mosaiced[4], green,
+        "the next block samples dot 4, which is green"
+    );
+}

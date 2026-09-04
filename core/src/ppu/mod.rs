@@ -98,7 +98,6 @@ pub struct Ppu {
     mosaic_bg_vsize: u8,
     mosaic_obj_hsize: u8,
     mosaic_obj_vsize: u8,
-    mosaic_obj_enabled: bool,
     // Windows
     win0h_left: u8,
     win0h_right: u8,
@@ -178,7 +177,6 @@ impl Ppu {
             mosaic_bg_vsize: 0,
             mosaic_obj_hsize: 0,
             mosaic_obj_vsize: 0,
-            mosaic_obj_enabled: false,
             win0h_left: 0,
             win0h_right: 0,
             win0v_top: 0,
@@ -369,12 +367,6 @@ impl Ppu {
         self.mosaic_obj_hsize = ((mosaic >> 8) & 0x000F) as u8;
         self.mosaic_obj_vsize = ((mosaic >> 12) & 0x000F) as u8;
 
-        // Mosaic enable flags (from BLDCNT/MOSAIC interaction)
-        // Mosaic is per layer, and DISPCNT bit 6 is OBJ character mapping -
-        // not a mosaic enable. Reading it here mosaiced every background
-        // whenever a game set 1D sprite mapping, which is most of them.
-        self.mosaic_obj_enabled = true;
-
         // Window registers. GBATEK, LCD I/O Window Feature: WINxH holds X1 -
         // the *left* edge - in bits 8-15 and X2 in bits 0-7, so the low byte
         // is the right edge. This used to read them the other way round.
@@ -485,9 +477,14 @@ impl Ppu {
         (mx, my)
     }
 
-    /// Apply mosaic to an (x, y) coordinate for OBJ sprites.
-    fn mosaic_obj(&self, x: usize, y: usize) -> (usize, usize) {
-        if !self.mosaic_obj_enabled || (self.mosaic_obj_hsize == 0 && self.mosaic_obj_vsize == 0) {
+    /// Apply mosaic to a sprite-local (x, y).
+    ///
+    /// `enabled` is OAM attr0 bit 12, which is per sprite - there is no global
+    /// OBJ mosaic switch. This used to be gated on a field that `sync_from_bus`
+    /// hardcoded to `true`, and nothing called the function at all, so OBJ
+    /// mosaic was a silent no-op while the flag claimed it was always on.
+    fn mosaic_obj(&self, enabled: bool, x: usize, y: usize) -> (usize, usize) {
+        if !enabled || (self.mosaic_obj_hsize == 0 && self.mosaic_obj_vsize == 0) {
             return (x, y);
         }
         let h = self.mosaic_obj_hsize as usize + 1;
@@ -1022,6 +1019,8 @@ impl Ppu {
             // what shapes the window.
             let is_obj_window = (attr0 >> 10) & 3 == 2;
             let is_semi_transparent = (attr0 >> 10) & 3 == 1;
+            // GBATEK, OBJ Attribute 0: bit 12 is this sprite's mosaic enable.
+            let is_mosaic = attr0 & 0x1000 != 0;
 
             let shape = (attr0 >> 14) & 3;
             let size = (attr1 >> 14) & 3;
@@ -1118,7 +1117,9 @@ impl Ppu {
                 if tex_x < 0 || tex_x >= width as i32 || tex_y < 0 || tex_y >= height as i32 {
                     continue;
                 }
-                let (tex_x, tex_y) = (tex_x as usize, tex_y as usize);
+                // Mosaic coarsens the coordinate the texture is sampled at,
+                // so a block of screen pixels all read the same source dot.
+                let (tex_x, tex_y) = self.mosaic_obj(is_mosaic, tex_x as usize, tex_y as usize);
 
                 let offset = self.obj_tile_offset(tex_x / 8, tex_y / 8, width, is_8bpp);
                 let Some(tile_addr) = self.obj_tile_addr(tile_num + offset) else {
