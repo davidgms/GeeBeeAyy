@@ -43,10 +43,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
         /**
          * How long `onCleared()` waits for the emulation loop to leave native
-         * code before giving up and leaking the core handle. One frame is
-         * 16 ms; this is generous enough to cover a slow save-state write.
+         * code before giving up and leaking the core handle.
+         *
+         * This blocks the main thread, so it is a deadline, not a budget: at
+         * 1000 ms it was long enough to be an ANR on its own once the save
+         * flush below is added to it. A frame is 16 ms and the loop only has
+         * to reach its next lock release, so 250 ms is many frames' grace and
+         * still well inside what the system tolerates.
          */
-        const val SHUTDOWN_JOIN_TIMEOUT_MS = 1_000L
+        const val SHUTDOWN_JOIN_TIMEOUT_MS = 250L
 
         /**
          * Rewind depth and cadence.
@@ -665,10 +670,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         if (_isRunning.value) {
             pendingStateCommand = StateCommand.Save(slot)
         } else {
-            // ponytail: brief TOCTOU window if the player resumes emulation in
-            // the next few ms while this direct call is in flight - a Mutex
-            // around engine access would close it if it's ever observed.
-            viewModelScope.launch(Dispatchers.Default) { performSaveState(slot) }
+            // Under the lock, not merely off the loop: `_isRunning` flips from
+            // the UI thread, so resuming a few ms after tapping save would
+            // otherwise put `startEmulation()`'s loop and this one-shot inside
+            // the same raw handle at once.
+            viewModelScope.launch(Dispatchers.Default) {
+                engineLock.withLock { performSaveState(slot) }
+            }
         }
     }
 
@@ -711,8 +719,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             if (_isRunning.value) {
                 pendingStateCommand = StateCommand.LoadBytes(bytes)
             } else {
-                // ponytail: see the note in saveState() - same TOCTOU window.
-                withContext(Dispatchers.Default) { applyStateBytes(bytes) }
+                // Same reasoning as saveState(): the lock, not just the
+                // dispatcher, is what keeps a resumed loop out of the engine.
+                withContext(Dispatchers.Default) {
+                    engineLock.withLock { applyStateBytes(bytes) }
+                }
             }
         }
     }
