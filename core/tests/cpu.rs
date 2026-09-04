@@ -635,3 +635,35 @@ fn thumb_ldmia_writes_back_when_the_base_is_not_loaded() {
     assert_eq!(cpu.registers[1], 0xAAAA_AAAA);
     assert_eq!(cpu.registers[2], 0xBBBB_BBBB);
 }
+
+/// ARM `STM` with the base in the register list and **no** writeback stores
+/// the original base. The "lowest register wins" rule only decides between the
+/// original and the written-back value, and without a W bit there is no
+/// written-back value to choose - nothing ever modifies the base.
+#[test]
+fn arm_stm_without_writeback_stores_the_original_base() {
+    const DATA: u32 = 0x0300_1000;
+    // stm r0, {r0, r1}  -> E8800003 (no writeback, r0 not the lowest bit set
+    // is false here, so this also pins the lowest-register path)
+    let (mut cpu, mut bus) = setup_arm(&[0xE880_0003]);
+    cpu.registers[0] = DATA;
+    cpu.registers[1] = 0x1111_1111;
+    cpu.step(&mut bus);
+    assert_eq!(
+        bus.read32(DATA),
+        DATA,
+        "r0 is the lowest register: original base"
+    );
+
+    // stm r0, {r1, r0} is the same encoding; the interesting case is a base
+    // that is NOT the lowest register in the list: stm r1, {r0, r1} -> E8810003
+    let (mut cpu, mut bus) = setup_arm(&[0xE881_0003]);
+    cpu.registers[0] = 0x2222_2222;
+    cpu.registers[1] = DATA;
+    cpu.step(&mut bus);
+    assert_eq!(
+        bus.read32(DATA + 4),
+        DATA,
+        "no writeback, so the base stored must be the original, not base + 8"
+    );
+}

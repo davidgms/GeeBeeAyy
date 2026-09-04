@@ -708,11 +708,14 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     } else {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
-                // STM with the base in the list stores the ORIGINAL base only
-                // when it is the lowest register present; otherwise the
-                // written-back value is what lands in memory.
+                // STM with the base in the list stores the ORIGINAL base
+                // when it is the lowest register present - and also whenever
+                // there is no writeback at all, since then nothing ever
+                // modifies the base and the original is all there is to
+                // store. Only the write-back case can put the adjusted value
+                // in memory.
                 let val = if i as usize == rn {
-                    if reg_list.trailing_zeros() == rn as u32 {
+                    if !write_back || reg_list.trailing_zeros() == rn as u32 {
                         base
                     } else if up_down {
                         base.wrapping_add(reg_count * 4)
