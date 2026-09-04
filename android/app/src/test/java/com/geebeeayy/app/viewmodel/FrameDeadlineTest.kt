@@ -4,19 +4,20 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The fast-forward multiplier is only as honest as this arithmetic. The loop
- * used to sleep a whole frame period *after* emulating, so the emulation time
- * was added to the wait instead of hidden inside it and "8x" delivered under
- * 2x on real hardware.
+ * Frame pacing when there is no audio device to block on. The loop used to
+ * sleep a whole period *after* emulating, so the emulation time was added to
+ * the wait rather than hidden inside it and every frame came late by however
+ * long it took to produce.
  */
 class FrameDeadlineTest {
 
-    private val period = EmulationViewModel.GBA_FRAME_NANOS
+    /** One frame at 60 Hz, in nanoseconds. */
+    private val period = 16_666_666L
 
     @Test
     fun `a batch that finished early sleeps only the remainder`() {
         val deadline = 1_000_000_000L
-        // 6 ms of work out of a 16.743 ms slice.
+        // 6 ms of work out of a 16.67 ms slice.
         val now = deadline + 6_000_000L
         val next = EmulationViewModel.advanceDeadline(deadline, now, period)
 

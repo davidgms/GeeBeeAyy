@@ -189,7 +189,7 @@ fun GeeBeeAyyNavHost() {
             val errorMessage by viewModel.errorMessage.collectAsState()
             val stateMessage by viewModel.stateMessage.collectAsState()
             val isRewinding by viewModel.isRewinding.collectAsState()
-            val fastForwardSpeed by viewModel.fastForwardSpeed.collectAsState()
+            val fastForward by viewModel.fastForward.collectAsState()
             // Re-read per ROM launch, the same as the scale mode above, so a
             // change in Settings takes effect the next time a game is opened.
             val controlScale = remember(filePath) { DisplaySettings(context).getControlScale() }
@@ -233,8 +233,8 @@ fun GeeBeeAyyNavHost() {
                     rescanRoms()
                 },
                 onPause = { viewModel.togglePause() },
-                onFastForward = { viewModel.cycleFastForward() },
-                fastForwardSpeed = fastForwardSpeed,
+                onFastForward = { viewModel.toggleFastForward() },
+                fastForward = fastForward,
                 isRewinding = isRewinding,
                 onRewind = { active -> viewModel.setRewinding(active) },
                 controlScale = controlScale,

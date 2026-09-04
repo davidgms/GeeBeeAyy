@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -75,13 +76,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         const val REWIND_SPEED = 4
 
         /**
-         * One GBA frame in nanoseconds: 280896 cycles at 16.78 MHz, which is
-         * 59.7275 Hz rather than 60. This, not the display's refresh rate, is
-         * the period fast-forward paces against - the multiplier on the
-         * button has to mean "N times the console's speed", and the console
-         * does not care what the panel runs at.
+         * Emulated frames per iteration while fast-forwarding.
+         *
+         * Fast forward is unthrottled - RetroArch's `fastforward_ratio = 0`
+         * and mGBA's unbounded mode both simply skip the throttle - so this
+         * is not a speed multiplier. It only decides how much work happens
+         * between two frame-buffer publishes: one lock, one JNI crossing and
+         * one 150 KB copy per batch instead of per frame. Four keeps the
+         * picture updating often enough to aim with while the copies stay off
+         * the critical path.
          */
-        const val GBA_FRAME_NANOS = 16_743_006L
+        const val FAST_FORWARD_BATCH = 4
 
         /**
          * Carry a pacing deadline forward by one `period`, or snap it to
@@ -135,20 +140,21 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
-    /** 0 is normal speed; otherwise how many emulated frames run per real
-     *  frame tick - 2x, 4x or 8x, cycling in that order back to 0. Powers of
-     *  two: they are exact (no rounding in the frame count or the pacing
-     *  math below) and each step is still slow enough to follow by eye. */
-    private val _fastForwardSpeed = MutableStateFlow(0)
-    val fastForwardSpeed: StateFlow<Int> = _fastForwardSpeed
+    /**
+     * True while fast forward is on, and there is no speed to pick.
+     *
+     * Fixed 2x/4x/8x steps only made sense while the throttle decided the
+     * speed. It does not: this core reaches roughly 2.5x real time on a
+     * phone, so every step above that asked for a multiplier the device
+     * could not deliver and quietly gave the same result with a different
+     * label on the button. Unthrottled gives whatever the hardware has,
+     * which is the honest version of the same thing.
+     */
+    private val _fastForward = MutableStateFlow(false)
+    val fastForward: StateFlow<Boolean> = _fastForward
 
-    fun cycleFastForward() {
-        _fastForwardSpeed.value = when (_fastForwardSpeed.value) {
-            0 -> 2
-            2 -> 4
-            4 -> 8
-            else -> 0
-        }
+    fun toggleFastForward() {
+        _fastForward.value = !_fastForward.value
     }
 
     /** True while the player is holding the rewind button. */
@@ -415,8 +421,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * to sprint off, and that is also what makes the speed self-limiting on a
      * device that cannot reach the requested multiplier.
      */
-    private suspend fun delayUntilDeadline(speed: Int) {
-        val period = if (speed > 0) GBA_FRAME_NANOS else frameIntervalMs * 1_000_000L
+    private suspend fun delayUntilDeadline() {
+        val period = frameIntervalMs * 1_000_000L
         val now = System.nanoTime()
         frameDeadlineNanos = advanceDeadline(frameDeadlineNanos, now, period)
         val remaining = frameDeadlineNanos - now
@@ -432,7 +438,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             audio.resume()
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
                 while (isActive) {
-                    val speed = fastForwardSpeed.value
+                    val fastForwarding = fastForward.value
                     val rewinding = isRewinding.value
 
                     // Everything that reaches into the core happens under the
@@ -473,8 +479,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                             -1
                         } else {
-                            if (speed > 0) {
-                                engine.runFrames(speed)
+                            if (fastForwarding) {
+                                engine.runFrames(FAST_FORWARD_BATCH)
                             } else {
                                 engine.runFrame()
                             }
@@ -509,11 +515,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // that stopEmulation() just stopped.
                     if (!isActive) continue
 
-                    // Fast forward would be held back to real time by a blocking
-                    // audio write, so drop the samples and pace off the clock.
-                    val paced = speed == 0 && audio.write(audioSamples, count)
-                    if (!paced) {
-                        delayUntilDeadline(speed)
+                    // Fast forward runs unthrottled, so it neither writes the
+                    // samples - a blocking audio write would hold it to real
+                    // time - nor sleeps. `yield` is still needed: without a
+                    // suspension point the loop would never hand this
+                    // dispatcher thread to anything else.
+                    if (fastForwarding) {
+                        yield()
+                        continue
+                    }
+                    if (!audio.write(audioSamples, count)) {
+                        delayUntilDeadline()
                     }
                 }
             }
@@ -634,7 +646,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun setRewinding(active: Boolean) {
         if (active) {
-            _fastForwardSpeed.value = 0
+            _fastForward.value = false
         }
         _isRewinding.value = active
     }

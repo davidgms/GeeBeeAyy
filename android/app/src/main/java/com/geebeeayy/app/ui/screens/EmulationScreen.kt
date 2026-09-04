@@ -72,7 +72,7 @@ fun EmulationScreen(
     onBack: () -> Unit,
     onPause: () -> Unit,
     onFastForward: () -> Unit,
-    fastForwardSpeed: Int = 0,
+    fastForward: Boolean = false,
     isRewinding: Boolean = false,
     onRewind: (Boolean) -> Unit = {},
     controlScale: Float = 1f,
@@ -275,27 +275,14 @@ fun EmulationScreen(
                         tint = if (isRewinding) GoldenSaplight else PineGlowMist,
                     )
                 }
-                // Cycles off -> 2x -> 4x -> 8x -> off. The badge is the only
-                // way to tell which: the icon itself does not change.
-                Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    IconButton(onClick = onFastForward) {
-                        Icon(
-                            Icons.Default.FastForward,
-                            if (fastForwardSpeed > 0) "Fast forward ${fastForwardSpeed}x" else "Fast forward",
-                            tint = if (fastForwardSpeed > 0) GoldenSaplight else PineGlowMist,
-                        )
-                    }
-                    if (fastForwardSpeed > 0) {
-                        Text(
-                            text = "${fastForwardSpeed}x",
-                            color = GoldenSaplight,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .offset(x = (-2).dp, y = (-2).dp),
-                        )
-                    }
+                // On or off, with no speed to pick: fast forward is
+                // unthrottled and runs at whatever the device can manage.
+                IconButton(onClick = onFastForward) {
+                    Icon(
+                        Icons.Default.FastForward,
+                        "Fast forward",
+                        tint = if (fastForward) GoldenSaplight else PineGlowMist,
+                    )
                 }
                 IconButton(onClick = {
                     isPaused = !isPaused
@@ -390,7 +377,7 @@ fun EmulationScreen(
                 ) {
                 GameControls(
                     isPaused = isPaused,
-                    isFastForward = fastForwardSpeed > 0,
+                    isFastForward = fastForward,
                     isRewinding = isRewinding,
                     onRewind = onRewind,
                     onTogglePause = {

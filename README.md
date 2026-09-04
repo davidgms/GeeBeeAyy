@@ -122,7 +122,7 @@ there.
 - [x] Kotlin + Jetpack Compose UI
 - [x] On-screen touch controls, wired to the core
 - [x] Save states (10 slots per game) and battery saves persisted to disk
-- [x] Fast forward (2x, 4x)
+- [x] Fast forward (unthrottled: runs as fast as the device allows)
 - [ ] Customizable on-screen touch controls (size, position, opacity)
 - [ ] Bluetooth/USB controller support (Xbox, PS, Switch Pro)
 - [ ] Screen scaling (1x, 2x, 3x, fit)
