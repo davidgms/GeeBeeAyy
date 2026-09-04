@@ -620,3 +620,52 @@ fn two_bank_mode_plays_a_different_waveform_than_one_bank_mode() {
         "the dimension bit had no effect, so 64-digit mode is still missing"
     );
 }
+
+/// SOUND3CNT_H's volume field is bits 13-14 (0 = mute, 1 = 100%, 2 = 50%,
+/// 3 = 25%), with bit 15 a separate "force 75%" that overrides them. Masking
+/// three bits folded the override into the volume field, so a game asking for
+/// 75% produced codes 4-7 that the mixer treated as mute - and code 0, which
+/// should be silence, played at a quarter volume instead.
+#[test]
+fn channel_3_volume_codes_scale_the_wave_output() {
+    /// Mean level of channel 3 with `cnt_h` written to SOUND3CNT_H. Wave RAM
+    /// is left at zero, so every nibble is 0 and the output sits at the
+    /// waveform's floor - which is exactly the quantity the volume scales,
+    /// and needs no assumption about how fast the sweep runs.
+    fn level(cnt_h: u16) -> f32 {
+        let mut gba = gba_with("SRAM_V100");
+        gba.bus.write16(0x0400_0084, 0x0080); // master enable
+        gba.bus.write16(0x0400_0080, 0x0077); // both sides, full volume
+        gba.bus.write16(0x0400_0070, 0x0080); // bank 0 plays, channel on
+        gba.bus.write16(0x0400_0072, cnt_h);
+        gba.bus.write16(0x0400_0074, 0x87FF); // frequency, restart
+        gba.run_frame();
+        let s = gba.apu_samples();
+        s.iter().map(|v| v.abs()).sum::<f32>() / s.len() as f32
+    }
+
+    let full = level(0x2000); // code 1 -> 100%
+    assert!(full > 0.0, "100% produced no signal at all");
+
+    let ratio = |cnt_h| level(cnt_h) / full;
+    assert!(
+        (ratio(0x4000) - 0.5).abs() < 0.01,
+        "code 2 is 50%: got {}",
+        ratio(0x4000)
+    );
+    assert!(
+        (ratio(0x6000) - 0.25).abs() < 0.01,
+        "code 3 is 25%: got {}",
+        ratio(0x6000)
+    );
+    assert_eq!(
+        level(0x0000),
+        0.0,
+        "code 0 must be silence, not the quarter volume the old table gave it"
+    );
+    assert!(
+        (ratio(0x8000) - 0.75).abs() < 0.01,
+        "bit 15 is a 75% override, not part of the volume field: got {}",
+        ratio(0x8000)
+    );
+}

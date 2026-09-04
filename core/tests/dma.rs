@@ -210,3 +210,39 @@ fn dma_sound_plays_at_the_rate_its_timer_overflows() {
         samples.len()
     );
 }
+
+/// FIFO DMA never raised its interrupt. `do_sound_transfer` is the only path a
+/// sound DMA takes, and the IF request lives in `do_transfer`, which that path
+/// never reaches - so a game swapping its audio double-buffer from the DMA1 or
+/// DMA2 interrupt waited on one that could not arrive.
+#[test]
+fn sound_dma_raises_its_interrupt_when_the_channel_asked_for_one() {
+    let mut gba = spinning_gba();
+
+    // DMA1: source in EWRAM, destination FIFO A, timing 3 (special), repeat,
+    // 32-bit, IRQ on end. DMACNT_H bit 14 is the IRQ enable.
+    gba.bus.write32(0x0400_00BC, 0x0200_0000); // SAD
+    gba.bus.write32(0x0400_00C0, 0x0400_00A0); // DAD = FIFO A
+    gba.bus.write16(0x0400_00C4, 0); // count (ignored for FIFO)
+                                     // enable | repeat | 32-bit | timing 3 | IRQ
+    gba.bus
+        .write16(0x0400_00C6, 0x8000 | 0x0200 | 0x0400 | 0x3000 | 0x4000);
+
+    // IE: DMA1 is IF bit 9.
+    gba.bus.write16(0x0400_0200, 0x0200);
+    gba.bus.write16(0x0400_0202, 0xFFFF); // clear IF (write-1-to-clear)
+
+    assert_eq!(
+        gba.bus.read16(0x0400_0202) & 0x0200,
+        0,
+        "IF bit 9 should start clear"
+    );
+
+    gba.run_frame();
+
+    assert_ne!(
+        gba.bus.read16(0x0400_0202) & 0x0200,
+        0,
+        "a FIFO transfer with IRQ enabled never set IF bit 9"
+    );
+}
