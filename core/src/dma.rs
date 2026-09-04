@@ -339,7 +339,22 @@ impl Dma {
         for _ in 0..4 {
             let val = bus.read32(ch.source);
             data.extend_from_slice(&val.to_le_bytes());
-            ch.source = ch.source.wrapping_add(4);
+            // src_adj, not an unconditional increment: DMACNT bits 7-8 pick
+            // increment / decrement / fixed for the source the same way they
+            // do for an ordinary transfer.
+            ch.source = match ch.src_adj {
+                1 => ch.source.wrapping_sub(4),
+                2 => ch.source,
+                _ => ch.source.wrapping_add(4),
+            };
+        }
+
+        // FIFO DMA is the only path this function serves, and it never raised
+        // its IRQ - the request lives in `do_transfer`, which sound DMA never
+        // reaches. A game that swaps its audio double-buffer from the DMA1 or
+        // DMA2 interrupt waited on one that could not arrive.
+        if ch.irq_on_end {
+            bus.io.request_interrupt(1 << (8 + channel));
         }
 
         Some((ch.dest, data))
