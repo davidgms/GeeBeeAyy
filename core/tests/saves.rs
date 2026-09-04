@@ -669,3 +669,37 @@ fn channel_3_volume_codes_scale_the_wave_output() {
         ratio(0x8000)
     );
 }
+
+/// Channel 3 must actually walk its 32 nibbles. A phase that never advances
+/// emits one constant level, which is silence with a DC offset rather than a
+/// tone - and reads as "the wave channel works" to any test that only checks
+/// for a non-zero sample.
+#[test]
+fn channel_3_walks_its_waveform_instead_of_holding_one_nibble() {
+    let mut gba = gba_with("SRAM_V100");
+    gba.bus.write16(0x0400_0084, 0x0080); // master enable
+    gba.bus.write16(0x0400_0080, 0x0077); // both sides, full volume
+    gba.bus.write16(0x0400_0072, 0x2000); // volume code 1 -> 100%
+
+    // Bank 1 selected, so the CPU window addresses bank 0 - the one that
+    // plays below. Alternating nibbles make a square out of the waveform.
+    gba.bus.write16(0x0400_0070, 0x0040);
+    for i in (0..16u32).step_by(2) {
+        gba.bus.write16(0x0400_0090 + i, 0x0F0F);
+    }
+    // The queued sound writes are applied per step, so a test that writes
+    // without stepping needs a frame here or the bank bit lands late.
+    gba.run_frame();
+
+    gba.bus.write16(0x0400_0070, 0x0080); // play bank 0, channel on
+    gba.bus.write16(0x0400_0074, 0x8600); // frequency, restart
+    gba.run_frame();
+
+    let samples = gba.apu_samples();
+    // A phase stuck at nibble 0 sits at the waveform's floor and never
+    // reaches the ceiling, so both signs have to show up.
+    assert!(
+        samples.iter().any(|&s| s > 0.0) && samples.iter().any(|&s| s < 0.0),
+        "channel 3 never crossed zero, so its phase never left nibble 0"
+    );
+}
