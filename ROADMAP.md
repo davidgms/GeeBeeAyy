@@ -479,6 +479,11 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
   scanline), not one cycle. It used to be a whole scanline, which stepped
   straight over HBlank and gave a halted game one interrupt a frame
   instead of 228.
+- Channel 3's wave RAM now honours the bank bit and 64-digit mode, checked
+  against three GBATEK mirrors and mGBA (recorded in
+  `.claude/agents/search-specialist.md`). What is still unmodelled: whether
+  the bank bit is re-read mid-sweep in 64-digit mode. GBATEK does not say, and
+  mGBA treats it as fixed for the sweep, which is what this follows.
 - PPU and APU *timing* still have no test-ROM coverage. gba-suite exercises
   the CPU and the memory bus only. Rendering now has some: jsmolka's ppu
   ROMs, the 240p Test Suite and Celeste Classic in `core/tests/ppu.rs`,
