@@ -503,7 +503,11 @@ fn rl_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
 fn handle_diff8bit_unfilter_wram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
-    let size = bus.read32(src) >> 8;
+    // Clamped like the LZ77 and RL headers: the field is 24 bits, so a
+    // garbage header asked for up to 16,777,215 read+write pairs - seconds of
+    // frozen emulation, with `src + 4 + i` and `dst + i` running off the end
+    // of the memory map on the way.
+    let size = decompressed_size(bus.read32(src)) as u32;
     let mut sum = 0u8;
     for i in 0..size {
         sum = sum.wrapping_add(bus.read8(src + 4 + i));
@@ -520,7 +524,11 @@ fn handle_diff8bit_unfilter_wram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 fn handle_diff8bit_unfilter_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
-    let size = bus.read32(src) >> 8;
+    // Clamped like the LZ77 and RL headers: the field is 24 bits, so a
+    // garbage header asked for up to 16,777,215 read+write pairs - seconds of
+    // frozen emulation, with `src + 4 + i` and `dst + i` running off the end
+    // of the memory map on the way.
+    let size = decompressed_size(bus.read32(src)) as u32;
     let mut sum = 0u8;
     let mut pending = 0u16;
     for i in 0..size {
@@ -542,7 +550,11 @@ fn handle_diff8bit_unfilter_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 fn handle_diff16bit_unfilter(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
-    let size = bus.read32(src) >> 8;
+    // Clamped like the LZ77 and RL headers: the field is 24 bits, so a
+    // garbage header asked for up to 16,777,215 read+write pairs - seconds of
+    // frozen emulation, with `src + 4 + i` and `dst + i` running off the end
+    // of the memory map on the way.
+    let size = decompressed_size(bus.read32(src)) as u32;
     let mut sum = 0u16;
     for i in 0..(size / 2) {
         sum = sum.wrapping_add(bus.read16(src + 4 + i * 2));
