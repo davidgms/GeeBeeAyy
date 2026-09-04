@@ -276,6 +276,15 @@ is left is literally finishing the game, which needs a person playing it.
       and `ControlLayoutStore.kt`, one active layout per ROM key, each of the
       ten controls positioned individually, plus custom combo/sequence/hold
       buttons.
+      **Verified on an Android 10 emulator 2026-09-03**: the storage
+      permission is requested and granted on API 29, and the ROM browser gets
+      past the permission gate. That path is unreachable on the test phone
+      (API 31), and it was broken - `READ_EXTERNAL_STORAGE` was never declared
+      and the pre-R request branch was an empty comment, so every device on
+      API 26-29 showed an empty ROM list with no way to fix it. Create the AVD
+      with `avdmanager create avd -n api29test -k "system-images;android-29;google_apis;x86_64" -d pixel_3a`;
+      debug builds now package x86_64 so they install on it.
+
       **Verified on a device 2026-09-03** on a Xiaomi Mi 10T Pro against
       *Yggdra Union*: create, rename and select a layout; drag a control and
       undo/redo it; a layout survives an app restart; a custom Combo button
