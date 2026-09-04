@@ -294,8 +294,55 @@ fun EmulationScreen(
                         tint = if (isPaused) GoldenSaplight else PineGlowMist,
                     )
                 }
-                IconButton(onClick = { showMenu = !showMenu }) {
-                    Icon(Icons.Default.MoreVert, "Menu", tint = PineGlowMist)
+                // The menu has to be declared inside a Box wrapping its own
+                // button: `DropdownMenu` anchors to whatever it is nested in,
+                // not to whatever opened it, so sitting at the root of the
+                // screen put it in the bottom-left corner, a phone's width
+                // away from the icon that summons it.
+                Box {
+                    IconButton(onClick = { showMenu = !showMenu }) {
+                        Icon(Icons.Default.MoreVert, "Menu", tint = PineGlowMist)
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Save State") },
+                            onClick = { showMenu = false; onSaveState(0) },
+                            leadingIcon = { Icon(Icons.Default.Save, null, tint = AmberResin) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Load State") },
+                            onClick = { showMenu = false; onLoadState(0) },
+                            leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = AmberResin) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Save States...") },
+                            onClick = { showMenu = false; showSlots = true },
+                            leadingIcon = { Icon(Icons.Default.Bookmarks, null, tint = AmberResin) }
+                        )
+                        HorizontalDivider(color = HoneyMid)
+                        DropdownMenuItem(
+                            text = { Text("Customise Layout") },
+                            onClick = {
+                                showMenu = false
+                                layouts = layoutStore.getLayouts()
+                                layoutsModalOpen = true
+                            },
+                            leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Screenshot") },
+                            onClick = { showMenu = false; onScreenshot() },
+                            leadingIcon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            onClick = { showMenu = false },
+                            leadingIcon = { Icon(Icons.Default.Settings, null, tint = AmberResin) }
+                        )
+                    }
                 }
             }
 
@@ -527,49 +574,6 @@ fun EmulationScreen(
             )
         }
 
-        // Dropdown menu
-        if (showMenu) {
-            DropdownMenu(
-                expanded = showMenu,
-                onDismissRequest = { showMenu = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Save State") },
-                    onClick = { showMenu = false; onSaveState(0) },
-                    leadingIcon = { Icon(Icons.Default.Save, null, tint = AmberResin) }
-                )
-                DropdownMenuItem(
-                    text = { Text("Load State") },
-                    onClick = { showMenu = false; onLoadState(0) },
-                    leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = AmberResin) }
-                )
-                DropdownMenuItem(
-                    text = { Text("Save States...") },
-                    onClick = { showMenu = false; showSlots = true },
-                    leadingIcon = { Icon(Icons.Default.Bookmarks, null, tint = AmberResin) }
-                )
-                HorizontalDivider(color = HoneyMid)
-                DropdownMenuItem(
-                    text = { Text("Customise Layout") },
-                    onClick = {
-                        showMenu = false
-                        layouts = layoutStore.getLayouts()
-                        layoutsModalOpen = true
-                    },
-                    leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
-                )
-                DropdownMenuItem(
-                    text = { Text("Screenshot") },
-                    onClick = { showMenu = false; onScreenshot() },
-                    leadingIcon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
-                )
-                DropdownMenuItem(
-                    text = { Text("Settings") },
-                    onClick = { showMenu = false },
-                    leadingIcon = { Icon(Icons.Default.Settings, null, tint = AmberResin) }
-                )
-            }
-        }
     }
 }
 

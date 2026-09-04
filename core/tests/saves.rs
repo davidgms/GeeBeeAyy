@@ -703,3 +703,56 @@ fn channel_3_walks_its_waveform_instead_of_holding_one_nibble() {
         "channel 3 never crossed zero, so its phase never left nibble 0"
     );
 }
+
+/// The exact command shape Yggdra Union sends: a 32 MB cart with an 8 KB
+/// EEPROM, addressed with 14 bits, driven through the DMA-length detection.
+///
+/// Traced from the real ROM, the game issues 1024 pairs of a 17-halfword set
+/// address and a 68-halfword read to sweep the whole chip, then 81-halfword
+/// writes. Every one of those lengths has to reach `eeprom_begin_dma`, or the
+/// address width falls back to a guess and the bit stream desynchronises.
+#[test]
+fn eeprom_round_trips_a_14_bit_block_on_a_large_cart() {
+    let mut gba = Gba::new();
+    gba.load_rom(&big_eeprom_rom(0)).expect("ROM should load");
+    let window = gba.cartridge().eeprom_window_start();
+    assert_eq!(window, 0x0DFF_FF00);
+
+    let payload: u64 = 0xFEED_FACE_CAFE_0BAD;
+    let block = 1022;
+
+    // Write: 81 halfwords = "10" + 14 address bits + 64 data bits + stop.
+    let mut write = vec![true, false];
+    write.extend(bits_of(block, 14));
+    write.extend(bits_of(payload, 64));
+    write.push(false);
+    assert_eq!(write.len(), 81);
+    gba.bus.eeprom_begin_dma(window, write.len());
+    for &b in &write {
+        gba.bus.write16(window, b as u16);
+    }
+
+    // Set read address: 17 halfwords = "11" + 14 address bits + stop.
+    let mut read = vec![true, true];
+    read.extend(bits_of(block, 14));
+    read.push(false);
+    assert_eq!(read.len(), 17);
+    gba.bus.eeprom_begin_dma(window, read.len());
+    for &b in &read {
+        gba.bus.write16(window, b as u16);
+    }
+
+    // Read back: 68 halfwords, 4 discarded then 64 data bits.
+    gba.bus.eeprom_begin_dma(window, 68);
+    let mut got: u64 = 0;
+    for i in 0..68 {
+        let bit = gba.bus.read16_mut(window) & 1 == 1;
+        if i >= 4 {
+            got = (got << 1) | bit as u64;
+        }
+    }
+    assert_eq!(
+        got, payload,
+        "an 8 KB EEPROM on a 32 MB cart did not return the block that was written"
+    );
+}
