@@ -64,3 +64,37 @@ fn save_state_round_trip_preserves_registers() {
     gba.load_state(&state).expect("state should restore");
     assert_eq!(gba.cpu.registers[0], 0xAB);
 }
+
+#[test]
+fn a_register_written_during_hblank_takes_effect_on_the_next_line() {
+    // A game's HBlank handler sets up the line that follows, so a line has to
+    // be drawn before its own HBlank runs. Drawing it at the end of the line
+    // instead ate those writes a line early, and only on the frames where the
+    // handler beat the 272 cycles left to the line boundary - which is what
+    // made Yggdra Union's per-line BG1VOFS panels flicker between two
+    // positions every frame.
+    let mut gba = Gba::new();
+    gba.load_rom(&rom(&[0xEAFF_FFFE])).expect("ROM should load");
+
+    // Mode 0 with no background enabled: every pixel is the backdrop, so
+    // palette entry 0 alone decides the colour of the line.
+    gba.bus.write16(0x0400_0000, 0x0000);
+    gba.bus.write16(0x0500_0000, 0x001F); // red
+
+    gba.ppu.tick(960, &mut gba.bus, &mut gba.dma); // HBlank of line 0
+    gba.bus.write16(0x0500_0000, 0x7C00); // blue, as an HBlank handler would
+    gba.ppu.tick(272, &mut gba.bus, &mut gba.dma); // end of line 0
+    gba.ppu.tick(960, &mut gba.bus, &mut gba.dma); // HBlank of line 1
+
+    let fb = gba.frame_buffer();
+    let line0 = &fb[0..3];
+    let line1 = &fb[240 * 3..240 * 3 + 3];
+    assert!(
+        line0[0] > 200 && line0[2] < 60,
+        "line 0 should still be red, got {line0:?}"
+    );
+    assert!(
+        line1[2] > 200 && line1[0] < 60,
+        "line 1 should be blue, got {line1:?}"
+    );
+}
