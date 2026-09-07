@@ -384,6 +384,34 @@ fn eeprom_writes_mark_the_save_dirty() {
 }
 
 #[test]
+fn a_cpu_read_of_the_eeprom_window_reports_the_chip_ready() {
+    // A serial EEPROM cannot be read by the CPU - GBATEK requires DMA to
+    // clock data out - but the standard save library still polls this window
+    // with plain loads after a write, spinning until bit 0 comes back 1 to
+    // say the chip has finished programming. Falling through to the ROM
+    // mirror underneath left that bit clear forever, so Yggdra Union waited
+    // for a chip that never answered and gave up with "Save failed!".
+    let mut gba = gba_with("EEPROM_V122");
+
+    let mut write = vec![true, false];
+    write.extend(bits_of(1, 6));
+    write.extend(bits_of(0x1122_3344_5566_7788, 64));
+    write.push(false);
+    eeprom_send(&mut gba, &write);
+
+    assert_eq!(
+        gba.bus.read16(0x0D00_0000) & 1,
+        1,
+        "a halfword poll of the EEPROM window must report the chip ready"
+    );
+    assert_eq!(
+        gba.bus.read8(0x0D00_0000) & 1,
+        1,
+        "a byte poll of the EEPROM window must report the chip ready"
+    );
+}
+
+#[test]
 fn eeprom_marker_is_detected() {
     let gba = gba_with("EEPROM_V122");
     assert!(
