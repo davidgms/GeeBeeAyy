@@ -12,6 +12,10 @@ pub struct Ppu {
     pub mode: u8,
     pub vblank: bool,
     pub hblank: bool,
+    /// Whether the current scanline has already been drawn. The line is
+    /// drawn when HBlank starts, so this stops the line-end catch-up from
+    /// drawing it a second time.
+    line_rendered: bool,
     vblank_irq_pending: bool,
     hblank_irq_pending: bool,
     vcount_irq_pending: bool,
@@ -124,6 +128,7 @@ impl Ppu {
             mode: 0,
             vblank: false,
             hblank: false,
+            line_rendered: false,
             vblank_irq_pending: false,
             hblank_irq_pending: false,
             vcount_irq_pending: false,
@@ -205,8 +210,14 @@ impl Ppu {
         // GBA timing: 1232 cycles per scanline
         if self.cycle_counter >= 1232 {
             self.cycle_counter -= 1232;
-            self.sync_from_bus(bus);
-            self.render_scanline(bus);
+            // The line is normally drawn when its HBlank starts, below. A
+            // step long enough to jump straight over cycle 960 skips that, so
+            // draw it here instead of leaving the line stale.
+            if !self.line_rendered {
+                self.sync_from_bus(bus);
+                self.render_scanline(bus);
+            }
+            self.line_rendered = false;
             // The affine reference point is *accumulated* down the frame: each
             // visible line adds PB/PD to it. Reloading it from BGxX/BGxY every
             // line, as this used to, throws PB and PD away entirely, so a
@@ -245,6 +256,18 @@ impl Ppu {
         let new_hblank = self.cycle_counter >= 960;
         if new_hblank && !self.hblank {
             self.hblank = true;
+            // Draw the line here, before the HBlank interrupt runs. A game's
+            // HBlank handler sets the registers for the *next* line, so
+            // drawing at the end of the line instead consumed those writes a
+            // line early - and only on the frames where the handler beat the
+            // 272 cycles left to the line boundary, which is why Yggdra
+            // Union's per-line BG1VOFS panels flickered between two
+            // positions every frame.
+            if !self.line_rendered {
+                self.sync_from_bus(bus);
+                self.render_scanline(bus);
+                self.line_rendered = true;
+            }
             if self.dispstat_hblank_ie {
                 self.hblank_irq_pending = true;
             }
