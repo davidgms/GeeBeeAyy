@@ -2,6 +2,7 @@ package com.geebeeayy.app
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -15,10 +16,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.ui.screens.*
@@ -33,6 +38,15 @@ private const val TAG = "GeeBeeAyy/Main"
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The manifest no longer hard-locks orientation (see AndroidManifest.xml); this is
+        // the equivalent lock, driven by a user-togglable setting instead of a fixed value.
+        // android:configChanges="orientation|..." on this activity means setting this does not
+        // trigger a recreate, so it is safe to call before setContent and again from Settings.
+        requestedOrientation = if (DisplaySettings(this).getForcePortrait()) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
         setContent {
             GeeBeeAyyTheme(darkTheme = true) {
                 GeeBeeAyyNavHost()
@@ -64,6 +78,16 @@ fun GeeBeeAyyNavHost() {
 
     Log.i(TAG, "NavHost init: isFirstLaunch=$isFirstLaunch, hasStoragePermission=$hasStoragePermission")
 
+    // Below R the grant comes from the ordinary runtime-permission dialog, not
+    // from the all-files settings screen. Without this launcher the pre-R
+    // branch of `requestStoragePermission` had nothing to call, so the ROM
+    // browser stayed empty forever on API 26-29.
+    val legacyPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasStoragePermission = granted
+    }
+
     val storagePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
@@ -85,7 +109,7 @@ fun GeeBeeAyyNavHost() {
                 storagePermissionLauncher.launch(intent)
             }
         } else {
-            // For older devices, handled via standard permission request
+            legacyPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
     }
 
@@ -131,7 +155,20 @@ fun GeeBeeAyyNavHost() {
                 onSettingsClick = {
                     navController.navigate("settings")
                 },
+                onDownloadClick = {
+                    navController.navigate("homebrew")
+                },
                 onAboutClick = { },
+            )
+        }
+
+        composable("homebrew") {
+            // The scan that follows a download is the same one the browser
+            // uses, so a finished download shows up without leaving the app.
+            HomebrewScreen(
+                folders = folderManager.getFolderPaths(),
+                onBack = { navController.popBackStack() },
+                onDownloaded = { rescanRoms() },
             )
         }
 
@@ -142,27 +179,72 @@ fun GeeBeeAyyNavHost() {
             val encodedPath = backStackEntry.arguments?.getString("filePath") ?: ""
             val filePath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
             val viewModel: EmulationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            // Read once per navigation to this route rather than observed live: the only way
+            // to change it is the Settings screen, which is a separate back-stack entry, so
+            // returning here always recomposes this composable fresh.
+            val scaleMode = remember(filePath) { DisplaySettings(context).getScaleMode() }
 
             val frameBuffer by viewModel.frameBuffer.collectAsState()
             val isLoading by viewModel.isLoading.collectAsState()
             val errorMessage by viewModel.errorMessage.collectAsState()
+            val stateMessage by viewModel.stateMessage.collectAsState()
+            val isRewinding by viewModel.isRewinding.collectAsState()
+            val fastForward by viewModel.fastForward.collectAsState()
+            // Re-read per ROM launch, the same as the scale mode above, so a
+            // change in Settings takes effect the next time a game is opened.
+            val controlScale = remember(filePath) { DisplaySettings(context).getControlScale() }
+            val controlOpacity = remember(filePath) { DisplaySettings(context).getControlOpacity() }
+            val screenFilter = remember(filePath) { DisplaySettings(context).getScreenFilter() }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
+            }
+
+            // Audio is the timing master while the app is foregrounded; this
+            // stops the loop from running (and draining the battery) behind
+            // a lock screen or another app, and resumes it on return unless
+            // the player had paused it themselves.
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner, viewModel) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
+                        Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                        else -> {}
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
             EmulationScreen(
                 frameBuffer = frameBuffer,
                 isLoading = isLoading,
                 errorMessage = errorMessage,
+                stateMessage = stateMessage,
+                scaleMode = scaleMode,
+                screenFilter = screenFilter,
+                onDismissStateMessage = { viewModel.clearStateMessage() },
                 onBack = {
                     viewModel.stopEmulation()
                     navController.popBackStack()
+                    // Rescan so the ROM browser picks up the last-played time
+                    // just recorded, and can sort by it.
+                    rescanRoms()
                 },
                 onPause = { viewModel.togglePause() },
                 onFastForward = { viewModel.toggleFastForward() },
+                fastForward = fastForward,
+                isRewinding = isRewinding,
+                onRewind = { active -> viewModel.setRewinding(active) },
+                controlScale = controlScale,
+                controlOpacity = controlOpacity,
                 onSaveState = { slot -> viewModel.saveState(slot) },
                 onLoadState = { slot -> viewModel.loadState(slot) },
+                stateSlots = { viewModel.stateSlots() },
+                onScreenshot = { viewModel.takeScreenshot() },
+                onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
+                gameKey = { viewModel.currentRomKey() },
             )
         }
 

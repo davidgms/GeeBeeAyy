@@ -1,220 +1,528 @@
-# GeeBeeAyy — Roadmap de Desenvolvimento
+# GeeBeeAyy! - Android Roadmap
 
-Visão geral do plano de desenvolvimento do emulador, dividido por fases e prioridades.
+The plan, ordered by what actually blocks the next milestone.
 
----
+**This file is Android only.** Every phase below - the emulation core included,
+since the core exists to be played on a phone - is scoped to shipping the
+Android app on Google Play. iOS has its own file,
+[`ROADMAP-ios.md`](ROADMAP-ios.md), and it is **deliberately not being worked
+on**. Nothing in it starts until Phase 4 here is finished and the app is live
+on Play, and then only after asking the repository owner whether the iOS work
+should begin at all. Do not open iOS tasks before that gate; do not treat an
+idle moment on Android as a reason to start them.
 
-## Estado Atual
-
-| Módulo | Status | Linhas |
-|--------|--------|--------|
-| `lib.rs` | Funcional (loop + DMA + APU) | ~110 |
-| `cpu/` | ARM7TDMI completo (ARM + THUMB) | ~900 |
-| `ppu/` | Mode 0/1/2/3/4/5 + OBJ + color FX | ~700 |
-| `apu/` | 4 canais PSG (square, wave, noise) | ~350 |
-| `memory/` | ROM + I/O + wait states + sound routing | ~160 |
-| `timer/` | Prescaler + IRQ | ~80 |
-| `cart/` | ROM + SRAM/Flash/EEPROM save | ~230 |
-| `io/` | I/O register handler | ~150 |
-| `dma/` | DMA 4ch (immediate/HBlank/VBlank) | ~170 |
-
----
-
-## Fase 1 — Core Funcional (MVP)
-
-> **Objetivo:** Emular o hardware suficiente para rodar pelo menos um ROM simples.
-
-### 1.1 CPU — Decodificador de Instruções
-- [x] Decodificador ARM (32-bit) — TODAS as instruções
-  - [x] ALU (ADD, SUB, AND, ORR, EOR, MOV, MVN, CMP, TST)
-  - [x] Multiply (MUL, MLA, UMULL, UMLAL, SMULL, SMLAL)
-  - [x] Load/Store (LDR, STR, LDM, STM)
-  - [x] Branch (B, BL, BX, BLX)
-  - [x] PSR Transfer (MRS, MSR)
-  - [x] Multiply Long
-  - [x] Swap (SWP, SWPB)
-  - [x] Barrel Shifter (LSL, LSR, ASR, ROR)
-  - [ ] Coprocessor (暂未 necessário)
-- [x] Decodificador THUMB (16-bit) — TODAS as instruções
-  - [x] Format 1-19 (todas as categorias)
-  - [x] Operações de stack (PUSH, POP)
-  - [x] Load/Store de múltiplos
-  - [x] Branch condicional e incondicional
-- [x] Barrel Shifter completo ( Carry Out )
-- [x] Pipeline de 3 estágios correto (PC+8 ARM, PC+4 THUMB)
-- [x] Tratamento de interrupções (IRQ/FIQ) — handler básico
-
-### 1.2 Memory Bus
-- [x] Conectar ROM ao bus (0x08000000+ → `cartridge.read*`)
-- [x] Mirror de ROM (0x09FFFFFF, 0x0AFFFFFF, 0x0BFFFFFF)
-- [x] I/O Register decode (mapear registradores do PPU, Timer, DMA, APU)
-- [x] Wait States (ciclos de acesso por região)
-- [x] Prefetch Buffer (0x04000000+)
-- [ ] BIOS execute permission
-
-### 1.3 Timer
-- [x] Prescaler (1, 64, 256, 1024)
-- [x] IRQ no overflow
-- [x] Integração com Memory Bus (TM0CNT_L/H → TM3CNT_L/H)
-
-### 1.4 Cartridge
-- [x] Detecção de save type por game code (GBTE, GBXP, etc.)
-- [x] Detecção por conteúdo ROM (string "SRAM", "FLASH", "EEPROM")
-- [x] Save RAM (SRAM 32KB, Flash 64/128KB, EEPROM)
+**How to read this file.** A box is ticked only when something verifies it - a
+test in `core/tests/`, or a measurement on a device. Code existing is not the
+same as code working: on 2026-08-27 the ARM and THUMB decoders were marked
+"all instructions" complete while every second instruction was being skipped
+and most of the THUMB instruction set was decoding to a NOP. The first test
+suite ever written found four fatal bugs in minutes. Unverified work is listed
+as unverified.
 
 ---
 
-## Fase 2 — Graphics Básico
+## Current state
 
-> **Objetivo:** Renderizar scanlines para ver algo na tela.
+| Module | Lines | Status |
+|--------|-------|--------|
+| `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
+| `ppu/` | ~1130 | Mode 0 tiled output verified against three test ROMs. Windows, mosaic, sprites and the colour effects have regression tests in `core/tests/ppu.rs`; blending outside mode 0 mixes against draw order rather than layer priority. Modes 1, 2, 4 and 5 remain unverified against a reference image. |
+| `apu/` | ~800 | 4 PSG channels + FIFO A/B, full save-state serialisation, and a register map decoded at 16-bit granularity. A channel can be triggered and produces samples. Never driven by a real game. |
+| `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
+| `dma.rs` | ~300 | 4 channels wired to the bus, immediate/HBlank/VBlank/special, correct address control and repeat semantics. Raises IF bits 8-11. |
+| `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
+| `cart/` | ~480 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs, Flash chip ID, and EEPROM as the real serial protocol over DMA. |
+| `savestate.rs` | ~330 | Format v4: register banks, timers, DMA derived state, the whole `io_regs` file, the APU and the cartridge save. A rejected restore rolls back. Wired to eight UI slots. |
+| `bios.rs` | ~450 | HLE SWIs including `CpuFastSet`, `ArcTan`/`ArcTan2` and the three diff unfilters. `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are still stubs; the sound-driver calls are absent. |
+| `ffi.rs` | ~560 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
+| `android/` | ~2900 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. **Builds, installs and emulates on a device.** |
+| `rewind.rs` | ~80 | Bounded ring of save states; cadence left to the frontend. Not wired to any UI. |
 
-### 2.1 PPU — Renderização
-- [x] **Mode 0** — 4 backgrounds tiled (4bpp e 8bpp)
-  - [x] Tile Data (Char Base)
-  - [x] Screen Entry (Screen Base)
-  - [x] Scrolling (BG0HOFS/BG0VOFS)
-  - [x] Priority
-- [x] **Mode 3** — Bitmap 16bpp (1 framebuffer)
-- [x] **Mode 4** — Bitmap 8bpp (2 framebuffers)
-- [ ] Paleta de cores (256 cores BG, 256 cores OBJ)
-- [x] OAM — Sprites básicos (normal, affine)
-- [x] WIN0/WIN1/WINOUT (janelas)
+`ios/` is not tracked here. It is ~750 lines of SwiftUI with no Xcode project
+and has never been compiled; its status lives in
+[`ROADMAP-ios.md`](ROADMAP-ios.md).
 
-### 2.2 PPU — Intermediário
-- [x] **Mode 1** — BG0+BG1 tiled, BG2 affine
-- [x] **Mode 2** — BG2+BG3 affine
-- [x] **Mode 5** — Bitmap 16bpp (2 framebuffers)
-- [x] Affine backgrounds (scaling, rotation)
-- [x] Affine sprites
-- [x] Mosaic
+**Verified on the host 2026-08-30**: *Yggdra Union* boots to its title screen,
+and `waimanu`, `jumpingbarnabe` and `powerpig` render. See Phase 0's exit
+criterion below for what was in the way. Not yet run on a device.
 
-### 2.3 PPU — Avançado
-- [x] HBlank / VBlank DMA
-- [ ] OAM DMA
-- [x] BLDCNT/BLDALPHA (efeitos de blending)
-- [x] BLDY (brightness)
+**Verified on hardware 2026-08-30**: all ten GBA inputs reach the core -
+confirmed by 72 consecutive frames of `KEYINPUT=0x03F7` while Start was held.
+`stripes` and `shades` render correctly at integer 3x with nearest-neighbour
+filtering.
 
----
+**Verified on hardware 2026-08-29**: built for `arm64-v8a`/`armeabi-v7a`,
+installed on a Xiaomi Mi 10T Pro (Android 12), and ran jsmolka's `hello.gba` -
+"Hello world!" rendered correctly. The ROM browser scans and lists, the app
+launches without crashing, and `System.loadLibrary` finds the core. No
+*commercial* game has been tried, and the overlay is still missing Start,
+Select and the shoulder buttons, so most games are unreachable.
 
-## Fase 3 — Áudio
-
-> **Objetivo:** Áudio funcional sem crackle.
-
-### 3.1 APU — Canais Básicos
-- [x] Canal 1 — PSG Quadrada (square wave)
-- [x] Canal 2 — PSG Quadrada
-- [x] Canal 3 — PSG Onda (wave)
-- [x] Canal 4 — PSG Ruído (noise)
-- [x] Sweep (Canal 1)
-- [x] Envelope (todos os canais)
-- [x] Sound Length Counter
-
-### 3.2 APU — FIFO
-- [x] Canal A — Sound A (FIFO/Timer 0/1)
-- [x] Canal B — Sound B (FIFO/Timer 2/3)
-- [x] DMA Sound
-- [x] Mixing (PSG + FIFO)
-
-### 3.3 APU — Sincronização
-- [ ] Master timer (Timer 0 como timing master)
-- [ ] Double buffering
-- [ ] Buffer de áudio com back-pressure
-- [ ] Cross-platform audio API (AAudio Android, CoreAudio iOS)
+*(Superseded 2026-08-30: Start, Select, L and R are now on the overlay.)*
 
 ---
 
-## Fase 4 — Android Frontend
+## Phase 0 - Make a game boot
 
-> **Objetivo:** App funcional para testar em dispositivo.
+Everything here is a hard blocker. None of it is optional, and the order is
+roughly the order to do it in.
 
-### 4.1 UI Básica
-- [x] Rom browser com lista de jogos
-- [ ] Tela de emulação (OpenGL ES rendering)
-- [x] Controles touch na tela
-- [x] Menu de pausa
+### 0.1 Input - `rust-engineer`, then `kotlin-specialist`
 
-### 4.2 Funcionalidades Core
-- [x] Save states (10 slots)
-- [x] Fast forward (2x, 4x)
-- [x] FFI bridge (C ABI + Android JNI)
-- [x] GbaEngine Kotlin wrapper
-- [x] GbaEngine Swift wrapper
-- [x] Bridging header (iOS)
-- [x] build-mobile.sh (Android/iOS targets)
-- [x] Android build files (Manifest, Gradle)
-- [x] NDK build (CMake + JNI bridge)
-- [x] EmulationViewModel (lifecycle management)
-- [x] ROM file picker (ActivityResultContracts)
-- [ ] Controle Bluetooth/USB (Xbox, PS, Switch Pro)
-- [ ] Screen scaling (1x, 2x, 3x, fit)
-- [ ] Screen filters (2xSaI, CRT, pixel-perfect)
+- [x] Initialise `0x04000130` (`KEYINPUT`) to `0x03FF` in `MemoryBus::new`.
+      The register is active-low and `io_regs` is zero-filled, so today every
+      read reports all ten buttons held down, forever.
+- [x] Add `geebeeayy_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
+      export.
+- [x] Call it from the touch overlay in `EmulationScreen.kt`. Unverified:
+      no Android toolchain here, so CI is what will compile it.
+- [x] Test: a ROM that polls `KEYINPUT` sees released buttons by default and
+      pressed ones after `set_keys`.
 
-### 4.3 UX
-- [ ] Customização de controles (tamanho, posição, opacidade)
-- [ ] ROM com capas e metadata
-- [ ] Swipe gestures (rewind, save state)
-- [ ] Landscape/Portrait auto-detect
+### 0.2 Interrupts - `rust-engineer`
+
+- [x] Raise the timer IRQ. `core/src/timer/mod.rs:59` is a `TODO` with a
+      `let _ = bus;` standing in, so a timer interrupt never fires. Games that
+      wait on one hang, and DMA-sound refill is timer-driven.
+- [x] Raise the DMA IRQ. Same shape at `core/src/dma.rs:161`.
+- [x] Test: enabling a timer with IRQ set eventually sets the matching `IF`
+      bit and enters the handler.
+
+### 0.3 Banked registers - `rust-engineer`
+
+- [x] Swap `SP` and `LR` on mode change, and `R8-R12` for FIQ.
+      `fiq_registers` and `irq_registers` (`core/src/cpu/mod.rs:17`) exist and
+      are serialised into save states, but nothing ever swaps them. IRQ mode
+      therefore runs on the game's own stack, and the HLE BIOS handler pushes
+      six registers onto it. Any game that sets up a separate IRQ stack
+      corrupts memory on its first interrupt.
+- [x] Test: entering IRQ mode uses the IRQ stack pointer; returning restores
+      the caller's.
+
+### 0.4 The accuracy gate - `rust-engineer` with `search-specialist`
+
+- [x] Run jsmolka's `gba-suite` (`arm.gba`, `thumb.gba`, `memory.gba`). Each
+      writes the failing test number to `r12` and spins, so the harness is
+      small: run frames until PC stops moving, assert `r12 == 0`.
+- [x] Point it at `temp/roms/` and skip when the file is absent. **No ROM is
+      committed to this repository**, homebrew test suites included.
+- [x] Fix what it finds. **All three suites pass.**
+
+It was the highest-value task in Phase 0 and it earned that: `arm.gba`,
+`thumb.gba` and `memory.gba` all pass as of 2026-08-28, after eleven further
+decoder and memory-map bugs that the hand-written tests had missed entirely.
+
+### 0.5 Rebuild the native library - `mobile-app-developer`
+
+- [x] `android/app/src/main/jniLibs/*/libgeebeeayy_core.so` are **not
+      committed at all** - `.gitignore`'s `*.so` rule matches them, and
+      `git ls-files` confirms neither copy is tracked. They only exist on
+      whichever machine last ran a local build, so a fresh clone has no
+      native library and a device build against it would
+      `UnsatisfiedLinkError` on the first JNI call, not run stale code.
+      `.github/workflows/ci.yml`'s `android` job now builds both ABIs with
+      `cargo-ndk` on every push and uploads them as workflow artifacts,
+      which is a better answer than committing binaries by hand. Local
+      device testing still needs `./build-mobile.sh android-all` or a
+      downloaded CI artifact copied into place first.
+- [x] `android/app/src/main/cpp/` deleted. It was an unbuilt second JNI
+      implementation with no Gradle wiring, still calling three FFI symbols
+      that no longer exist.
+
+**Exit criterion:** a commercial ROM reaches its title screen with correct
+graphics, and `gba-suite`'s ARM and THUMB suites pass.
+
+**Met 2026-08-30.** *Yggdra Union: We'll Never Fight Alone* boots from a cold
+start through the health-and-safety screen to its title screen, artwork and
+all. `waimanu`, `jumpingbarnabe` and `powerpig` render too, having shown
+nothing at all before the same day's fixes. What stood between the suites
+passing and a game booting was four bugs `gba-suite` does not cover, recorded
+in [`.claude/memory.md`](.claude/memory.md): an unsigned THUMB `B` offset, a
+PPU that overwrote the game's DISPSTAT, a halted CPU that stepped over HBlank,
+and an HLE BIOS interrupt handler that acknowledged IF on the game's behalf.
+
+Verified on a device 2026-08-31: *Yggdra Union* boots, plays its opening and reaches the title screen on a Xiaomi Mi 10T Pro, with music. The
+opening only became correct once the sprite renderer was fixed - it had
+been reading OBJ tiles from BG VRAM, so no sprite this emulator ever drew
+was correct.
 
 ---
 
-## Fase 5 — iOS Frontend
+## Phase 1 - Make it playable
 
-> **Objetivo:** App nativo para iOS.
+- [x] **Missing SWIs** - `rust-engineer`. `CpuFastSet` (0x0C),
+      `ArcTan`/`ArcTan2` (0x09/0x0A) and the three diff unfilters (0x16/0x17/0x18
+      - GBATEK's numbering, not the 0x16/0x17 this line used to claim) are in,
+      covered by `core/tests/bios.rs`. The same pass fixed four latent bugs in
+      the neighbouring calls: ARM-mode `swi` read the function number from the
+      wrong bits, `CpuSet` ignored its fill flag, and both `lz77_decompress` and
+      `rl_decompress` looped forever because they never read the header's output
+      size. Still missing: `Stop` (0x03), `GetBiosChecksum` (0x0D),
+      `HuffUnComp` (0x13), the sound driver calls (0x1A-0x24, 0x28-0x2A),
+      `MultiBoot` (0x25) and `HardReset`/`CustomHalt` (0x26/0x27). `BgAffineSet`
+      and `ObjAffineSet` (0x0E/0x0F) are still stubs that write an identity
+      matrix and ignore the requested angle, and `BitUnPack` (0x10) is worse
+      than a stub - it copies bytes until it reads a zero, so a game that calls
+      it gets corrupted memory instead of nothing.
+      Two decompressor bugs were fixed on 2026-08-31: `LZ77UnCompVram` and
+      `RLUnCompVram` wrote their output a byte at a time, and VRAM turns a byte
+      store into two copies of that byte across the halfword - which is the
+      whole reason those Vram variants exist.
+- [x] **Save state FFI is now bytes, not an opaque handle** - `state_size`,
+      `state_read`, `state_write` replace `save_state_create`/`load_state`/
+      `save_state_destroy`. States were previously not exportable to a file at
+      all, which is a bigger problem than "not wired to a UI".
+- [x] **Save states in the UI** - `kotlin-specialist`. Ten slots per game in
+      `filesDir/states/`, written atomically (temp file, then rename), keyed by
+      the ROM header's title (0xA0) and game code (0xAC) so two carts cannot
+      collide. Engine calls stay on the emulation thread via the same
+      command-mailbox pattern as `keyState`; a rejected load (bad version,
+      truncated file) surfaces a message and leaves the session running, since
+      `SaveState::restore` rolls the machine back rather than half-applying.
+      Eight slots, not ten: the two constants disagreed until 2026-09-03, and
+      anything written to slot 8 or 9 was never listed back.
+      Verified on a device 2026-09-01: saved a state, force-stopped the app,
+      relaunched, reloaded the ROM and restored it -
+      `files/states/FANTASY_KNIT_FKNT_slot0.state`, 512,135 bytes.
+- [x] **Battery saves: cart wired to the bus** - the cartridge now lives in
+      `MemoryBus`, the 0x0E000000 region is mapped with its 8-bit databus
+      semantics, Flash gained chip erase and the two-stage erase unlock, and
+      the four-function FFI (`save_size`, `save_read`, `save_write`,
+      `save_take_dirty`) plus JNI exports are in. **`gba_suite_save_sram`,
+      `save_flash64`, `save_flash128` and `save_none` all pass.**
+- [x] **Battery saves: persist them on the Android side** - `kotlin-specialist`.
+      `<romfile>.sav` next to the ROM, loaded before the first frame runs;
+      falls back to app-private storage if that write fails. Flush is
+      debounced 2s off the core's dirty flag, plus an unconditional flush on
+      pause, stop and `onCleared`. Verified on a device 2026-09-01:
+      `sram.gba` wrote a 32 KB `sram.sav` next to the ROM and *Yggdra Union*
+      an 8 KB `.sav` - its 64 Kbit EEPROM - both in the ROM folder.
+- [x] **Flash chip ID reads** - `0x90` enters ID mode and `0xF0` leaves it;
+      reads return Panasonic `1B32h` for 64K and Sanyo `1362h` for 128K, per
+      GBATEK's device table. Games probe this before writing and a wrong answer
+      means they refuse to save.
+- [x] **Save state v3** - timers, DMA derived state, the whole `io_regs` file
+      and the cartridge save now round-trip, and a rejected state rolls back
+      instead of half-applying. Verified by a test that runs frames, snapshots,
+      diverges, restores and requires the same frames back. See
+      `docs/save-data.md`.
+- [x] **APU state in the save state (v4)** - all 78 fields across the six APU
+      structs, generated as matching write/read pairs so the orders cannot
+      drift. The sample buffer is deliberately excluded: it is drained to the
+      frontend every frame, so snapshotting it would replay stale audio.
+- [x] **APU register map rewritten** - decoding now happens at 16-bit register
+      granularity rather than per byte, which is where the bugs lived:
+      `SOUND1CNT_H`'s byte split was off by one, `0x64` was treated as a high
+      byte and shifted left 8 when it is the low byte, and **`0x65` had no
+      handler at all** - which is where the trigger bit sits, so no PSG channel
+      could ever start. `Gba::apu_sound_write` also matched a hand-listed set
+      of offsets and dropped roughly half the sound registers plus all of wave
+      RAM; it now folds every captured byte onto its containing register.
+      Two adjacent fixes: `SOUNDCNT_X` (the PSG/FIFO master enable) was not
+      routed to the APU at all, and `sound_on` was read from SOUNDCNT_H bit 15,
+      which GBATEK defines as "DMA Sound B Reset FIFO".
+      Verified by `a_psg_channel_can_actually_be_triggered` and
+      `the_master_enable_silences_the_apu` - the first tests in this project's
+      history that get audio out of the APU.
+- [x] **Audio verified on hardware** - a tone ROM drives PSG channel 1 and the
+      device reports `AudioPlaybackConfiguration ... state:started`, so samples
+      reach the audio HAL. Covered by `core/tests/tonerom.rs`. A *game* still
+      has not driven it.
+- [x] **The core emits 48 kHz** - the sample clock is now an exact fraction
+      (`sample_accum += cycles * 48000`, a sample due each time it reaches
+      16777216) rather than an integer `CYCLES_PER_SAMPLE` of 964, which gave
+      17403 Hz - a rate no device supports, so AudioTrack resampled every
+      buffer and refused the fast path (`AUDIO_OUTPUT_FLAG_FAST denied by
+      server`), leaving `PERFORMANCE_MODE_LOW_LATENCY` doing nothing.
+      Moving the rate forced a much bigger bug into the open: **the PSG
+      channels' phase was clocked by emitted samples, not by the system
+      clock**, so their pitch was tied to the output rate and the tone ROM's
+      128 Hz square was playing at 2 Hz - 64x flat, since the project began.
+      Channel phases now advance in cycles at GBATEK's divisors. Covered by
+      `a_psg_square_plays_the_frequency_the_rom_asked_for`.
+      Not yet confirmed: whether the device now grants the fast path. That
+      needs a logcat check on hardware.
 
-- [x] SwiftUI UI (Splash, ROM Browser, Emulation, Settings)
-- [x] GeeBeeAyyTheme (Color extensions, Design tokens)
-- [x] Assets: bee_logo, bee_mascot
-- [ ] MFi controller support
-- [ ] Touch controls + gesture support
-- [ ] Save states + iCloud sync
-- [ ] Widget para retomada rápida
-- [ ] App Store distribution
+**Exit criterion:** a full game is playable start to finish, with sound, on a
+physical device, without losing progress.
+
+**Status 2026-09-01:** everything in this phase is done except playing a game
+to its end. *Yggdra Union* runs on a device with music, and on the host it
+reaches the battle map through the story sequence, CARD SELECT, the character
+sheet and the objectives screen, all rendering correctly. Save states survive a
+process kill and battery saves reach the disk, both checked on hardware. What
+is left is literally finishing the game, which needs a person playing it.
 
 ---
 
-## Fase 6 — Avançado
+## Phase 2 - Quality
 
-> **Objetivo:** Features que diferenciam de outros emuladores.
+- [~] **Touch overlay: size and opacity** - two sliders in Settings, persisted
+      in `DisplaySettings` alongside the scale mode, applied with a single
+      `graphicsLayer` on the control block so Compose maps pointer input
+      through the same transform and the targets stay in register with the
+      drawing.
+      Size is **shrink only**, 0.7x to 1.0x, and the first attempt at 1.0-1.6x
+      is why: at 1.0 the button row already spans nearly the full width, so
+      growing pushed L, R and the outer D-pad off the screen. Below 1.0 the
+      buttons fall under the 48.dp minimum touch target, so the default stays
+      at 1.0 and the subtitle says so.
+      Position landed 2026-09-02: a "Customise Layout" mode outlines each
+      control group and lets it be dragged, with Done and Reset, persisted per
+      group in `DisplaySettings`. **Untested on a device**, portrait only, and
+      a group can be dragged off-screen with no clamping - see
+      `temp/pending-device-tests.md`.
+      Per-game layouts landed 2026-09-03: named layouts in `ControlLayout.kt`
+      and `ControlLayoutStore.kt`, one active layout per ROM key, each of the
+      ten controls positioned individually, plus custom combo/sequence/hold
+      buttons.
+      **Verified on an Android 10 emulator 2026-09-03**: the storage
+      permission is requested and granted on API 29, and the ROM browser gets
+      past the permission gate. That path is unreachable on the test phone
+      (API 31), and it was broken - `READ_EXTERNAL_STORAGE` was never declared
+      and the pre-R request branch was an empty comment, so every device on
+      API 26-29 showed an empty ROM list with no way to fix it. Create the AVD
+      with `avdmanager create avd -n api29test -k "system-images;android-29;google_apis;x86_64" -d pixel_3a`;
+      debug builds now package x86_64 so they install on it.
 
-- [ ] JIT recompilation (ARM host only)
-- [ ] Link cable emulation (local WiFi)
-- [ ] Cheat codes (GameShark / CodeBreaker)
-- [ ] Rewind support
-- [ ] Screen recording / screenshots
-- [ ] Lua scripting interface
-- [ ] Debug tools (breakpoints, memory viewer, register inspector)
-- [ ] RetroAchievements support
+      **Verified on a device 2026-09-03** on a Xiaomi Mi 10T Pro against
+      *Yggdra Union*: create, rename and select a layout; drag a control and
+      undo/redo it; a layout survives an app restart; a custom Combo button
+      presses both its keys and releases them; a Toggle hold releases its keys
+      when the screen is left. Two bugs the device found and that the emulator
+      alone never would have: the edit bar pushed **Done** off the right edge,
+      so edit mode could not be left at all, and changing a custom button's
+      behaviour discarded the keys it already had. Both fixed.
+- [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
+      now supports Fit (largest size preserving 3:2, letterboxed), Integer
+      (largest whole-number multiple, falling back to Fit below 240x160) and
+      Stretch (the old fill-everything behaviour); default is Integer.
+      Persisted in `DisplaySettings` (plain `SharedPreferences`, matching
+      `RomFolderManager`'s pattern - no DataStore dependency exists in this
+      project) and changed from `SettingsScreen.kt`. Verified on a device
+      2026-08-31, after the portrait padding was cut from 24.dp to 8.dp -
+      24.dp left 948 px of a 1080 px screen and integer scaling rounds that
+      down to 3x, where 8.dp clears 960 px and gets 4x.
+- [x] **Pixel-perfect filtering** - `drawImage`'s `filterQuality` is set to
+      `FilterQuality.None` explicitly rather than left at the bilinear
+      default, so a 240x160 frame scaled up keeps hard pixel edges. 2xSaI and
+      CRT remain undone; they need their own shader/sampling work, not a flag.
+      Unverified: not compiled, no device test.
+- [~] **Screen filters** - four options in Settings, persisted in
+      `DisplaySettings` and read when a ROM is opened: None (nearest
+      neighbour), Smooth (bilinear, a free flag on `drawImage`), Scanlines
+      (darkened alternate rows drawn as rects so the GPU does it) and 2xSaI
+      (240x160 to 480x320, edge-aware). The 2xSaI arithmetic is unit-tested on
+      the JVM - `android/app/src/test/.../Sai2xTest.kt`, six cases, run with
+      `gradle testDebugUnitTest`, which is new test infrastructure this project
+      did not have.
+      **Untested on a device**, and 2xSaI is 153,600 pixels of Kotlin per frame
+      inside composition, so its cost is the open question. See
+      `temp/pending-device-tests.md`. CRT beyond scanlines - curvature, mask,
+      bloom - is not done and wants a real shader.
+- [x] ROM library with cover art (`data/RomArtwork.kt`: `<name>.png|jpg|jpeg|webp`
+      beside the ROM, or in a `covers/` subfolder). Metadata beyond what the
+      folder scan already reads is still open.
+- [x] Homebrew downloader (`data/HomebrewCatalog.kt`, `HomebrewDownloader.kt`,
+      `ui/screens/HomebrewScreen.kt`). Freely distributable ROMs only - the
+      catalogue is not, and will not become, an index of commercial games.
+- [x] **Landscape/portrait handling** - `kotlin-specialist`. The manifest no
+      longer hard-locks `screenOrientation="portrait"`;  `MainActivity`
+      applies the lock at runtime instead, from a `DisplaySettings.forcePortrait`
+      toggle that defaults to `true` so an existing install's behaviour does
+      not change until the player opts into landscape from Settings. In
+      landscape, `EmulationScreen` flanks the play area with the D-pad on the
+      left and action/transport buttons on the right instead of stacking
+      controls under it. Unverified: not compiled, no device test, and the
+      `Configuration.ORIENTATION_LANDSCAPE` recomposition path in particular
+      depends on `android:configChanges="orientation|..."` actually keeping
+      Compose's `LocalConfiguration` live without recreating the Activity -
+      that is documented Compose behaviour, not something exercised here.
+- [~] **Audio latency measured and halved** - `AudioTrack.getMinBufferSize`
+      reported 3844 frames on a Mi 10T Pro, and `AudioOutput` was clamping up
+      to it: 80 ms of buffer, and since audio is the timing master that buffer
+      *is* the floor on input latency. That figure is the safe size for the
+      normal mixer, not the fast one, whose period here is 4 ms. Asking for
+      two emulated frames instead gets 1600 frames - 33 ms - with the fast
+      path still granted (`AUDIO_OUTPUT_FLAG_FAST successful; frameCount
+      1600`) and zero underruns. AudioFlinger's reported track latency went
+      from 96 ms to 54 ms.
+      Still open: that is the *audio* path only. The full touch-to-photon
+      figure has not been measured, and doing it honestly needs a high-speed
+      camera or a hardware loopback rather than more `dumpsys`. Runahead
+      remains unconsidered.
+---
+
+## Phase 3 - Advanced
+
+- [x] **Rewind** - `core/src/rewind.rs` is a bounded ring of save states with
+      the cadence left to the frontend, same as save flushing. A state
+      measures 512,128 bytes, so `Rewind::memory_bytes` reports the live cost
+      and a caller sizes itself against the device instead of guessing.
+      Wired end to end 2026-09-01: five FFI functions
+      (`rewind_configure`/`push`/`pop`/`memory`/`clear`) plus JNI, a snapshot
+      every 30 frames into a depth of 20 - about ten seconds of history for
+      roughly 10 MB - and a hold-to-rewind button in the transport column.
+      Loading a save state clears the ring, since that history belongs to the
+      timeline you just left. Verified on a device.
+- [ ] Cheat codes (GameShark / CodeBreaker).
+- [ ] Link cable over local WiFi.
+- [ ] JIT recompilation, ARM host only. Only after the interpreter is correct -
+      a JIT built on a wrong interpreter inherits every bug and makes it harder
+      to find.
+- [~] **Screenshots** - a menu entry writes the current frame to
+      `Pictures/GeeBeeAyy/<rom key>_<timestamp>.png` at native 240x160,
+      deliberately not upscaled: a screenshot records what the emulator
+      produced, and the scaling is a display choice the viewer can make again.
+      Verified on a device. Screen *recording* is still undone.
+- [ ] Debug tools: breakpoints, memory viewer, register inspector.
+- [ ] RetroAchievements.
 
 ---
 
-## Ordem de Prioridade Recomendada
+## Phase 4 - Ship it on Google Play
 
-```
-1. CPU (ARM + THUMB)  ─────┐
-2. Memory Bus (ROM, I/O)   ├──→  Fase 1 (Core funcional)
-3. Timer completo          │
-4. Cart save               ─┘
-                             │
-5. PPU Mode 0 + Mode 3  ────┤  Fase 2 (Graphics)
-6. OAM (sprites básicos)    │
-7. Palette + blending       ─┘
-                             │
-8. APU (PSG channels)    ────┤  Fase 3 (Áudio)
-9. FIFO + sync             ─┘
-                             │
-10. Android frontend     ────┤  Fase 4 (App)
-11. Save states, FF       ─┘
-```
+The last Android phase, and the gate in front of everything iOS. Owned by
+`mobile-app-developer`, with `visual-asset-generator` on the artwork.
+
+Nothing here is emulation work. It is the difference between an APK that runs
+on one developer's phone and an app a stranger can install.
+
+- [ ] **Icon and store asset set** - `visual-asset-generator`. The full mipmap
+      set, the adaptive icon's foreground and background, the feature graphic
+      and the screenshots. The pixel bee identity already exists in
+      `docs/logo.png` and `docs/bee-icon.png`; this is producing every size and
+      density Play demands from it.
+- [ ] **Release signing** - an upload key kept out of the repository, wired
+      through `android/app/build.gradle.kts` from a properties file or the CI
+      secret store, never a checked-in keystore.
+- [ ] **A signed App Bundle that actually contains both ABIs.** `.so` files are
+      gitignored and only exist wherever a build last ran, so the AAB is the
+      first artefact where "did the native library ship" is a real question.
+      Verify `arm64-v8a` and `armeabi-v7a` are both inside the bundle before
+      uploading anything.
+- [ ] **R8 / ProGuard rules that do not break JNI.** `GbaEngine`'s `external
+      fun` declarations are matched by name from Rust; a rename or a strip
+      turns into an `UnsatisfiedLinkError` that only appears in the release
+      build, never in debug.
+- [ ] **Play Console listing** - description, screenshots, content rating and
+      the data-safety form. The honest answer to the data-safety questions is
+      that the app collects nothing and sends nothing anywhere; keep it that
+      way, because it is also the easiest form to fill in.
+- [ ] **No ROMs, ever.** The homebrew catalogue is freely distributable
+      homebrew only and is not, and will not become, an index of commercial
+      games. Play removes emulators over exactly this.
+- [ ] **Internal testing track first**, on a device that is not the
+      development phone, then production.
+
+**Exit criterion:** a stranger can install GeeBeeAyy! from Google Play, point
+it at their own legally dumped ROM, and play it.
+
+### The iOS gate
+
+When that criterion is met, and **not before**, ask the repository owner
+whether to start [`ROADMAP-ios.md`](ROADMAP-ios.md). It is a real decision with
+a real cost - it needs a Mac, an Apple Developer account and a second frontend
+to keep at parity forever - so it is theirs to make, not something to drift
+into because Android went quiet.
 
 ---
 
-## Referências
+## Known accuracy gaps
 
-| Recurso | Link |
-|---------|------|
+Deliberate simplifications, recorded so they are not rediscovered as bugs.
+Two earlier entries are gone because gba-suite forced them to be fixed
+properly: misaligned halfword loads now rotate and degrade correctly, and the
+HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
+`subs pc, lr, #4` return.
+
+- No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
+- **The gamepak prefetch buffer is not modelled.** WAITCNT bit 14 is stored
+  and ignored. There used to be a `MemoryBus::prefetch_tick` called once per
+  CPU cycle, but it only ever decremented a counter nothing read, so it
+  bought no accuracy and cost about 5% of the emulation budget; it was
+  deleted on 2026-09-04. Modelling prefetch properly means giving the bus a
+  real 8-halfword FIFO that fills during non-sequential ROM access, and it
+  belongs with the wait-state work, not on its own.
+- No BIOS execute permission checks.
+- Sprite priority against backgrounds is correct in **mode 0 only**. The other
+  modes lay sprites on top of everything instead of ordering them, which is
+  wrong when a background outranks the sprite - but it is what makes sprites
+  appear in the bitmap modes at all, since modes 3-5 never ran the sprite pass
+  before 2026-09-01.
+- Windows, the OBJ window and semi-transparent sprites all work as of
+  2026-09-01. What remains approximate: colour effects outside mode 0 still
+  apply to a whole scanline rather than per pixel, so brightness and alpha are
+  only correct in mode 0.
+- Affine backgrounds render, as of 2026-09-01, but their per-pixel path is not
+  cycle-shaped: PB and PD are accumulated once per scanline rather than being
+  applied inside the line, which is right for the ordinary case and wrong for
+  a game that rewrites the matrix mid-line.
+- **Colour effects outside mode 0 blend against draw order, not priority.**
+  Brightness and alpha both run per pixel in every mode as of 2026-09-03, and
+  both are gated on BLDCNT's 1st-target bits. What is still approximate is
+  *which* pixel counts as the 2nd target. Mode 0 sorts the enabled layers by
+  their BGxCNT priority and composites the top two, so its 2nd target is the
+  real runner-up. Modes 1-5 have no sort: each layer is painted over the last
+  in a fixed order, and `Ppu::put_pixel` records whatever it painted over as
+  the 2nd target. Those two agree whenever paint order happens to match
+  priority order, and disagree when a game gives a background a priority that
+  should put it underneath one drawn earlier. The fix is to give modes 1-5
+  mode 0's per-pixel priority sort, which is a rewrite of the five mode
+  renderers rather than a patch; it is the same missing sort that makes
+  sprites always land on top in those modes (see the sprite-priority entry
+  above), so both should be done together.
+  Semi-transparent sprites (OBJ mode 1) are still not blended in any mode.
+- **`BitUnPack` (SWI 0x10) is not a stub, it is wrong.** It copies bytes until
+  it hits a zero, which is nothing like the real call - the real one expands
+  1/2/4/8-bit source units into wider destination units using a five-byte
+  parameter block. A game that uses it gets silently corrupted memory rather
+  than a no-op.
+- The exact cycle on which a timer or DMA raises its IF bit is not modelled;
+  the flag is set when the overflow or the transfer completes. GBATEK does not
+  document the sub-cycle behaviour, so settling it needs a hardware capture or
+  a timing test ROM rather than more reading.
+- HALT wake-up granularity is one PPU event (HBlank start or the end of a
+  scanline), not one cycle. It used to be a whole scanline, which stepped
+  straight over HBlank and gave a halted game one interrupt a frame
+  instead of 228.
+- Channel 3's wave RAM now honours the bank bit and 64-digit mode, checked
+  against three GBATEK mirrors and mGBA (recorded in
+  `.claude/agents/search-specialist.md`). What is still unmodelled: whether
+  the bank bit is re-read mid-sweep in 64-digit mode. GBATEK does not say, and
+  mGBA treats it as fixed for the sweep, which is what this follows.
+- PPU and APU *timing* still have no test-ROM coverage. gba-suite exercises
+  the CPU and the memory bus only. Rendering now has some: jsmolka's ppu
+  ROMs, the 240p Test Suite and Celeste Classic in `core/tests/ppu.rs`,
+  plus `core/tests/dma.rs` and `core/tests/tonerom.rs`. None of them check
+  *when* anything happens, only what comes out.
+
+---
+
+## Who owns what
+
+| Area | Agent |
+|------|-------|
+| `core/` - emulation, decoders, FFI | `rust-engineer` |
+| Android frontend | `kotlin-specialist` |
+| iOS frontend | `swift-expert` - **parked**, see [`ROADMAP-ios.md`](ROADMAP-ios.md) |
+| Storage, lifecycle, battery, permissions across both platforms | `mobile-developer` |
+| Build, release, device testing, platform parity | `mobile-app-developer` |
+| GBA hardware questions, GBATEK, reference emulators | `search-specialist` |
+| Touch targets, contrast, screen readers | `accessibility-tester` |
+| Icons, theme art, store assets | `visual-asset-generator` |
+| Multi-lane decomposition and cross-specialist consultation | `agent-organizer` (second in command; its plans are reviewed before they run) |
+
+---
+
+## References
+
+| Resource | Link |
+|----------|------|
 | GBATEK (hardware reference) | https://problemkaputt.de/gbatek.htm |
-| TONC (programação GBA) | https://www.coranac.com/tonc/text/toc.htm |
+| TONC (GBA programming) | https://www.coranac.com/tonc/text/toc.htm |
 | ARM7TDMI TRM | https://developer.arm.com/documentation/ddi0029/ |
-| mGBA (código de referência) | https://github.com/mgba-emu/mgba |
+| gba-suite (test ROMs) | https://github.com/jsmolka/gba-suite |
+| mGBA (reference implementation) | https://github.com/mgba-emu/mgba |
 | SkyEmu (per-pixel PPU) | https://github.com/skylersaleh/SkyEmu |
-| rustboyadvance-ng (Rust reference) | https://github.com/rustboyadvance-ng |
+| NanoBoyAdvance (cycle accuracy) | https://github.com/nba-emu/NanoBoyAdvance |

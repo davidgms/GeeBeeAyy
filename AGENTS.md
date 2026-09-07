@@ -1,5 +1,10 @@
 # AGENTS.md - GeeBeeAyy
 
+**[`CLAUDE.md`](CLAUDE.md) is the authoritative version of these conventions**
+and carries the parts this summary leaves out: the architecture boundary, the
+testing rule, where working files go, and how the agent roster is scoped. This
+file is the short form for tools that read `AGENTS.md`.
+
 ## Permissions
 
 - `git commit` — allowed

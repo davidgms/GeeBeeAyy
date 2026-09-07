@@ -80,28 +80,62 @@ The hardware we need to emulate accurately:
 ## Features
 
 ### Phase 1 - Core Emulation (MVP)
-- [ ] ARM7TDMI interpreter (ARM + THUMB instruction sets)
-- [ ] Scanline-based PPU (modes 0-5, sprites, affine backgrounds)
-- [ ] Audio output (PCM + PSG channels)
-- [ ] Memory bus + I/O register dispatch
-- [ ] DMA controller (4 channels)
-- [ ] Timer system (4 timers)
-- [ ] ROM loading (.gba format)
-- [ ] Save type detection (SRAM, Flash, EEPROM)
-- [ ] HLE BIOS (no original BIOS required)
+
+**[`ROADMAP.md`](ROADMAP.md) is the authoritative status.** This list is a
+summary and has been wrong before - it claimed a complete CPU while every
+second instruction was being skipped. A box here means a test proves it.
+
+As of 2026-08-30 a commercial game boots: *Yggdra Union* reaches its title
+screen on the host, and the homebrew `waimanu`, `jumpingbarnabe` and
+`powerpig` render. No commercial game has run on a device yet.
+
+- [x] ARM7TDMI interpreter - passes jsmolka's `arm`, `thumb` and `memory` suites
+- [x] Memory bus + I/O register dispatch - region mirroring, 8-bit video and
+      save-region write rules
+- [x] DMA controller (4 channels) - raises IF bits 8-11
+- [x] Timer system (4 timers) - wired to the bus, raises IF bits 3-6, and
+      drives DMA sound
+- [x] ROM loading (.gba format)
+- [x] Save type detection, and SRAM/Flash/EEPROM wired to the bus - passes the
+      `sram`, `flash64`, `flash128` and `none` suites. EEPROM is the real
+      serial protocol over DMA - see `docs/save-data.md`
+- [x] HLE BIOS - the common SWIs; `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are
+      still stubs
+- [~] Scanline-based PPU - mode 0 verified against test ROMs and against
+      *Yggdra Union*'s opening and title screen, including sprites and alpha
+      blending; modes 1, 2, 4, 5, windows and semi-transparent sprites are
+      unverified, sprite priority against backgrounds is not implemented,
+      colour effects outside mode 0 are still a scanline-wide approximation,
+      and **windows are decoded but not applied** - `fantasy-knight.gba`
+      renders black because of it
+- [~] Audio output - DMA sound is driven by timer overflows and plays
+      continuously under *Yggdra Union*; the PSG channels are unverified against
+      a game, and nothing has been checked by ear on a device
 
 ### Phase 2 - Android Frontend
-- [ ] Kotlin + Jetpack Compose UI
-- [ ] Customizable on-screen touch controls
+
+The Android app builds and runs: an APK has been installed on a Xiaomi Mi 10T
+Pro (Android 12), all ten inputs reach the core, and homebrew ROMs render. No
+commercial game has been tried on a device, and audio has not been verified
+there.
+
+- [x] Kotlin + Jetpack Compose UI
+- [x] On-screen touch controls, wired to the core
+- [x] Save states (10 slots per game) and battery saves persisted to disk
+- [x] Fast forward (unthrottled: runs as fast as the device allows)
+- [ ] Customizable on-screen touch controls (size, position, opacity)
 - [ ] Bluetooth/USB controller support (Xbox, PS, Switch Pro)
-- [ ] Save states (10 slots per game)
-- [ ] Fast forward (2x, 4x)
 - [ ] Screen scaling (1x, 2x, 3x, fit)
 - [ ] Screen filters (2xSaI, CRT, pixel-perfect)
 - [ ] ROM browser with cover art + metadata
 - [ ] Google Play Store distribution
 
 ### Phase 3 - iOS Frontend
+
+**Parked.** iOS is not being worked on and does not start until the Android app
+ships on Google Play, and then only if the repository owner says so. It has its
+own file: [`ROADMAP-ios.md`](ROADMAP-ios.md).
+
 - [ ] Swift + SwiftUI UI
 - [ ] MFi controller support
 - [ ] Touch controls + gesture support
@@ -344,7 +378,7 @@ The Android app configuration is in `android/app/build.gradle.kts`:
 android {
     defaultConfig {
         applicationId = "com.geebeeayya"
-        minSdk = 24          // Android 7.0+
+        minSdk = 26          // Android 8.0+
         targetSdk = 34       // Android 14
         versionCode = 1
         versionName = "0.1.0"
@@ -389,7 +423,8 @@ Contributions are welcome! Please read the contributing guidelines before submit
 
 - [ ] Phase 1: Core emulation (CPU, PPU, APU, Memory)
 - [ ] Phase 2: Android frontend with touch controls
-- [ ] Phase 3: iOS frontend with SwiftUI
+- [ ] Phase 3: iOS frontend with SwiftUI - parked behind the Play Store
+      release, see [`ROADMAP-ios.md`](ROADMAP-ios.md)
 - [ ] Phase 4: Advanced features (JIT, link cable, cheats)
 - [ ] Phase 5: Performance optimization + community features
 

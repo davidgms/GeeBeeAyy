@@ -1,4 +1,4 @@
-use crate::{Gba, savestate::SaveState};
+use crate::Gba;
 use std::ffi::c_void;
 
 // ─── C FFI (used by iOS via bridging header, and by Android via JNI) ────────
@@ -6,6 +6,10 @@ use std::ffi::c_void;
 /// Opaque handle to Gba instance for FFI consumers.
 pub struct GbaHandle {
     inner: Gba,
+    /// Bounded ring of snapshots for rewind. Empty until the frontend gives
+    /// it a capacity, because a state is around 500 KB and the core has no
+    /// business guessing how much of the device's memory it may have.
+    rewind: crate::rewind::Rewind,
 }
 
 /// Create a new GBA emulator instance.
@@ -20,7 +24,10 @@ pub extern "C" fn geebeeayy_create() -> *mut c_void {
         );
     }
     eprintln!("[GeeBeeAyy] === Creating new GBA instance ===");
-    let handle = Box::new(GbaHandle { inner: Gba::new() });
+    let handle = Box::new(GbaHandle {
+        inner: Gba::new(),
+        rewind: crate::rewind::Rewind::new(0),
+    });
     eprintln!("[GeeBeeAyy] Created, handle={:p}", handle.as_ref());
     Box::into_raw(handle) as *mut c_void
 }
@@ -32,7 +39,9 @@ pub extern "C" fn geebeeayy_create() -> *mut c_void {
 #[no_mangle]
 pub unsafe extern "C" fn geebeeayy_destroy(ptr: *mut c_void) {
     if !ptr.is_null() {
-        unsafe { drop(Box::from_raw(ptr as *mut GbaHandle)); }
+        unsafe {
+            drop(Box::from_raw(ptr as *mut GbaHandle));
+        }
     }
 }
 
@@ -43,20 +52,29 @@ pub unsafe extern "C" fn geebeeayy_destroy(ptr: *mut c_void) {
 /// # Safety
 /// `ptr` must be a valid handle. `data` must point to `len` readable bytes.
 #[no_mangle]
-pub unsafe extern "C" fn geebeeayy_load_rom(
-    ptr: *mut c_void,
-    data: *const u8,
-    len: usize,
-) -> i32 {
+pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, len: usize) -> i32 {
     if ptr.is_null() || data.is_null() {
         return -1;
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     let rom = unsafe { std::slice::from_raw_parts(data, len) };
-    eprintln!("[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}", len, rom[0], rom[1], rom[2], rom[3]);
+    // Indexing rom[0..4] unconditionally panicked on a buffer shorter than
+    // four bytes, and a panic unwinding across `extern "C"` aborts the
+    // process. The Android side happens to reject anything under 0xC0 first;
+    // this is a public C entry point and cannot rely on that.
+    match rom.get(..4) {
+        Some(head) => eprintln!(
+            "[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}",
+            len, head[0], head[1], head[2], head[3]
+        ),
+        None => eprintln!("[GeeBeeAyy] load_rom: {len} bytes, too short to be a ROM"),
+    }
     match handle.inner.load_rom(rom) {
         Ok(()) => {
-            eprintln!("[GeeBeeAyy] load_rom: OK, CPU PC={:08X} CPSR={:08X}", handle.inner.cpu.registers[15], handle.inner.cpu.cpsr);
+            eprintln!(
+                "[GeeBeeAyy] load_rom: OK, CPU PC={:08X} CPSR={:08X}",
+                handle.inner.cpu.registers[15], handle.inner.cpu.cpsr
+            );
             0
         }
         Err(e) => {
@@ -98,7 +116,9 @@ pub unsafe extern "C" fn geebeeayy_run_frame(ptr: *mut c_void) {
         let fb = handle.inner.frame_buffer();
         let mut non_zero = 0u32;
         for chunk in fb.chunks(3) {
-            if chunk[0] != 0 || chunk[1] != 0 || chunk[2] != 0 { non_zero += 1; }
+            if chunk[0] != 0 || chunk[1] != 0 || chunk[2] != 0 {
+                non_zero += 1;
+            }
         }
         eprintln!(
             "[GeeBeeAyy] frame={} AFTER: PC={:08X} CPSR={:08X} halted={} IME={} IE={:04X} IF={:04X} non_zero_px={}",
@@ -185,62 +205,258 @@ pub unsafe extern "C" fn geebeeayy_audio_copy(
     count
 }
 
-/// Create a save state. Returns an opaque pointer.
+/// Set the pressed-button bitmask.
+///
+/// `keys` uses the GBATEK bit order (0=A, 1=B, 2=Select, 3=Start, 4=Right,
+/// 5=Left, 6=Up, 7=Down, 8=R, 9=L) with **1 = pressed**, which is the natural
+/// polarity for a caller. The inversion to the hardware's active-low KEYINPUT
+/// happens inside the core, so a frontend never deals with it. Bits above 9
+/// are ignored.
 ///
 /// # Safety
-/// `ptr` must be a valid handle.
+/// `ptr` must be a valid handle from `geebeeayy_create`.
 #[no_mangle]
-pub unsafe extern "C" fn geebeeayy_save_state_create(ptr: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn geebeeayy_set_keys(ptr: *mut c_void, keys: u16) {
     if ptr.is_null() {
-        return std::ptr::null_mut();
+        return;
     }
-    let handle = unsafe { &*(ptr as *mut GbaHandle) };
-    let state = Box::new(handle.inner.save_state());
-    Box::into_raw(state) as *mut c_void
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.inner.bus.set_keys(keys);
 }
 
-/// Restore from a save state.
-///
-/// Returns 0 on success, -1 on error.
+/// Size of the cartridge's battery save in bytes, or 0 if it has no save chip.
 ///
 /// # Safety
-/// `ptr` must be a valid handle. `state_ptr` must have been returned by
-/// `geebeeayy_save_state_create`.
+/// `ptr` must be a valid handle from `geebeeayy_create`.
 #[no_mangle]
-pub unsafe extern "C" fn geebeeayy_load_state(
+pub unsafe extern "C" fn geebeeayy_save_size(ptr: *mut c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    handle.inner.save_data().map_or(0, |d| d.len())
+}
+
+/// Copy the battery save into `out`, returning the number of bytes written.
+///
+/// Call `geebeeayy_save_take_dirty` **before** this, never after: a write that
+/// lands between the read and the clear would be dropped on the floor.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `out` must have room for `max_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_read(
     ptr: *mut c_void,
-    state_ptr: *mut c_void,
+    out: *mut u8,
+    max_len: usize,
+) -> usize {
+    if ptr.is_null() || out.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    let Some(data) = handle.inner.save_data() else {
+        return 0;
+    };
+    let count = data.len().min(max_len);
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), out, count);
+    }
+    count
+}
+
+/// Restore a battery save. Returns 0 on success, -1 on a null argument.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `data` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_write(
+    ptr: *mut c_void,
+    data: *const u8,
+    len: usize,
 ) -> i32 {
-    if ptr.is_null() || state_ptr.is_null() {
+    if ptr.is_null() || data.is_null() {
         return -1;
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
-    let state = unsafe { &*(state_ptr as *mut SaveState) };
-    match handle.inner.load_state(state) {
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    handle.inner.load_save(bytes);
+    0
+}
+
+/// Whether save memory changed since the last call, clearing the flag.
+///
+/// Returns 1 if dirty, 0 otherwise. Check this first, then call
+/// `geebeeayy_save_read` - see its note on ordering.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_save_take_dirty(ptr: *mut c_void) -> i32 {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.inner.take_save_dirty() as i32
+}
+
+/// Size in bytes of a save state taken right now.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_state_size(ptr: *mut c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    handle.inner.save_state().data.len()
+}
+
+/// Copy a save state into `out`, returning the number of bytes written, or 0
+/// if `out` is too small - check `geebeeayy_state_size` first.
+///
+/// A state snapshots our internal layout, not the game's own save; see
+/// `docs/save-data.md` for why the two are stored differently.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `out` must have room for `max_len` bytes.
+/// Set how many rewind snapshots to keep, and drop any already held.
+///
+/// A snapshot is about 500 KB, so a depth of 20 costs roughly 10 MB. The
+/// frontend decides the cadence as well as the depth - the core has no clock,
+/// the same reason it does not decide when to flush a battery save.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_configure(ptr: *mut c_void, capacity: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.rewind = crate::rewind::Rewind::new(capacity);
+}
+
+/// Snapshot the machine into the rewind ring, discarding the oldest entry if
+/// it is full. A no-op while the capacity is zero.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_push(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    if handle.rewind.capacity() == 0 {
+        return;
+    }
+    handle.rewind.push(&handle.inner);
+}
+
+/// Restore the most recent snapshot and drop it, so repeated calls walk
+/// backwards. Returns 1 on success, 0 when the ring is empty, -1 if the
+/// snapshot was rejected - in which case the machine is unchanged, because
+/// `SaveState::restore` rolls back on failure.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_pop(ptr: *mut c_void) -> i32 {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    let GbaHandle { inner, rewind } = handle;
+    match rewind.pop(inner) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Bytes the rewind ring is holding right now, so a frontend can size its
+/// depth against the device instead of guessing.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_memory(ptr: *mut c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    handle.rewind.memory_bytes()
+}
+
+/// Drop every snapshot, for a ROM change or a save-state load.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rewind_clear(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.rewind.clear();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_state_read(
+    ptr: *mut c_void,
+    out: *mut u8,
+    max_len: usize,
+) -> usize {
+    if ptr.is_null() || out.is_null() {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *const GbaHandle) };
+    let state = handle.inner.save_state();
+    if state.data.len() > max_len {
+        return 0;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(state.data.as_ptr(), out, state.data.len());
+    }
+    state.data.len()
+}
+
+/// Restore a save state. Returns 0 on success, -1 if the data is rejected.
+///
+/// `restore` snapshots the machine before parsing and rolls back if the parse
+/// fails, so a rejected state leaves the emulator exactly as it was and -1
+/// means "that file was no good", not "reload the ROM". See
+/// `docs/save-data.md`.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `data` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_state_write(
+    ptr: *mut c_void,
+    data: *const u8,
+    len: usize,
+) -> i32 {
+    if ptr.is_null() || data.is_null() {
+        return -1;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    let state = crate::savestate::SaveState {
+        data: bytes.to_vec(),
+    };
+    match handle.inner.load_state(&state) {
         Ok(()) => 0,
         Err(_) => -1,
     }
 }
 
-/// Destroy a save state created by `geebeeayy_save_state_create`.
-///
-/// # Safety
-/// `state_ptr` must have been returned by `geebeeayy_save_state_create`.
-#[no_mangle]
-pub unsafe extern "C" fn geebeeayy_save_state_destroy(state_ptr: *mut c_void) {
-    if !state_ptr.is_null() {
-        unsafe { drop(Box::from_raw(state_ptr as *mut SaveState)); }
-    }
-}
-
-// ─── Android JNI Bindings ───────────────────────────────────────────────────
-
 #[cfg(target_os = "android")]
 pub mod android {
     use super::*;
-    use jni::JNIEnv;
-    use jni::objects::{JClass, JByteArray, JFloatArray, ReleaseMode};
+    use jni::objects::{JByteArray, JClass, JFloatArray, ReleaseMode};
     use jni::sys::{jint, jlong};
+    use jni::JNIEnv;
 
     #[no_mangle]
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeCreate(
@@ -258,7 +474,9 @@ pub mod android {
         handle: jlong,
     ) {
         if handle != 0 {
-            unsafe { geebeeayy_destroy(handle as *mut c_void); }
+            unsafe {
+                geebeeayy_destroy(handle as *mut c_void);
+            }
         }
     }
 
@@ -272,8 +490,11 @@ pub mod android {
         if handle == 0 {
             return -1;
         }
+        // NoCopyBack, like the save and state writes: the core only reads the
+        // ROM, so copying it back to the Java heap on release is up to 32 MB
+        // of pointless work per load.
         let bytes = unsafe {
-            match env.get_array_elements(&data, ReleaseMode::CopyBack) {
+            match env.get_array_elements(&data, ReleaseMode::NoCopyBack) {
                 Ok(b) => b,
                 Err(_) => return -1,
             }
@@ -290,7 +511,9 @@ pub mod android {
         handle: jlong,
     ) {
         if handle != 0 {
-            unsafe { geebeeayy_run_frame(handle as *mut c_void); }
+            unsafe {
+                geebeeayy_run_frame(handle as *mut c_void);
+            }
         }
     }
 
@@ -302,7 +525,9 @@ pub mod android {
         count: jint,
     ) {
         if handle != 0 {
-            unsafe { geebeeayy_run_frames(handle as *mut c_void, count as u32); }
+            unsafe {
+                geebeeayy_run_frames(handle as *mut c_void, count as u32);
+            }
         }
     }
 
@@ -317,7 +542,9 @@ pub mod android {
             return;
         }
         let mut buf = vec![0u8; 240 * 160 * 3];
-        unsafe { geebeeayy_frame_buffer_copy(handle as *mut c_void, buf.as_mut_ptr()); }
+        unsafe {
+            geebeeayy_frame_buffer_copy(handle as *mut c_void, buf.as_mut_ptr());
+        }
         let signed: Vec<i8> = buf.iter().map(|&b| b as i8).collect();
         let _ = env.set_byte_array_region(&out, 0, &signed);
     }
@@ -346,44 +573,166 @@ pub mod android {
     }
 
     #[no_mangle]
-    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveStateCreate(
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSetKeys(
         _env: JNIEnv,
         _class: JClass,
         handle: jlong,
-    ) -> jlong {
+        keys: jint,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        gba.inner.bus.set_keys(keys as u16);
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveTakeDirty(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
         if handle == 0 {
             return 0;
         }
-        let ptr = unsafe { geebeeayy_save_state_create(handle as *mut c_void) };
-        ptr as jlong
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        gba.inner.take_save_dirty() as jint
     }
 
     #[no_mangle]
-    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeLoadState(
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveRead<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass,
+        handle: jlong,
+    ) -> JByteArray<'local> {
+        let empty = env.new_byte_array(0).unwrap_or_default();
+        if handle == 0 {
+            return empty;
+        }
+        let gba = unsafe { &*(handle as *const GbaHandle) };
+        let Some(data) = gba.inner.save_data() else {
+            return empty;
+        };
+        let signed: Vec<i8> = data.iter().map(|&b| b as i8).collect();
+        match env.new_byte_array(signed.len() as i32) {
+            Ok(array) => {
+                let _ = env.set_byte_array_region(&array, 0, &signed);
+                array
+            }
+            Err(_) => empty,
+        }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveWrite(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        data: JByteArray,
+    ) -> jint {
+        if handle == 0 {
+            return -1;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        let Ok(bytes) = (unsafe { env.get_array_elements(&data, ReleaseMode::NoCopyBack) }) else {
+            return -1;
+        };
+        let buf: Vec<u8> = bytes.iter().map(|&b| b as u8).collect();
+        gba.inner.load_save(&buf);
+        0
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeStateRead<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass,
+        handle: jlong,
+    ) -> JByteArray<'local> {
+        let empty = env.new_byte_array(0).unwrap_or_default();
+        if handle == 0 {
+            return empty;
+        }
+        let gba = unsafe { &*(handle as *const GbaHandle) };
+        let state = gba.inner.save_state();
+        let signed: Vec<i8> = state.data.iter().map(|&b| b as i8).collect();
+        match env.new_byte_array(signed.len() as i32) {
+            Ok(array) => {
+                let _ = env.set_byte_array_region(&array, 0, &signed);
+                array
+            }
+            Err(_) => empty,
+        }
+    }
+
+    /// Rewind: configure the ring's depth, take a snapshot, step back one.
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindConfigure(
         _env: JNIEnv,
         _class: JClass,
         handle: jlong,
-        state_handle: jlong,
-    ) -> jint {
-        if handle == 0 || state_handle == 0 {
-            return -1;
+        capacity: jint,
+    ) {
+        if handle == 0 {
+            return;
         }
-        unsafe {
-            geebeeayy_load_state(
-                handle as *mut c_void,
-                state_handle as *mut c_void,
-            )
-        }
+        unsafe { geebeeayy_rewind_configure(handle as *mut c_void, capacity.max(0) as usize) };
     }
 
     #[no_mangle]
-    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveStateDestroy(
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindPush(
         _env: JNIEnv,
         _class: JClass,
-        state_handle: jlong,
+        handle: jlong,
     ) {
-        if state_handle != 0 {
-            unsafe { geebeeayy_save_state_destroy(state_handle as *mut c_void); }
+        if handle == 0 {
+            return;
+        }
+        unsafe { geebeeayy_rewind_push(handle as *mut c_void) };
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindPop(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) -> jint {
+        if handle == 0 {
+            return 0;
+        }
+        unsafe { geebeeayy_rewind_pop(handle as *mut c_void) }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRewindClear(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        unsafe { geebeeayy_rewind_clear(handle as *mut c_void) };
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeStateWrite(
+        mut env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        data: JByteArray,
+    ) -> jint {
+        if handle == 0 {
+            return -1;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        let Ok(bytes) = (unsafe { env.get_array_elements(&data, ReleaseMode::NoCopyBack) }) else {
+            return -1;
+        };
+        let buf: Vec<u8> = bytes.iter().map(|&b| b as u8).collect();
+        let state = crate::savestate::SaveState { data: buf };
+        match gba.inner.load_state(&state) {
+            Ok(()) => 0,
+            Err(_) => -1,
         }
     }
 }

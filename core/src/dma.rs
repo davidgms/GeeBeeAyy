@@ -1,3 +1,6 @@
+/// DMAxCNT_H offsets from 0x04000000, one per channel.
+const DMA_CNT_H: [usize; 4] = [0x0BA, 0x0C6, 0x0D2, 0x0DE];
+
 pub struct DmaChannel {
     pub source: u32,
     pub dest: u32,
@@ -27,36 +30,76 @@ impl Dma {
         Self {
             channels: [
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
                 DmaChannel {
-                    source: 0, dest: 0, count: 0, control: 0,
-                    enabled: false, word_count: 0,
-                    src_adj: 0, dst_adj: 0, repeat: false,
-                    transfer_type: false, timing: 0,
-                    irq_on_end: false, enable: false,
-                    src_fixed: false, dst_fixed: false, dst_reload: false,
+                    source: 0,
+                    dest: 0,
+                    count: 0,
+                    control: 0,
+                    enabled: false,
+                    word_count: 0,
+                    src_adj: 0,
+                    dst_adj: 0,
+                    repeat: false,
+                    transfer_type: false,
+                    timing: 0,
+                    irq_on_end: false,
+                    enable: false,
+                    src_fixed: false,
+                    dst_fixed: false,
+                    dst_reload: false,
                 },
             ],
             hblank_fired: false,
@@ -77,98 +120,162 @@ impl Dma {
 
     pub fn write_count(&mut self, channel: usize, value: u16) {
         if channel < 4 {
-            self.channels[channel].count = if value == 0 { 0x10000 } else { value as u32 } as u16;
+            // GBATEK, GBA DMA Transfers: the unit count is 14 bits on DMA0-2
+            // and 16 on DMA3, and 0 means the maximum (0x4000 / 0x10000).
+            // The maximum does not fit the field, so `do_transfer` expands it
+            // - the old code computed 0x10000 and then truncated it back to 0
+            // with an `as u16`, which turned every maximum-length transfer
+            // into a no-op.
+            let mask = if channel == 3 { 0xFFFF } else { 0x3FFF };
+            self.channels[channel].count = value & mask;
         }
     }
 
-    pub fn write_control(&mut self, channel: usize, value: u16, bus: &mut super::memory::MemoryBus) {
-        if channel >= 4 { return; }
+    /// Decode DMAxCNT_H into the channel's derived fields, without starting
+    /// anything. Split out so a save-state restore can rebuild the derived
+    /// state without re-running an immediate transfer.
+    fn decode_control(&mut self, channel: usize, value: u16) {
         let ch = &mut self.channels[channel];
         ch.control = value;
         ch.enable = value & 0x8000 != 0;
+        ch.repeat = value & 0x0200 != 0;
+        // Must precede word_count: it used to be read one write stale.
+        ch.transfer_type = value & 0x0400 != 0;
+        ch.word_count = if ch.transfer_type { 4 } else { 2 };
+        // GBATEK: bits 5-6 are the *destination* address control and bits 7-8
+        // the *source*. They were read the other way round, which inverts
+        // every transfer's addressing - a sound FIFO DMA (control 0xB640,
+        // dest fixed) would have walked the destination through I/O space
+        // while re-reading one source word.
+        ch.dst_adj = ((value >> 5) & 3) as u8;
+        ch.src_adj = ((value >> 7) & 3) as u8;
+        ch.timing = ((value >> 12) & 3) as u8;
+        ch.irq_on_end = value & 0x4000 != 0;
+        ch.src_fixed = ch.src_adj == 2;
+        ch.dst_fixed = ch.dst_adj == 2;
+        ch.dst_reload = ch.dst_adj == 3;
+    }
 
-        if ch.enable {
-            let was_enabled = ch.enabled;
-            ch.enabled = true;
-            ch.word_count = if ch.transfer_type { 4 } else { 2 };
+    pub fn write_control(
+        &mut self,
+        channel: usize,
+        value: u16,
+        bus: &mut super::memory::MemoryBus,
+    ) {
+        if channel >= 4 {
+            return;
+        }
+        let was_enabled = self.channels[channel].enabled;
+        self.decode_control(channel, value);
 
-            ch.src_adj = ((value >> 5) & 3) as u8;
-            ch.dst_adj = ((value >> 7) & 3) as u8;
-            ch.repeat = value & 0x0200 != 0;
-            ch.transfer_type = value & 0x0400 != 0;
-            ch.timing = ((value >> 12) & 3) as u8;
-            ch.irq_on_end = value & 0x4000 != 0;
-
-            ch.src_fixed = ch.src_adj == 2;
-            ch.dst_fixed = ch.dst_adj == 2;
-            ch.dst_reload = ch.dst_adj == 3;
-
-            // Only start transfer on enable edge for immediate (timing=0)
-            if !was_enabled && ch.timing == 0 {
+        if self.channels[channel].enable {
+            self.channels[channel].enabled = true;
+            // Only start on the enable edge, and only for immediate timing.
+            if !was_enabled && self.channels[channel].timing == 0 {
                 self.do_transfer(channel, bus);
             }
         } else {
-            ch.enabled = false;
+            self.channels[channel].enabled = false;
         }
     }
 
+    /// Rebuild a channel from a save state: decode the control word but never
+    /// start a transfer.
+    pub fn restore_control(&mut self, channel: usize, value: u16, enabled: bool) {
+        if channel >= 4 {
+            return;
+        }
+        self.decode_control(channel, value);
+        self.channels[channel].enabled = enabled;
+    }
+
     pub fn do_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) {
-        if channel >= 4 { return; }
+        if channel >= 4 {
+            return;
+        }
         let ch = &mut self.channels[channel];
-        let count = ch.count as u32;
-        if count == 0 { return; }
+        // A count of 0 in the register means the maximum length.
+        let count = if ch.count == 0 {
+            if channel == 3 {
+                0x1_0000
+            } else {
+                0x4000
+            }
+        } else {
+            ch.count as u32
+        };
         let word_size = ch.word_count;
-        let src_fixed = ch.src_fixed;
-        let dst_fixed = ch.dst_fixed;
-        let dst_reload = ch.dst_reload;
-        let src_save = ch.source;
+        let src_adj = ch.src_adj;
+        let dst_adj = ch.dst_adj;
         let dst_save = ch.dest;
+        let source = ch.source;
+        let dest = ch.dest;
+
+        // EEPROM reads the command's address width off the transfer length,
+        // so it has to be told before the first bit is clocked. Either end of
+        // the transfer can be the chip: a write DMAs into it, a read out of
+        // it.
+        bus.eeprom_begin_dma(dest, count as usize);
+        bus.eeprom_begin_dma(source, count as usize);
 
         for _ in 0..count {
             if word_size == 4 {
                 let val = bus.read32(ch.source);
                 bus.write32(ch.dest, val);
             } else {
-                let val = bus.read16(ch.source);
+                // `read16_mut` so an EEPROM read advances its state machine.
+                // DMA is the only way a game reaches EEPROM at all.
+                let val = bus.read16_mut(ch.source);
                 bus.write16(ch.dest, val);
             }
 
-            // Source address adjustment
-            if !src_fixed {
-                ch.source = ch.source.wrapping_add(word_size);
+            // 0 = increment, 1 = decrement, 2 = fixed, 3 = increment/reload
+            // (destination only; prohibited on the source).
+            match src_adj {
+                1 => ch.source = ch.source.wrapping_sub(word_size),
+                2 => {}
+                _ => ch.source = ch.source.wrapping_add(word_size),
             }
-
-            // Destination address adjustment
-            if dst_fixed {
-                // Fixed: do nothing
-            } else if dst_reload {
-                // Increment-reload: increment but reload on repeat
-                ch.dest = ch.dest.wrapping_add(word_size);
-            } else {
-                ch.dest = ch.dest.wrapping_add(word_size);
+            match dst_adj {
+                1 => ch.dest = ch.dest.wrapping_sub(word_size),
+                2 => {}
+                _ => ch.dest = ch.dest.wrapping_add(word_size),
             }
         }
 
-        // Reload destination if not repeating
-        if !ch.repeat || dst_reload {
+        // On a repeat, only Increment/Reload restores the destination. The
+        // source is never reloaded: it used to be, which made every repeating
+        // HBlank DMA re-send the same words and flattened any per-scanline
+        // table into a single value. A non-repeating channel keeps its
+        // advanced addresses too - they are reloaded from SAD/DAD on the next
+        // enable edge, which is what hardware latches on.
+        if dst_adj == 3 {
             ch.dest = dst_save;
         }
-        // Reload source if repeating
-        if ch.repeat {
-            ch.source = src_save;
-        }
 
+        // GBATEK, GBA Interrupt Control: IF bits 8,9,10,11 are DMA 0,1,2,3.
+        // Raised once the word count is exhausted, not mid-transfer.
         if ch.irq_on_end {
-            // TODO: Trigger DMA IRQ via IoHandler
+            bus.io.request_interrupt(1 << (8 + channel));
         }
 
         if !ch.repeat {
             ch.enabled = false;
             ch.control &= !0x8000;
+            // Clear the enable bit in the register the game actually reads.
+            // Clearing only the internal struct left DMAxCNT_H bit 15 set
+            // forever, and a game that starts a transfer and polls for it to
+            // finish - which Yggdra Union does during startup - never leaves
+            // that loop.
+            let offset = DMA_CNT_H[channel];
+            let regs = bus.io_regs_data_mut();
+            regs[offset + 1] &= 0x7F;
         }
     }
 
-    /// Called when HBlank occurs. Triggers HBlank-timed DMA channels.
+    /// Called when HBlank occurs, and only on a visible scanline: GBATEK notes
+    /// HBlank DMA is not performed during VBlank. The PPU applies that gate.
+    /// Triggers HBlank-timed DMA channels.
     pub fn on_hblank(&mut self, bus: &mut super::memory::MemoryBus) {
         self.hblank_fired = true;
         for i in 0..4 {
@@ -206,24 +313,48 @@ impl Dma {
     /// Check if a DMA channel is set up for sound FIFO refill.
     /// Returns (channel_index, source_address) if it's a sound DMA.
     pub fn is_sound_dma(&self, channel: usize) -> bool {
-        if channel >= 4 { return false; }
+        if channel >= 4 {
+            return false;
+        }
         let ch = &self.channels[channel];
         // Sound DMA: timing=3 (special), dest fixed to 0x040000A0/0x040000A4
-        ch.timing == 3 && ch.enabled
-            && (ch.dest == 0x0400_00A0 || ch.dest == 0x0400_00A4)
+        ch.timing == 3 && ch.enabled && (ch.dest == 0x0400_00A0 || ch.dest == 0x0400_00A4)
     }
 
     /// Perform a sound DMA transfer (4 words = 16 bytes to FIFO).
-    pub fn do_sound_transfer(&mut self, channel: usize, bus: &mut super::memory::MemoryBus) -> Option<(u32, Vec<u8>)> {
-        if channel >= 4 { return None; }
+    pub fn do_sound_transfer(
+        &mut self,
+        channel: usize,
+        bus: &mut super::memory::MemoryBus,
+    ) -> Option<(u32, Vec<u8>)> {
+        if channel >= 4 {
+            return None;
+        }
         let ch = &mut self.channels[channel];
-        if !ch.enabled || ch.timing != 3 { return None; }
+        if !ch.enabled || ch.timing != 3 {
+            return None;
+        }
 
         let mut data = Vec::with_capacity(16);
         for _ in 0..4 {
             let val = bus.read32(ch.source);
             data.extend_from_slice(&val.to_le_bytes());
-            ch.source = ch.source.wrapping_add(4);
+            // src_adj, not an unconditional increment: DMACNT bits 7-8 pick
+            // increment / decrement / fixed for the source the same way they
+            // do for an ordinary transfer.
+            ch.source = match ch.src_adj {
+                1 => ch.source.wrapping_sub(4),
+                2 => ch.source,
+                _ => ch.source.wrapping_add(4),
+            };
+        }
+
+        // FIFO DMA is the only path this function serves, and it never raised
+        // its IRQ - the request lives in `do_transfer`, which sound DMA never
+        // reaches. A game that swaps its audio double-buffer from the DMA1 or
+        // DMA2 interrupt waited on one that could not arrive.
+        if ch.irq_on_end {
+            bus.io.request_interrupt(1 << (8 + channel));
         }
 
         Some((ch.dest, data))

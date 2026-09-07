@@ -1,5 +1,7 @@
 package com.geebeeayy.app.ui.screens
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
@@ -22,9 +24,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
+import com.geebeeayy.app.data.ScaleMode
+import com.geebeeayy.app.data.ScreenFilter
 import com.geebeeayy.app.ui.theme.*
 import java.io.File
+
+private val ScaleMode.label: String
+    get() = when (this) {
+        ScaleMode.FIT -> "Fit"
+        ScaleMode.INTEGER -> "Integer (Pixel Perfect)"
+        ScaleMode.STRETCH -> "Stretch"
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,19 +48,41 @@ fun SettingsScreen(
     val folderManager = remember { RomFolderManager(context) }
     var folders by remember { mutableStateOf(folderManager.getFolderPaths()) }
 
+    val displaySettings = remember { DisplaySettings(context) }
+    var scaleMode by remember { mutableStateOf(displaySettings.getScaleMode()) }
+    var screenFilter by remember { mutableStateOf(displaySettings.getScreenFilter()) }
+    var showFilterMenu by remember { mutableStateOf(false) }
+    var controlScale by remember { mutableFloatStateOf(displaySettings.getControlScale()) }
+    var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
+    var showScaleMenu by remember { mutableStateOf(false) }
+    var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
+    var folderError by remember { mutableStateOf<String?>(null) }
+
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
+            // A non-primary volume (an SD card) has a docId like
+            // "1A2B-3C4D:Roms", which maps to /storage/<volume>/... rather
+            // than /storage/emulated/0. Only "primary:" used to be handled and
+            // everything else fell through in silence, so picking a folder on
+            // a card closed the dialog and added nothing, with no explanation.
             val docId = DocumentsContract.getTreeDocumentId(it)
-            if (docId.startsWith("primary:")) {
-                val path = "/storage/emulated/0/" + docId.removePrefix("primary:")
-                val folder = File(path)
-                if (folder.isDirectory) {
-                    folderManager.addFolder(path)
-                    folders = folderManager.getFolderPaths()
-                    onFoldersChanged()
-                }
+            val volume = docId.substringBefore(':', "")
+            val relative = docId.substringAfter(':', "")
+            val path = when {
+                volume == "primary" -> "/storage/emulated/0/$relative"
+                volume.isNotEmpty() -> "/storage/$volume/$relative"
+                else -> ""
+            }.trimEnd('/')
+            val folder = if (path.isEmpty()) null else File(path)
+            if (folder != null && folder.isDirectory && folder.canRead()) {
+                folderManager.addFolder(path)
+                folders = folderManager.getFolderPaths()
+                onFoldersChanged()
+                folderError = null
+            } else {
+                folderError = "Could not read that folder. Pick one on internal storage."
             }
         }
     }
@@ -164,25 +198,97 @@ fun SettingsScreen(
                 }
             }
 
-            SettingsSection(title = "Display") {
-                SettingsItem(
-                    icon = Icons.Default.Star,
-                    title = "Screen Scale",
-                    subtitle = "2x (Native)",
-                    onClick = { }
+            folderError?.let { message ->
+                Text(
+                    text = message,
+                    fontSize = 13.sp,
+                    color = AmberResin,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
-                SettingsItem(
-                    icon = Icons.Default.Tune,
-                    title = "Screen Filter",
-                    subtitle = "Pixel Perfect",
-                    onClick = { }
+            }
+
+            SettingsSection(title = "Display") {
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Star,
+                        title = "Screen Scale",
+                        subtitle = scaleMode.label,
+                        onClick = { showScaleMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showScaleMenu,
+                        onDismissRequest = { showScaleMenu = false },
+                    ) {
+                        ScaleMode.entries.forEach { mode ->
+                            DropdownMenuItem(
+                                text = { Text(mode.label) },
+                                onClick = {
+                                    scaleMode = mode
+                                    displaySettings.setScaleMode(mode)
+                                    showScaleMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Tune,
+                        title = "Screen Filter",
+                        subtitle = screenFilter.label,
+                        onClick = { showFilterMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showFilterMenu,
+                        onDismissRequest = { showFilterMenu = false },
+                    ) {
+                        ScreenFilter.entries.forEach { f ->
+                            DropdownMenuItem(
+                                text = { Text(f.label) },
+                                onClick = {
+                                    screenFilter = f
+                                    displaySettings.setScreenFilter(f)
+                                    showFilterMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                SettingsSlider(
+                    icon = Icons.Default.OpenInFull,
+                    title = "Control Size",
+                    // Shrink only - at 1.0 the row already fills the width,
+                    // so growing pushes L, R and the outer D-pad off-screen.
+                    subtitle = "%.2fx".format(controlScale) +
+                        if (controlScale < 1.0f) " (below the 48.dp touch target)" else "",
+                    value = controlScale,
+                    range = DisplaySettings.MIN_CONTROL_SCALE..1.0f,
+                    onValueChange = { controlScale = it },
+                    onValueChangeFinished = { displaySettings.setControlScale(controlScale) },
+                )
+                SettingsSlider(
+                    icon = Icons.Default.Opacity,
+                    title = "Control Opacity",
+                    subtitle = "%d%%".format((controlOpacity * 100).toInt()),
+                    value = controlOpacity,
+                    range = DisplaySettings.MIN_CONTROL_OPACITY..1.0f,
+                    onValueChange = { controlOpacity = it },
+                    onValueChangeFinished = { displaySettings.setControlOpacity(controlOpacity) },
                 )
                 SettingsSwitch(
                     icon = Icons.Default.StayCurrentPortrait,
                     title = "Force Portrait",
                     subtitle = "Lock orientation",
-                    checked = true,
-                    onCheckedChange = { }
+                    checked = forcePortrait,
+                    onCheckedChange = { checked ->
+                        forcePortrait = checked
+                        displaySettings.setForcePortrait(checked)
+                        (context as? Activity)?.requestedOrientation = if (checked) {
+                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        } else {
+                            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                        }
+                    }
                 )
             }
 
@@ -293,6 +399,35 @@ fun SettingsItem(
             Icons.Default.ChevronRight,
             contentDescription = null,
             tint = PineGlowMist.copy(alpha = 0.4f),
+        )
+    }
+}
+
+/** A labelled slider row, matching [SettingsSwitch]'s shape. */
+@Composable
+fun SettingsSlider(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = AmberResin)
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+                Text(title, fontSize = 16.sp, color = PineGlowMist)
+                Text(subtitle, fontSize = 13.sp, color = AmberResin)
+            }
+        }
+        Slider(
+            value = value,
+            valueRange = range,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
         )
     }
 }

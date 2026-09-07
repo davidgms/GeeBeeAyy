@@ -9,9 +9,17 @@ class RomFolderManager(private val context: Context) {
     }
 
     private val prefs = context.getSharedPreferences("rom_folders", Context.MODE_PRIVATE)
+    private val lastPlayed = LastPlayed(context)
 
+    /**
+     * The configured folders, sorted.
+     *
+     * The backing store is a `Set`, whose iteration order is arbitrary, so
+     * anything that means "the first folder" - the homebrew downloader's
+     * default destination, for one - got a different answer between runs.
+     */
     fun getFolderPaths(): List<String> {
-        return prefs.getStringSet("folders", emptySet())?.toList() ?: emptyList()
+        return prefs.getStringSet("folders", emptySet())?.sorted() ?: emptyList()
     }
 
     fun addFolder(path: String) {
@@ -60,7 +68,10 @@ class RomFolderManager(private val context: Context) {
                             name = displayName,
                             fileName = name,
                             size = sizeStr,
+                            sizeBytes = file.length(),
+                            dateModifiedMillis = file.lastModified(),
                             filePath = file.absolutePath,
+                            lastPlayedMillis = lastPlayed.get(file.absolutePath),
                         )
                     )
                 }

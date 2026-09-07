@@ -37,6 +37,13 @@ android {
         debug {
             isDebuggable = true
             isJniDebuggable = true
+            // x86_64 as well, so a debug build installs on an emulator. Real
+            // devices are ARM, so release stays ARM-only and ships nothing
+            // extra. The .so only exists if cargo-ndk was asked for the
+            // target, and a missing ABI is not an error here.
+            ndk {
+                abiFilters += "x86_64"
+            }
         }
     }
 
@@ -61,6 +68,11 @@ android {
 }
 
 dependencies {
+    // Pure-JVM unit tests. `Sai2x` is deliberately written against plain
+    // IntArrays so its arithmetic can be checked here rather than only by
+    // looking at a phone.
+    testImplementation("junit:junit:4.13.2")
+
     // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)

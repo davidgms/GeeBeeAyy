@@ -29,6 +29,18 @@ class GbaEngine {
         const val BYTES_PER_PIXEL = 3
         /** Total frame buffer size in bytes. */
         const val FRAME_BUFFER_SIZE = SCREEN_WIDTH * SCREEN_HEIGHT * BYTES_PER_PIXEL
+
+        // Key bitmask, GBATEK order. A set bit means pressed; see nativeSetKeys.
+        const val KEY_A = 1 shl 0
+        const val KEY_B = 1 shl 1
+        const val KEY_SELECT = 1 shl 2
+        const val KEY_START = 1 shl 3
+        const val KEY_RIGHT = 1 shl 4
+        const val KEY_LEFT = 1 shl 5
+        const val KEY_UP = 1 shl 6
+        const val KEY_DOWN = 1 shl 7
+        const val KEY_R = 1 shl 8
+        const val KEY_L = 1 shl 9
     }
 
     private var handle: Long = 0L
@@ -55,7 +67,7 @@ class GbaEngine {
      */
     fun loadRom(data: ByteArray): Boolean {
         ensureHandle()
-        val result = nativeLoadRom(handle, data, data.size)
+        val result = nativeLoadRom(handle, data)
         return result == 0
     }
 
@@ -84,44 +96,122 @@ class GbaEngine {
     fun getFrameBuffer(): ByteArray = frameBuffer
 
     /**
-     * Get audio samples (f32 mono).
-     * @param maxSamples Maximum number of samples to retrieve.
-     * @return Array of f32 samples, or empty if none available.
+     * Push the current button state to the core.
+     *
+     * @param keys Bitmask in GBATEK order (bit 0 = A, 1 = B, 2 = Select,
+     * 3 = Start, 4 = Right, 5 = Left, 6 = Up, 7 = Down, 8 = R, 9 = L).
+     * A set bit means pressed; the core handles the active-low inversion.
      */
-    fun getAudioSamples(maxSamples: Int = 4096): FloatArray {
+    fun setKeys(keys: Int) {
         ensureHandle()
-        val samples = FloatArray(maxSamples)
-        val count = nativeAudioCopy(handle, samples, maxSamples)
-        return samples.copyOf(count)
+        nativeSetKeys(handle, keys)
     }
 
     /**
-     * Create a save state.
-     * @return Opaque handle to the save state, or 0L on failure.
+     * Drain the core's audio buffer into [out] (f32 mono).
+     *
+     * The caller owns the array so the emulation loop does not allocate once
+     * per frame.
+     *
+     * @return the number of samples written.
      */
-    fun saveStateCreate(): Long {
+    fun readAudio(out: FloatArray): Int {
         ensureHandle()
-        return nativeSaveStateCreate(handle)
+        return nativeAudioCopy(handle, out, out.size)
     }
 
     /**
-     * Restore from a save state.
-     * @param stateHandle Handle returned by [saveStateCreate].
+     * Has the cartridge's battery save changed since the last call?
+     *
+     * Clears the dirty flag as a side effect. Callers must call this
+     * *before* [readSave] - a write landing between the read and the clear
+     * would otherwise be lost.
+     */
+    fun saveTakeDirty(): Boolean {
+        ensureHandle()
+        return nativeSaveTakeDirty(handle) != 0
+    }
+
+    /**
+     * Copy the cartridge's battery save bytes out.
+     * @return the save bytes, empty if the cart has no save chip.
+     */
+    fun readSave(): ByteArray {
+        ensureHandle()
+        return nativeSaveRead(handle)
+    }
+
+    /**
+     * Restore the cartridge's battery save from [data].
      * @return true on success.
      */
-    fun loadState(stateHandle: Long): Boolean {
+    fun writeSave(data: ByteArray): Boolean {
         ensureHandle()
-        return nativeLoadState(handle, stateHandle) == 0
+        return nativeSaveWrite(handle, data) == 0
     }
 
     /**
-     * Destroy a save state created by [saveStateCreate].
-     * @param stateHandle Handle to destroy.
+     * Snapshot the whole machine as a versioned, self-describing byte blob.
+     * @return the save state bytes, empty on failure.
      */
-    fun saveStateDestroy(stateHandle: Long) {
-        if (stateHandle != 0L) {
-            nativeSaveStateDestroy(stateHandle)
-        }
+    fun readState(): ByteArray {
+        ensureHandle()
+        return nativeStateRead(handle)
+    }
+
+    /**
+     * Restore the machine from a byte blob produced by [readState].
+     *
+     * A `false` result means the load was rejected (bad version, truncated
+     * or corrupt data). `SaveState::restore` snapshots the machine first and
+     * rolls back on failure, so a rejected load leaves it exactly as it was
+     * and emulation can carry on.
+     *
+     * @return true on success.
+     */
+    fun writeState(data: ByteArray): Boolean {
+        ensureHandle()
+        return nativeStateWrite(handle, data) == 0
+    }
+
+    /**
+     * Set how many rewind snapshots the core keeps, and drop any it holds.
+     *
+     * A snapshot is around 500 KB, so the depth is a memory budget: 20 costs
+     * roughly 10 MB. Zero disables rewind, which is the default.
+     */
+    fun rewindConfigure(capacity: Int) {
+        ensureHandle()
+        nativeRewindConfigure(handle, capacity)
+    }
+
+    /** Snapshot the machine into the rewind ring. */
+    fun rewindPush() {
+        ensureHandle()
+        nativeRewindPush(handle)
+    }
+
+    /**
+     * Step back one snapshot.
+     *
+     * @return true if the machine moved back, false if the ring was empty. A
+     *   rejected snapshot leaves the machine untouched and also returns false.
+     */
+    fun rewindPop(): Boolean {
+        ensureHandle()
+        if (nativeRewindPop(handle) != 1) return false
+        // Same as [runFrame]: the native side does not push pixels, the copy
+        // does. Without it [getFrameBuffer] kept returning the frame from
+        // before the rewind started, so holding the button rewound the
+        // machine behind a frozen screen.
+        nativeFrameBufferCopy(handle, frameBuffer)
+        return true
+    }
+
+    /** Drop every snapshot, for a ROM change or a save-state load. */
+    fun rewindClear() {
+        ensureHandle()
+        nativeRewindClear(handle)
     }
 
     private fun ensureHandle() {
@@ -131,12 +221,22 @@ class GbaEngine {
     // JNI native methods
     private external fun nativeCreate(): Long
     private external fun nativeDestroy(handle: Long)
-    private external fun nativeLoadRom(handle: Long, data: ByteArray, len: Int): Int
+    // No `len`: the Rust export takes only the handle and the array, and JNI's
+    // short-name resolution happily ignored the extra argument. Declaring a
+    // parameter the native side never sees is a trap for the next reader.
+    private external fun nativeLoadRom(handle: Long, data: ByteArray): Int
     private external fun nativeRunFrame(handle: Long)
     private external fun nativeRunFrames(handle: Long, count: Int)
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int
-    private external fun nativeSaveStateCreate(handle: Long): Long
-    private external fun nativeLoadState(handle: Long, stateHandle: Long): Int
-    private external fun nativeSaveStateDestroy(stateHandle: Long)
+    private external fun nativeSetKeys(handle: Long, keys: Int)
+    private external fun nativeSaveTakeDirty(handle: Long): Int
+    private external fun nativeSaveRead(handle: Long): ByteArray
+    private external fun nativeSaveWrite(handle: Long, data: ByteArray): Int
+    private external fun nativeStateRead(handle: Long): ByteArray
+    private external fun nativeStateWrite(handle: Long, data: ByteArray): Int
+    private external fun nativeRewindConfigure(handle: Long, capacity: Int)
+    private external fun nativeRewindPush(handle: Long)
+    private external fun nativeRewindPop(handle: Long): Int
+    private external fun nativeRewindClear(handle: Long)
 }

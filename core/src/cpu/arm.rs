@@ -6,10 +6,16 @@ use crate::memory::MemoryBus;
 /// The condition check is already done by the caller (mod.rs).
 /// This function dispatches based on bits [27:4] and [7:4].
 pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
-
-    // Software Interrupt
+    // Software Interrupt.
+    //
+    // GBATEK, ARM CPU Exceptions: an ARM SWI carries a 24bit comment field
+    // while a THUMB SWI carries 8 bits, and the BIOS handler reads the byte at
+    // [lr-2] in both cases. For an ARM opcode that byte is bits 23-16, so the
+    // function number lives there - "you could use only the most significant
+    // 8bits of the 24bit ARM comment". Passing the raw 24bit field instead
+    // makes every ARM-mode `swi n` miss its handler.
     if (instruction >> 24) & 0xF == 0xF {
-        let comment = instruction & 0x00FF_FFFF;
+        let comment = (instruction >> 16) & 0xFF;
         cpu.swi(comment, bus);
         return 3;
     }
@@ -31,10 +37,25 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         let opcode_bits = (instruction >> 20) & 0xFF;
         match opcode_bits {
             0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu),
-            0b0000_1000..=0b0000_1011 => return multiply_long(instruction, cpu),
-            0b0001_0000..=0b0001_0011 => return swap(instruction, cpu, bus),
+            0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu),
+            // SWP is 00010 B 00, so bits[27:20] are 0x10 for the word form and
+            // 0x14 for the byte form. The old range stopped at 0x13, so
+            // every SWPB fell through and was decoded as an MSR.
+            0b0001_0000 | 0b0001_0100 => return swap(instruction, cpu, bus),
             _ => {}
         }
+    }
+
+    // Halfword / signed Data Transfer — bits [27:25]=000, bit [7]=1, bit [4]=1,
+    // SH != 00 (SH == 00 is SWP, handled above).
+    // Must be tested before PSR Transfer: a pre-indexed, down-counting STRH has
+    // the same bits [24:23]=10 / bit [20]=0 pattern that MSR matches on.
+    if (instruction >> 25) & 0x7 == 0b000
+        && (instruction >> 7) & 1 == 1
+        && (instruction >> 4) & 1 == 1
+        && (instruction >> 5) & 0x3 != 0
+    {
+        return halfword_data_transfer(instruction, cpu, bus);
     }
 
     // PSR Transfer — bits [27:26]=00, bits [24:23]=10, bit [20]=0
@@ -42,21 +63,29 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         && (instruction >> 23) & 0x3 == 0b10
         && (instruction >> 20) & 1 == 0
     {
-        let bit4 = (instruction >> 4) & 1;
-        if bit4 == 0 {
+        // Bit 21 selects the direction: 0 = MRS (read PSR), 1 = MSR (write PSR).
+        if (instruction >> 21) & 1 == 0 {
             return mrs(instruction, cpu);
         } else {
             return msr(instruction, cpu);
         }
     }
 
-    // Data Processing / Register Shift — bits [27:26]=00, bit [4]=0
-    if (instruction >> 26) & 0x3 == 0b00 && (instruction >> 4) & 1 == 0 {
-        return data_processing(instruction, cpu);
-    }
-
-    // Data Processing / Immediate Shift — bits [27:26]=00, bit [25]=1
-    if (instruction >> 26) & 0x3 == 0b00 && (instruction >> 25) & 1 == 1 {
+    // Data Processing — bits [27:26]=00, and not one of the multiply, swap or
+    // halfword encodings, which are the only [27:26]=00 forms with both bit 7
+    // and bit 4 set. Those were all matched above.
+    //
+    // The register-specified shift form (`movs r0, r0, lsl r1`) has bit 4 set
+    // and bit 7 clear. An earlier `bit [4] == 0` guard here excluded it, and an
+    // immediate-shift-only fallback did not catch it either, so every
+    // `<op> rd, rn, rm, lsl rs` in the instruction set silently did nothing.
+    // The bit 7 / bit 4 exclusion only applies to the register-operand form.
+    // With bit 25 set the operand is an immediate and bits [7:4] are part of
+    // its value, so `mov r1, #0xFF00` (0xE3A01CFF) must not be filtered out.
+    if (instruction >> 26) & 0x3 == 0b00
+        && ((instruction >> 25) & 1 == 1
+            || !((instruction >> 4) & 1 == 1 && (instruction >> 7) & 1 == 1))
+    {
         return data_processing(instruction, cpu);
     }
 
@@ -66,7 +95,10 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     }
 
     // Undefined instruction — bits [27:25]=01, bit [4]=1, bit [7]=1
-    if (instruction >> 25) & 0x7 == 0b011 && (instruction >> 4) & 1 == 1 && (instruction >> 7) & 1 == 1 {
+    if (instruction >> 25) & 0x7 == 0b011
+        && (instruction >> 4) & 1 == 1
+        && (instruction >> 7) & 1 == 1
+    {
         // Undefined instruction - treat as NOP for now
         return 1;
     }
@@ -97,7 +129,32 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
     let rd = ((instruction >> 12) & 0xF) as usize;
     let immediate = (instruction >> 25) & 1 == 1;
 
-    let rn_val = cpu.reg(rn);
+    // TST, TEQ, CMP and CMN with S set and Rd = R15 are the pre-ARMv4 "P"
+    // forms: they discard the comparison and copy SPSR into CPSR. Exception
+    // handlers use this to return, so missing it strands the CPU in whatever
+    // privileged mode it was in - with that mode's stack pointer.
+    if s_flag && rd == 15 && (0b1000..=0b1011).contains(&opcode) {
+        let spsr = match cpu.mode() {
+            super::Mode::Fiq => cpu.spsr_fiq,
+            super::Mode::Irq => cpu.spsr_irq,
+            super::Mode::Supervisor => cpu.spsr_svc,
+            super::Mode::Abort => cpu.spsr_abt,
+            super::Mode::Undefined => cpu.spsr_und,
+            // User and System have no SPSR; the operation is unpredictable.
+            _ => cpu.cpsr,
+        };
+        cpu.set_cpsr(spsr);
+        return 1;
+    }
+
+    // A register-specified shift costs an extra cycle, so every R15 read in
+    // that form sees PC + 12 rather than the usual PC + 8.
+    let register_specified_shift = !immediate && (instruction >> 4) & 1 == 1;
+    let rn_val = if rn == 15 && register_specified_shift {
+        cpu.reg(15).wrapping_add(4)
+    } else {
+        cpu.reg(rn)
+    };
 
     // Shift operand2
     let shifted = cpu.shift_operand2(instruction, immediate);
@@ -172,25 +229,13 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
             );
             return 1;
         }
-        0b1100 => {
-            let result = rn_val | op2;
-            cpu.set_flag_nz_data(result, shifted.carry_out);
-            (result, true, shifted.carry_out, cpu.flag_v())
-        }
+        0b1100 => (rn_val | op2, true, shifted.carry_out, cpu.flag_v()),
         0b1101 => {
             let result = op2;
             (result, true, shifted.carry_out, cpu.flag_v())
         }
-        0b1110 => {
-            let result = rn_val & !op2;
-            cpu.set_flag_nz_data(result, shifted.carry_out);
-            (result, true, shifted.carry_out, cpu.flag_v())
-        }
-        0b1111 => {
-            let result = !op2;
-            cpu.set_flag_nz_data(result, shifted.carry_out);
-            (result, true, shifted.carry_out, cpu.flag_v())
-        }
+        0b1110 => (rn_val & !op2, true, shifted.carry_out, cpu.flag_v()),
+        0b1111 => (!op2, true, shifted.carry_out, cpu.flag_v()),
         _ => unreachable!(),
     };
 
@@ -207,7 +252,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
                     super::Mode::Undefined => cpu.spsr_und,
                     _ => cpu.cpsr,
                 };
-                cpu.cpsr = spsr;
+                cpu.set_cpsr(spsr);
             } else {
                 cpu.set_flags(result >> 31 == 1, result == 0, carry, overflow);
             }
@@ -266,6 +311,9 @@ fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
 }
 
 fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
+    // cond 00001 U A S RdHi RdLo Rs 1001 Rm
+    // U = 1 is the *signed* form (SMULL/SMLAL); U = 0 is unsigned.
+    let signed = (instruction >> 22) & 1 == 1;
     let accumulate = (instruction >> 21) & 1 == 1;
     let set_flags = (instruction >> 20) & 1 == 1;
     let rd_hi = ((instruction >> 16) & 0xF) as usize;
@@ -273,25 +321,22 @@ fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
     let rs = ((instruction >> 8) & 0xF) as usize;
     let rm = (instruction & 0xF) as usize;
 
-    let rm_val = cpu.reg(rm) as i32 as i64;
-    let rs_val = cpu.reg(rs) as i32 as i64;
-
-    let unsigned_mul = (instruction >> 22) & 1 == 1;
-
-    let result = if unsigned_mul {
-        let rm_u = cpu.reg(rm) as u64;
-        let rs_u = cpu.reg(rs) as u64;
-        rm_u.wrapping_mul(rs_u)
+    let product = if signed {
+        let rm_val = cpu.reg(rm) as i32 as i64;
+        let rs_val = cpu.reg(rs) as i32 as i64;
+        rm_val.wrapping_mul(rs_val) as u64
     } else {
-        (rm_val.wrapping_mul(rs_val)) as u64
+        (cpu.reg(rm) as u64).wrapping_mul(cpu.reg(rs) as u64)
     };
 
+    // The accumulate form adds the existing RdHi:RdLo pair to the product.
+    // It used to discard the product and write the pair straight back, which
+    // made every UMLAL and SMLAL a no-op.
     let result = if accumulate {
-        let hi = cpu.reg(rd_hi) as u64;
-        let lo = cpu.reg(rd_lo) as u64;
-        (hi << 32) | lo
+        let existing = ((cpu.reg(rd_hi) as u64) << 32) | cpu.reg(rd_lo) as u64;
+        product.wrapping_add(existing)
     } else {
-        result
+        product
     };
 
     cpu.set_reg(rd_lo, result as u32);
@@ -325,7 +370,8 @@ fn swap(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         bus.write8(addr, rm_val as u8);
         cpu.set_reg(rd, mem_val as u32);
     } else {
-        let mem_val = bus.read32(addr & !0x3);
+        // SWP rotates the loaded word the same way LDR does.
+        let mem_val = bus.read32_rotated(addr);
         bus.write32(addr & !0x3, rm_val);
         cpu.set_reg(rd, mem_val);
     }
@@ -374,25 +420,35 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
     // Determine which flags to write (bits 8-24 of MSR mask)
     let mask = {
         let mut m: u32 = 0;
-        if instruction & 0x0001_0000 != 0 { m |= 0x0000_00FF; } // Control
-        if instruction & 0x0002_0000 != 0 { m |= 0x0000_FF00; } // Extension
-        if instruction & 0x0004_0000 != 0 { m |= 0x00FF_0000; } // Status
-        if instruction & 0x0008_0000 != 0 { m |= 0xFF00_0000; } // Flags
+        if instruction & 0x0001_0000 != 0 {
+            m |= 0x0000_00FF;
+        } // Control
+        if instruction & 0x0002_0000 != 0 {
+            m |= 0x0000_FF00;
+        } // Extension
+        if instruction & 0x0004_0000 != 0 {
+            m |= 0x00FF_0000;
+        } // Status
+        if instruction & 0x0008_0000 != 0 {
+            m |= 0xFF00_0000;
+        } // Flags
         m
     };
 
-    let new_psr = (value & mask) | (!mask & if spsr {
-        match cpu.mode() {
-            super::Mode::Fiq => cpu.spsr_fiq,
-            super::Mode::Irq => cpu.spsr_irq,
-            super::Mode::Supervisor => cpu.spsr_svc,
-            super::Mode::Abort => cpu.spsr_abt,
-            super::Mode::Undefined => cpu.spsr_und,
-            _ => cpu.cpsr,
-        }
-    } else {
-        cpu.cpsr
-    });
+    let new_psr = (value & mask)
+        | (!mask
+            & if spsr {
+                match cpu.mode() {
+                    super::Mode::Fiq => cpu.spsr_fiq,
+                    super::Mode::Irq => cpu.spsr_irq,
+                    super::Mode::Supervisor => cpu.spsr_svc,
+                    super::Mode::Abort => cpu.spsr_abt,
+                    super::Mode::Undefined => cpu.spsr_und,
+                    _ => cpu.cpsr,
+                }
+            } else {
+                cpu.cpsr
+            });
 
     if spsr {
         match cpu.mode() {
@@ -404,7 +460,7 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
             _ => {}
         }
     } else {
-        cpu.cpsr = (cpu.cpsr & !mask) | (new_psr & mask);
+        cpu.set_cpsr((cpu.cpsr & !mask) | (new_psr & mask));
     }
 
     1
@@ -415,7 +471,13 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
 // ---------------------------------------------------------------------------
 
 fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
-    let immediate_offset = (instruction >> 25) & 1 == 0;
+    // Bit 25 is the I flag: 0 = 12-bit immediate offset, 1 = shifted register.
+    // These two were swapped, so every `ldr rd, [rn, #imm]` took Rm as its
+    // offset instead. It hid for a long time because the common
+    // `ldr/str rd, [rn]` form has Rm == 0 encoded in the low nibble, which
+    // makes both operands the same register and sends load and store to the
+    // same wrong address - a round-trip test still passes.
+    let register_offset = (instruction >> 25) & 1 == 1;
     let up_down = (instruction >> 23) & 1 == 1;
     let byte_transfer = (instruction >> 22) & 1 == 1;
     let write_back = (instruction >> 21) & 1 == 1;
@@ -424,36 +486,51 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
     let rd = ((instruction >> 12) & 0xF) as usize;
 
     let base = cpu.reg(rn);
-    let offset = if immediate_offset {
-        let shift_imm = ((instruction >> 4) & 0xF) * 2;
-        let rm = (instruction & 0xF) as usize;
-        let rm_val = cpu.reg(rm);
+    let offset = if register_offset {
+        // Immediate-shift form: amount in bits [11:7], type in [6:5], Rm in [3:0].
+        let shift_imm = (instruction >> 7) & 0x1F;
+        let rm_val = cpu.reg((instruction & 0xF) as usize);
         match (instruction >> 5) & 3 {
-            0b00 => rm_val.wrapping_shl(shift_imm),
-            0b01 => rm_val.wrapping_shr(if shift_imm == 0 { 32 } else { shift_imm }),
-            0b10 => ((rm_val as i32) >> if shift_imm == 0 { 32 } else { shift_imm }) as u32,
-            0b11 => rm_val.rotate_right(shift_imm),
+            0b00 => cpu.lsl(rm_val, shift_imm).value,
+            0b01 => {
+                cpu.lsr(rm_val, if shift_imm == 0 { 32 } else { shift_imm })
+                    .value
+            }
+            0b10 => {
+                cpu.asr(rm_val, if shift_imm == 0 { 32 } else { shift_imm })
+                    .value
+            }
+            0b11 => {
+                if shift_imm == 0 {
+                    cpu.rrx(rm_val).value
+                } else {
+                    cpu.ror(rm_val, shift_imm).value
+                }
+            }
             _ => unreachable!(),
         }
     } else {
         instruction & 0xFFF
     };
 
-    let addr = if up_down {
+    let offset_addr = if up_down {
         base.wrapping_add(offset)
     } else {
         base.wrapping_sub(offset)
     };
+
+    // Bit 24 is P: 1 = pre-indexed (transfer at base +/- offset), 0 = post-indexed
+    // (transfer at base, then update it). This was missing entirely, so every
+    // post-indexed `ldr rd, [rn], #off` read from the wrong address.
+    let pre_index = (instruction >> 24) & 1 == 1;
+    let addr = if pre_index { offset_addr } else { base };
 
     if load {
         if byte_transfer {
             let val = bus.read8(addr);
             cpu.set_reg(rd, val as u32);
         } else {
-            let val = bus.read32(addr);
-            // Handle unaligned LDR
-            let rotate_amount = (addr & 3) * 8;
-            let val = val.rotate_right(rotate_amount);
+            let val = bus.read32_rotated(addr);
             cpu.set_reg(rd, val);
         }
     } else {
@@ -465,15 +542,84 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         if byte_transfer {
             bus.write8(addr, val as u8);
         } else {
-            bus.write32(addr & !3, val);
+            bus.write32(addr, val);
         }
     }
 
-    if write_back {
-        cpu.set_reg(rn, addr);
+    // A post-indexed transfer always writes the new base back; a pre-indexed
+    // one only when W is set. Never clobber Rn when it was also the load
+    // destination - the loaded value wins.
+    if (!pre_index || write_back) && !(load && rd == rn) {
+        cpu.set_reg(rn, offset_addr);
     }
 
-    if load { 3 } else { 2 }
+    if load {
+        3
+    } else {
+        2
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Halfword and Signed Data Transfer (LDRH, STRH, LDRSB, LDRSH)
+// ---------------------------------------------------------------------------
+
+fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
+    let pre_index = (instruction >> 24) & 1 == 1;
+    let up = (instruction >> 23) & 1 == 1;
+    let imm_offset = (instruction >> 22) & 1 == 1;
+    let write_back = (instruction >> 21) & 1 == 1;
+    let load = (instruction >> 20) & 1 == 1;
+    let rn = ((instruction >> 16) & 0xF) as usize;
+    let rd = ((instruction >> 12) & 0xF) as usize;
+    let sh = (instruction >> 5) & 0x3;
+
+    // Immediate offset is split across bits [11:8] and [3:0].
+    let offset = if imm_offset {
+        ((instruction >> 4) & 0xF0) | (instruction & 0xF)
+    } else {
+        cpu.reg((instruction & 0xF) as usize)
+    };
+
+    let base = cpu.reg(rn);
+    let offset_addr = if up {
+        base.wrapping_add(offset)
+    } else {
+        base.wrapping_sub(offset)
+    };
+    let addr = if pre_index { offset_addr } else { base };
+
+    if load {
+        let val = match sh {
+            // LDRH from an odd address reads the aligned halfword and rotates
+            // the result right by 8, the same way a misaligned LDR rotates.
+            0b01 => (bus.read16(addr) as u32).rotate_right((addr & 1) * 8),
+            0b10 => bus.read8(addr) as i8 as i32 as u32,
+            // LDRSH from an odd address degrades to LDRSB on that byte.
+            _ => {
+                if addr & 1 != 0 {
+                    bus.read8(addr) as i8 as i32 as u32
+                } else {
+                    bus.read16(addr) as i16 as i32 as u32
+                }
+            }
+        };
+        cpu.set_reg(rd, val);
+    } else {
+        bus.write16(addr, cpu.reg(rd) as u16);
+    }
+
+    // Post-indexed transfers always write back, but never clobber Rn when it
+    // was also the load destination - the loaded value wins.
+    if (!pre_index || write_back) && !(load && rd == rn) {
+        cpu.set_reg(rn, offset_addr);
+    }
+
+    if load {
+        3
+    } else {
+        2
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -491,30 +637,57 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     let up_down = (instruction >> 23) & 1 == 1;
     let base = cpu.reg(rn);
 
-    let reg_count = reg_list.count_ones() as u32;
-
-    let mut addr = if up_down {
-        if pre_index {
-            base.wrapping_add(reg_count * 4)
-        } else {
-            base
-        }
+    // An empty register list is not a no-op on ARMv4: R15 is transferred and
+    // the base moves by 0x40, as if all sixteen registers had been listed.
+    let empty_list = reg_list == 0;
+    let reg_count = if empty_list {
+        16
     } else {
-        if pre_index {
-            base.wrapping_sub(reg_count * 4)
-        } else {
-            base.wrapping_sub(reg_count * 4)
-        }
+        reg_list.count_ones()
+    };
+
+    // Registers always move in increasing address order, lowest register at the
+    // lowest address; P and U only choose where the block starts.
+    //   IA (P=0,U=1) base            IB (P=1,U=1) base + 4
+    //   DA (P=0,U=0) base - n*4 + 4  DB (P=1,U=0) base - n*4
+    // IB and DA were both off by one slot before.
+    let mut addr = match (up_down, pre_index) {
+        (true, false) => base,
+        (true, true) => base.wrapping_add(4),
+        (false, false) => base.wrapping_sub(reg_count * 4).wrapping_add(4),
+        (false, true) => base.wrapping_sub(reg_count * 4),
     };
 
     addr &= !3;
+
+    // S with R15 absent selects the User bank. An empty list transfers R15,
+    // so it does not qualify.
+    let user_bank = s_bit && reg_list & (1 << 15) == 0 && !empty_list;
+
+    if empty_list {
+        if load {
+            let val = bus.read32(addr);
+            cpu.set_reg(15, val);
+        } else {
+            bus.write32(addr, cpu.registers[15].wrapping_add(4));
+        }
+        if write_back {
+            let new_base = if up_down {
+                base.wrapping_add(0x40)
+            } else {
+                base.wrapping_sub(0x40)
+            };
+            cpu.set_reg(rn, new_base);
+        }
+        return if load { 2 + reg_count } else { 1 + reg_count };
+    }
 
     if load {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
                 let val = bus.read32(addr);
-                if i == 15 {
-                    cpu.set_reg(15, val);
+                if user_bank {
+                    cpu.set_user_reg(i as usize, val);
                 } else {
                     cpu.set_reg(i as usize, val);
                 }
@@ -530,15 +703,29 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                 super::Mode::Undefined => cpu.spsr_und,
                 _ => cpu.cpsr,
             };
-            cpu.cpsr = spsr;
+            cpu.set_cpsr(spsr);
         }
     } else {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
+                // STM with the base in the list stores the ORIGINAL base
+                // when it is the lowest register present - and also whenever
+                // there is no writeback at all, since then nothing ever
+                // modifies the base and the original is all there is to
+                // store. Only the write-back case can put the adjusted value
+                // in memory.
                 let val = if i as usize == rn {
-                    base
+                    if !write_back || reg_list.trailing_zeros() == rn as u32 {
+                        base
+                    } else if up_down {
+                        base.wrapping_add(reg_count * 4)
+                    } else {
+                        base.wrapping_sub(reg_count * 4)
+                    }
                 } else if i == 15 {
                     cpu.registers[15].wrapping_add(4)
+                } else if user_bank {
+                    cpu.user_reg(i as usize)
                 } else {
                     cpu.reg(i as usize)
                 };
@@ -548,7 +735,10 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         }
     }
 
-    if write_back {
+    // Same rule for LDM: if the base register was in the transfer list, the
+    // value loaded into it wins over the writeback.
+    let base_in_list = reg_list & (1 << rn as u32) != 0;
+    if write_back && !(load && base_in_list) {
         let new_base = if up_down {
             base.wrapping_add(reg_count * 4)
         } else {
@@ -557,7 +747,11 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         cpu.set_reg(rn, new_base);
     }
 
-    if load { 2 + reg_count } else { 1 + reg_count }
+    if load {
+        2 + reg_count
+    } else {
+        1 + reg_count
+    }
 }
 
 // ---------------------------------------------------------------------------

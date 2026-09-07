@@ -3,8 +3,19 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.geebeeayy.app">
 
+    <!-- Downloading freely distributable homebrew from the built-in catalogue.
+         Nothing else in the app makes a network request. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+
+    <!-- MANAGE_EXTERNAL_STORAGE is API 30+. minSdk is 26, and MainActivity
+         asks for READ_EXTERNAL_STORAGE below R - a permission that was never
+         declared, so the request was denied outright and the ROM browser
+         listed nothing at all on API 26-29. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
 
     <application
         android:name=".GeeBeeAyyApplication"
@@ -17,7 +28,6 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
-            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

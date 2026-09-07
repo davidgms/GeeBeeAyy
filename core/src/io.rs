@@ -147,6 +147,9 @@ pub const IO_TM2CNT_H: usize = 0x10A;
 pub const IO_TM3CNT_L: usize = 0x10C;
 pub const IO_TM3CNT_H: usize = 0x10E;
 
+// --- Keypad I/O register offsets ---
+pub const IO_KEYINPUT: usize = 0x130;
+
 // --- Interrupt I/O register offsets ---
 pub const IO_IE: usize = 0x200;
 pub const IO_IF: usize = 0x202;
@@ -160,6 +163,10 @@ pub struct IoHandler {
     pub if_: u16,
     pub ime: u16,
     pub halt: bool,
+    /// True while the HLE `IntrWait` is parked on its SWI. It stops the
+    /// re-executed SWI from discarding the very flags the IRQ handler just
+    /// set - `VBlankIntrWait` reloads r0=1 every time it runs.
+    pub intr_wait_active: bool,
 }
 
 impl IoHandler {
@@ -169,6 +176,7 @@ impl IoHandler {
             if_: 0,
             ime: 0,
             halt: false,
+            intr_wait_active: false,
         }
     }
 

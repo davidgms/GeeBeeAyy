@@ -1,16 +1,19 @@
 const PRESCALER_TABLE: [u32; 4] = [1, 64, 256, 1024];
 
 pub struct Timer {
-    counters: [u32; 4],
-    reloads: [u32; 4],
-    controls: [u16; 4],
-    enabled: [bool; 4],
-    cascaded: [bool; 4],
-    prescaler: [u32; 4],
-    irq_enabled: [bool; 4],
-    tick_counters: [u32; 4],
-    /// Tracks which timers overflowed this tick (for APU sound DMA)
-    pub overflow_flags: [bool; 4],
+    pub(crate) counters: [u32; 4],
+    pub(crate) reloads: [u32; 4],
+    pub(crate) controls: [u16; 4],
+    pub(crate) enabled: [bool; 4],
+    pub(crate) cascaded: [bool; 4],
+    pub(crate) prescaler: [u32; 4],
+    pub(crate) irq_enabled: [bool; 4],
+    pub(crate) tick_counters: [u32; 4],
+    /// How many times each timer overflowed since the last drain. DMA sound
+    /// pops one FIFO byte per overflow, so this has to be a count: a bool
+    /// silently collapses the several overflows a single tick can produce at
+    /// a short reload, and the FIFO then drains slower than the game fills it.
+    pub overflow_flags: [u32; 4],
 }
 
 impl Timer {
@@ -24,7 +27,7 @@ impl Timer {
             prescaler: [1; 4],
             irq_enabled: [false; 4],
             tick_counters: [0; 4],
-            overflow_flags: [false; 4],
+            overflow_flags: [0; 4],
         }
     }
 
@@ -43,25 +46,41 @@ impl Timer {
             let prescaler = self.prescaler[i];
             while self.tick_counters[i] >= prescaler {
                 self.tick_counters[i] -= prescaler;
-                self.counters[i] += 1;
-
-                // Timer overflow at 0x10000 (16-bit counter)
-                if self.counters[i] >= 0x10000 {
-                    self.counters[i] = self.reloads[i];
-                    self.overflow_flags[i] = true;
-
-                    // Handle cascade to next timer
-                    if i < 3 && self.cascaded[i + 1] {
-                        self.counters[i + 1] += 1;
-                    }
-
-                    // Trigger timer IRQ if enabled
-                    if self.irq_enabled[i] {
-                        // TODO: Set IF bit for timer i
-                        let _ = bus;
-                    }
-                }
+                self.increment(i, bus);
             }
+        }
+    }
+
+    /// Advance one timer by a single count, handling its overflow.
+    ///
+    /// The cascade used to be a bare `counters[i + 1] += 1` inside `tick`,
+    /// with no overflow check of its own - and `tick` skips cascaded timers,
+    /// so nothing else ever looked at that counter either. A cascaded timer
+    /// therefore counted past 0x10000 forever: never reloading, never setting
+    /// an overflow flag for DMA sound, and never raising its IRQ. Going
+    /// through the same function recursively gives the cascade target the
+    /// identical overflow handling, including cascading on to the next timer.
+    fn increment(&mut self, i: usize, bus: &mut super::memory::MemoryBus) {
+        self.counters[i] += 1;
+
+        // Timer overflow at 0x10000 (16-bit counter)
+        if self.counters[i] < 0x10000 {
+            return;
+        }
+        self.counters[i] = self.reloads[i];
+        self.overflow_flags[i] += 1;
+
+        // Handle cascade to next timer. A cascade target only counts up while
+        // it is itself enabled.
+        if i < 3 && self.cascaded[i + 1] && self.enabled[i + 1] {
+            self.increment(i + 1, bus);
+        }
+
+        // GBATEK, GBA Interrupt Control: IF bits 3,4,5,6 are Timer 0,1,2,3
+        // overflow. IE and IME gate whether the CPU takes the exception,
+        // never whether IF is set.
+        if self.irq_enabled[i] {
+            bus.io.request_interrupt(1 << (3 + i));
         }
     }
 
@@ -99,10 +118,18 @@ impl Timer {
         }
     }
 
-    /// Drain overflow flags (returns which timers overflowed).
-    pub fn drain_overflows(&mut self) -> [bool; 4] {
-        let flags = self.overflow_flags;
-        self.overflow_flags = [false; 4];
-        flags
+    /// Drain the per-timer overflow counts since the last call.
+    pub fn drain_overflows(&mut self) -> [u32; 4] {
+        std::mem::take(&mut self.overflow_flags)
+    }
+
+    /// The live counter of each timer, for writing back into `TMxCNT_L`.
+    pub fn counters(&self) -> [u16; 4] {
+        [
+            self.counters[0] as u16,
+            self.counters[1] as u16,
+            self.counters[2] as u16,
+            self.counters[3] as u16,
+        ]
     }
 }

@@ -109,8 +109,12 @@ fn main() {
     if save_wav && !all_samples.is_empty() {
         let wav_path = "output.wav";
         save_wav_file(wav_path, &all_samples, 44100);
-        println!("Saved {} ({} samples, {:.2}s)", wav_path, all_samples.len(),
-                 all_samples.len() as f64 / 44100.0);
+        println!(
+            "Saved {} ({} samples, {:.2}s)",
+            wav_path,
+            all_samples.len(),
+            all_samples.len() as f64 / 44100.0
+        );
     }
 
     println!("Done! {} frames rendered.", num_frames);
