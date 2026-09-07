@@ -1,23 +1,29 @@
 import SwiftUI
 
-// GeeBeeAyy Color Palette — from design/color-pallete.jpg
+// GeeBeeAyy palette. Mirrors android ui/theme/Color.kt - keep the two in step.
+// Night carries structure, honey carries identity. See docs/design/DESIGN-SYSTEM.md.
 extension Color {
-    // Primary Base
-    static let burntRoot = Color(hex: 0x1A0F00)
-    // Primary Action
-    static let amberResin = Color(hex: 0xA16207)
-    // Primary Background
-    static let goldenSaplight = Color(hex: 0xFACC15)
-    // Secondary Base
-    static let pineGlowMist = Color(hex: 0xFFF9C2)
+    // Night: structure
+    static let nightVoid = Color(hex: 0x150A2B)
+    static let nightPanel = Color(hex: 0x221046)
+    static let nightRaised = Color(hex: 0x2E1660)
+    static let nightEdge = Color(hex: 0x45268A)
 
-    // Extended
-    static let honeyDark = Color(hex: 0x2D1A00)
-    static let honeyMid = Color(hex: 0x6B4A00)
+    // Honey: identity
+    static let goldenSaplight = Color(hex: 0xFACC15)
+    static let amberResin = Color(hex: 0xA16207)
     static let honeyLight = Color(hex: 0xD4A017)
-    static let beeWing = Color(hex: 0xE8DCC8)
-    static let flowerPink = Color(hex: 0xF5A0B5)
-    static let leafGreen = Color(hex: 0x7CB342)
+    static let pineGlowMist = Color(hex: 0xFFF9C2)
+    static let burntRoot = Color(hex: 0x1A0F00)
+    static let beeWing = Color(hex: 0xFDEEB7)
+
+    // Neon: accents from GB's room
+    static let neonViolet = Color(hex: 0x7C30BC)
+    static let neonMagenta = Color(hex: 0x650EBA)
+    static let lensCyan = Color(hex: 0x55F6FD)
+    static let wingLavender = Color(hex: 0xB0A6CD)
+    static let blushPink = Color(hex: 0xFCA8CE)
+    static let ledGreen = Color(hex: 0x7CE04A)
 
     init(hex: UInt32, alpha: Double = 1.0) {
         let r = Double((hex >> 16) & 0xFF) / 255.0

@@ -24,7 +24,7 @@ struct ROMBrowserView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color.burntRoot
+                Color.nightVoid
                     .ignoresSafeArea()
 
                 ScrollView {
@@ -151,7 +151,7 @@ struct ROMCard: View {
             .padding(GeeBeeAyyDesign.spacingMD)
         }
         .buttonStyle(PlainButtonStyle())
-        .background(Color.honeyDark)
+        .background(Color.nightPanel)
         .cornerRadius(GeeBeeAyyDesign.radiusMD)
         .padding(.horizontal, GeeBeeAyyDesign.spacingMD)
     }

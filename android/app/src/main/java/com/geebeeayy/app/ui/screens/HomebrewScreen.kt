@@ -63,7 +63,7 @@ fun HomebrewScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BurntRoot),
+            .background(NightVoid),
     ) {
         Row(
             modifier = Modifier
@@ -109,7 +109,7 @@ fun HomebrewScreen(
                         enabled = busy == null,
                         label = { Text(path.substringAfterLast('/'), fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
-                            containerColor = HoneyDark,
+                            containerColor = NightPanel,
                             labelColor = PineGlowMist,
                             selectedContainerColor = GoldenSaplight,
                             selectedLabelColor = BurntRoot,
@@ -126,7 +126,7 @@ fun HomebrewScreen(
                 fontSize = 13.sp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(HoneyDark)
+                    .background(NightPanel)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
@@ -184,7 +184,7 @@ private fun HomebrewCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled && !alreadyHave, onClick = onDownload),
-        colors = CardDefaults.cardColors(containerColor = HoneyDark),
+        colors = CardDefaults.cardColors(containerColor = NightPanel),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

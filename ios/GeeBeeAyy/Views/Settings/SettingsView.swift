@@ -6,7 +6,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color.burntRoot
+                Color.nightVoid
                     .ignoresSafeArea()
 
                 Form {
@@ -16,21 +16,21 @@ struct SettingsView: View {
                         SettingsRow(icon: "paintbrush", title: "Screen Filter", value: "Pixel Perfect")
                         ToggleRow(icon: "rectangle.portrait", title: "Force Portrait", subtitle: "Lock orientation", isOn: true)
                     }
-                    .listRowBackground(Color.honeyDark)
+                    .listRowBackground(Color.nightPanel)
 
                     // Audio
                     Section(header: SectionHeader(title: "Audio")) {
                         ToggleRow(icon: "speaker.wave.2.fill", title: "Sound", subtitle: "Enable audio output", isOn: true)
                         SettingsRow(icon: "music.note", title: "Audio Backend", value: "AVAudioEngine")
                     }
-                    .listRowBackground(Color.honeyDark)
+                    .listRowBackground(Color.nightPanel)
 
                     // Controls
                     Section(header: SectionHeader(title: "Controls")) {
                         SettingsRow(icon: "gamecontroller", title: "Layout", value: "Default")
                         ToggleRow(icon: "antenna.radiowaves.left.and.right", title: "Bluetooth Controller", subtitle: "MFi support", isOn: false)
                     }
-                    .listRowBackground(Color.honeyDark)
+                    .listRowBackground(Color.nightPanel)
 
                     // Save States
                     Section(header: SectionHeader(title: "Save States")) {
@@ -38,21 +38,21 @@ struct SettingsView: View {
                         SettingsRow(icon: "square.and.arrow.up", title: "Load State", value: "Slot 1")
                         SettingsRow(icon: "trash", title: "Manage Saves", value: "10 slots")
                     }
-                    .listRowBackground(Color.honeyDark)
+                    .listRowBackground(Color.nightPanel)
 
                     // Advanced
                     Section(header: SectionHeader(title: "Advanced")) {
                         ToggleRow(icon: "forward.fill", title: "Fast Forward", subtitle: "Hold button for 2x", isOn: false)
                         ToggleRow(icon: "chart.bar", title: "Show FPS", subtitle: "Frame rate overlay", isOn: false)
                     }
-                    .listRowBackground(Color.honeyDark)
+                    .listRowBackground(Color.nightPanel)
 
                     // About
                     Section(header: SectionHeader(title: "About")) {
                         SettingsRow(icon: "info.circle", title: "GeeBeeAyy!", value: "v0.1.0")
                         SettingsRow(icon: "chevron.left.forwardslash.chevron.right", title: "Credits", value: "Open Source")
                     }
-                    .listRowBackground(Color.honeyDark)
+                    .listRowBackground(Color.nightPanel)
                 }
                 .scrollContentBackground(.hidden)
             }

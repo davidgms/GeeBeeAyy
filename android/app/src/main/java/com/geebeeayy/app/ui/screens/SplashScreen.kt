@@ -5,7 +5,6 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -13,11 +12,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.R
 import com.geebeeayy.app.ui.theme.*
 import kotlinx.coroutines.delay
 
@@ -60,7 +59,7 @@ fun SplashScreen(onTimeout: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BurntRoot),
+            .background(NightVoid),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -70,17 +69,21 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 .scale(scale.value)
                 .alpha(alpha.value)
         ) {
-            // Bee character placeholder (will use actual asset)
-            Box(
-                modifier = Modifier
-                    .size(120.dp)
-                    .background(GoldenSaplight, shape = MaterialTheme.shapes.extraLarge)
+            // GB, the mascot. Rendered from temp/design-canvas/gb.mjs; see
+            // docs/design/DESIGN-SYSTEM.md for how he is allowed to be used.
+            Image(
+                painter = painterResource(id = R.drawable.gb_face),
+                contentDescription = null,
+                modifier = Modifier.size(160.dp)
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // The wordmark is the one place the pixel face has to appear: it is
+            // the app's identity, not running text.
             Text(
                 text = "GeeBeeAyy!",
+                fontFamily = Pixelify,
                 fontSize = 48.sp,
                 fontWeight = FontWeight.Bold,
                 color = GoldenSaplight

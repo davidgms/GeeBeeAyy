@@ -7,7 +7,7 @@ struct SplashView: View {
 
     var body: some View {
         ZStack {
-            Color.burntRoot
+            Color.nightVoid
                 .ignoresSafeArea()
 
             VStack(spacing: GeeBeeAyyDesign.spacingLG) {
