@@ -9,12 +9,13 @@ package com.geebeeayy.app.data
  * Players wanted finer control than that trade-off allowed, so this is now
  * one entry per button - nothing stops two buttons overlapping if that is
  * where a player drags them.
+ *
+ * The D-pad is the exception, and deliberately so: it is one entry, because
+ * on screen it is one cross with one touch area rather than four buttons.
+ * Splitting it back into four would take diagonals away again.
  */
 enum class ControlButton {
-    DPAD_UP,
-    DPAD_DOWN,
-    DPAD_LEFT,
-    DPAD_RIGHT,
+    DPAD,
     BUTTON_A,
     BUTTON_B,
     SHOULDER_L,
@@ -25,10 +26,7 @@ enum class ControlButton {
 
     val label: String
         get() = when (this) {
-            DPAD_UP -> "D-Pad Up"
-            DPAD_DOWN -> "D-Pad Down"
-            DPAD_LEFT -> "D-Pad Left"
-            DPAD_RIGHT -> "D-Pad Right"
+            DPAD -> "D-Pad"
             BUTTON_A -> "A"
             BUTTON_B -> "B"
             SHOULDER_L -> "L"

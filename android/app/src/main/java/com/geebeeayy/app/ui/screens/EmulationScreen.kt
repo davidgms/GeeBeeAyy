@@ -17,10 +17,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -48,8 +54,12 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.geebeeayy.app.data.ScreenFilter
@@ -57,7 +67,10 @@ import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.ui.theme.*
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 @Composable
@@ -1126,7 +1139,20 @@ fun CustomButtonView(
 private const val SEQUENCE_PRESS_MS = 60L
 private const val SEQUENCE_GAP_MS = 60L
 
-/** Pause/resume and fast-forward toggle buttons, shared by the portrait and landscape layouts. */
+/**
+ * The D-pad: one cross with one touch area, not four buttons.
+ *
+ * It was four independent buttons, and four buttons can never produce a
+ * diagonal from a single finger - there is no shared corner to press. Half
+ * the GBA library assumes otherwise: every isometric map, every Mode 7 racer,
+ * every cursor that has to reach a tile at 45 degrees.
+ *
+ * The touch area is the whole square, not only the drawn arms. A finger in
+ * the top-right corner - outside the cross, on the hardware's dead plastic -
+ * reads as Up+Right. That is what makes a diagonal reachable on glass, where
+ * there is no ridge to feel for. Sliding a thumb from one sector to the next
+ * re-reads on every move, so Up to Up+Right is a slide, not a lift and a tap.
+ */
 @Composable
 fun DPad(
     onKeyChange: (Int, Boolean) -> Unit,
@@ -1137,101 +1163,159 @@ fun DPad(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
-    val buttonColor = NightPanel
-    val pressColor = AmberResin
+    var held by remember { mutableStateOf(emptySet<Int>()) }
 
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Box(
+        modifier = modifier.movableControl(
+            ControlButton.DPAD, editingLayout, selectedButton, DPadCrossShape, offsets, onDragStart, onDragEnd
+        )
     ) {
-        // Up
-        Box(
-            modifier = Modifier.movableControl(
-                ControlButton.DPAD_UP, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
-            )
+        Canvas(
+            modifier = Modifier
+                .size(DPAD_SIZE)
+                .semantics { contentDescription = "Direction pad" }
+                // Keyed on editingLayout so flipping into the position editor
+                // cancels this block, which runs the `finally` below and
+                // releases anything still down. Dragging the pad must not
+                // also press it.
+                .pointerInput(editingLayout) {
+                    if (editingLayout) return@pointerInput
+                    try {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pointer = event.changes.firstOrNull { it.pressed }
+                                val next = if (pointer == null) {
+                                    emptySet()
+                                } else {
+                                    dpadKeysAt(pointer.position, size)
+                                }
+                                if (next != held) {
+                                    (held - next).forEach { onKeyChange(it, false) }
+                                    (next - held).forEach { onKeyChange(it, true) }
+                                    held = next
+                                }
+                                event.changes.forEach { if (it.pressed) it.consume() }
+                            }
+                        }
+                    } finally {
+                        // Rotating the screen with a direction held disposes
+                        // this whole control block. Without the release the
+                        // key stayed down for the rest of the session.
+                        held.forEach { onKeyChange(it, false) }
+                        held = emptySet()
+                    }
+                }
         ) {
-            DPadButton(Icons.Default.KeyboardArrowUp, "Up", GbaEngine.KEY_UP, buttonColor, pressColor, onKeyChange)
-        }
-        // Left, Center, Right
-        Row {
-            Box(
-                modifier = Modifier.movableControl(
-                    ControlButton.DPAD_LEFT, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
-                )
-            ) {
-                DPadButton(Icons.Default.KeyboardArrowLeft, "Left", GbaEngine.KEY_LEFT, buttonColor, pressColor, onKeyChange)
+            val cross = crossPath(size)
+            drawPath(cross, NightPanel)
+
+            // Held arms are clipped to the cross, so the outer end keeps the
+            // cross's rounded cap and the inner end disappears under the dish.
+            if (held.isNotEmpty()) {
+                val arm = size.minDimension / 3f
+                val left = (size.width - arm) / 2f
+                val top = (size.height - arm) / 2f
+                clipPath(cross) {
+                    if (GbaEngine.KEY_UP in held) {
+                        drawRect(AmberResin, Offset(left, 0f), Size(arm, size.height / 2f))
+                    }
+                    if (GbaEngine.KEY_DOWN in held) {
+                        drawRect(AmberResin, Offset(left, size.height / 2f), Size(arm, size.height / 2f))
+                    }
+                    if (GbaEngine.KEY_LEFT in held) {
+                        drawRect(AmberResin, Offset(0f, top), Size(size.width / 2f, arm))
+                    }
+                    if (GbaEngine.KEY_RIGHT in held) {
+                        drawRect(AmberResin, Offset(size.width / 2f, top), Size(size.width / 2f, arm))
+                    }
+                }
             }
-            Box(modifier = Modifier.size(48.dp))
-            Box(
-                modifier = Modifier.movableControl(
-                    ControlButton.DPAD_RIGHT, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
-                )
-            ) {
-                DPadButton(Icons.Default.KeyboardArrowRight, "Right", GbaEngine.KEY_RIGHT, buttonColor, pressColor, onKeyChange)
-            }
-        }
-        // Down
-        Box(
-            modifier = Modifier.movableControl(
-                ControlButton.DPAD_DOWN, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
-            )
-        ) {
-            DPadButton(Icons.Default.KeyboardArrowDown, "Down", GbaEngine.KEY_DOWN, buttonColor, pressColor, onKeyChange)
+
+            // The dish is drawn at exactly the dead zone's radius, so what a
+            // player sees as the thumb rest is the region that reports nothing.
+            drawCircle(NightRaised, radius = size.minDimension / 2f * DPAD_DEAD_ZONE, center = center)
         }
     }
 }
 
-// Each direction is its own touch target, so two fingers on adjacent
-// buttons (e.g. Up + Right) OR their bits together into a diagonal. A
-// single finger cannot express a diagonal - there is no shared corner zone.
-@Composable
-fun DPadButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    key: Int,
-    backgroundColor: Color,
-    pressColor: Color,
-    onKeyChange: (Int, Boolean) -> Unit,
-) {
-    var isPressed by remember { mutableStateOf(false) }
+/** Three 48dp arms, the same footprint the four separate buttons occupied. */
+private val DPAD_SIZE = 144.dp
 
-    Button(
-        onClick = { /* Handled via pointerInput below; a tap needs press+release reported. */ },
-        modifier = Modifier
-            .size(48.dp)
-            .pointerInput(key) {
-                // The `finally` is what stops a key sticking down: this
-                // loop is cancelled when the pointerInput key changes or the
-                // button leaves the composition, and it can be cancelled with
-                // a finger still on the button. Rotating the screen with the
-                // D-pad held disposes the whole control block, so without
-                // this the key stayed pressed for the rest of the session.
-                try {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val pressed = event.changes.any { it.pressed }
-                            if (pressed != isPressed) {
-                                isPressed = pressed
-                                onKeyChange(key, pressed)
-                            }
-                        }
-                    }
-                } finally {
-                    if (isPressed) {
-                        isPressed = false
-                        onKeyChange(key, false)
-                    }
-                }
-            },
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (isPressed) pressColor else backgroundColor,
-        ),
-        shape = CircleShape,
-        contentPadding = PaddingValues(0.dp),
-    ) {
-        Icon(icon, contentDescription = label, tint = PineGlowMist, modifier = Modifier.size(24.dp))
+/**
+ * Half-width of a cardinal's sector, in degrees. At 30 each cardinal owns 60
+ * degrees and each diagonal 30, so a straight Up is hard to fumble into
+ * Up+Right while the diagonal is still there when it is aimed for. Raise it
+ * to make diagonals harder to hit, lower it to make them easier - this is the
+ * one number worth tuning against a real thumb on real glass.
+ */
+private const val DPAD_CARDINAL_HALF_DEGREES = 30f
+
+/**
+ * Fraction of the cross's half-width that reports nothing. The centre is a
+ * thumb rest; without a dead zone the smallest wobble there flips between
+ * opposite directions, which reads as the pad fighting you.
+ */
+private const val DPAD_DEAD_ZONE = 0.22f
+
+/**
+ * Which directions a touch at [position] means, given a pad of [size].
+ *
+ * Internal rather than private so DPadDirectionTest can drive it directly:
+ * this is the part with the arithmetic, and it needs a test more than the
+ * drawing does.
+ */
+internal fun dpadKeysAt(position: Offset, size: IntSize): Set<Int> {
+    val half = minOf(size.width, size.height) / 2f
+    if (half <= 0f) return emptySet()
+
+    val dx = position.x - size.width / 2f
+    val dy = position.y - size.height / 2f
+    if (hypot(dx, dy) < half * DPAD_DEAD_ZONE) return emptySet()
+
+    // Screen y grows downward, so it is negated to get ordinary maths angles:
+    // 0 right, 90 up, 180 left, 270 down.
+    var degrees = Math.toDegrees(atan2(-dy.toDouble(), dx.toDouble())).toFloat()
+    if (degrees < 0f) degrees += 360f
+
+    val cardinal = listOf(
+        0f to GbaEngine.KEY_RIGHT,
+        90f to GbaEngine.KEY_UP,
+        180f to GbaEngine.KEY_LEFT,
+        270f to GbaEngine.KEY_DOWN,
+    ).firstOrNull { (centre, _) ->
+        // Shortest angular distance to the sector's centre.
+        abs(((degrees - centre + 540f) % 360f) - 180f) <= DPAD_CARDINAL_HALF_DEGREES
     }
+    if (cardinal != null) return setOf(cardinal.second)
+
+    return when {
+        degrees < 90f -> setOf(GbaEngine.KEY_UP, GbaEngine.KEY_RIGHT)
+        degrees < 180f -> setOf(GbaEngine.KEY_UP, GbaEngine.KEY_LEFT)
+        degrees < 270f -> setOf(GbaEngine.KEY_DOWN, GbaEngine.KEY_LEFT)
+        else -> setOf(GbaEngine.KEY_DOWN, GbaEngine.KEY_RIGHT)
+    }
+}
+
+/** Two rounded bars crossing - the AGB-001 rocker, which carries no arrows. */
+private fun crossPath(size: Size): Path {
+    val arm = size.minDimension / 3f
+    val radius = CornerRadius(arm * 0.28f)
+    return Path().apply {
+        addRoundRect(
+            RoundRect(Rect((size.width - arm) / 2f, 0f, (size.width + arm) / 2f, size.height), radius)
+        )
+        addRoundRect(
+            RoundRect(Rect(0f, (size.height - arm) / 2f, size.width, (size.height + arm) / 2f), radius)
+        )
+    }
+}
+
+/** Lets the position editor's selection border trace the cross rather than a
+ *  box around it, so what is highlighted is what will move. */
+private val DPadCrossShape = object : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
+        Outline.Generic(crossPath(size))
 }
 
 @Composable

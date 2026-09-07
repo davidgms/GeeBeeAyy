@@ -249,11 +249,16 @@ underneath.
 > end up in four different stroke weights - the failure mode every mixed icon
 > set produces. Only A and B carry lettering; the cross carries none.
 
-The app currently draws the D-pad as four separate buttons using
-`Icons.Default.KeyboardArrow{Up,Down,Left,Right}`. Those are one consistent
-family, so nothing is broken, but they are not the shape above. Moving to a
-single cross is a follow-up, and it is not only cosmetic: a cross can hit-test
-diagonals, which four separate buttons cannot.
+The app draws it that way: `DPad` in `EmulationScreen.kt` is one `Canvas`
+with one touch area, and `ControlButton.DPAD` is a single entry the player
+drags as one piece.
+
+The touch area is the whole square, not only the drawn arms - a finger in the
+corner, outside the cross, reads as a diagonal. Each cardinal owns 60 degrees
+and each diagonal 30 (`DPAD_CARDINAL_HALF_DEGREES`), and the centre dish is
+drawn at exactly the dead zone's radius, so the thumb rest a player sees is
+the region that reports nothing. Those two numbers are the tuning knobs; they
+want a real thumb on real glass, not a screenshot.
 
 **Chip** - unselected `NightPanel` with `WingLavender` label; selected
 `GoldenSaplight` with `BurntRoot` label.
