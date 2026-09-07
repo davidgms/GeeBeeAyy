@@ -4,58 +4,66 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.R
 
 private val DarkColorScheme = darkColorScheme(
-    primary = AmberResin,
+    primary = GoldenSaplight,
     onPrimary = BurntRoot,
-    primaryContainer = HoneyDark,
+    primaryContainer = AmberResin,
     onPrimaryContainer = PineGlowMist,
-    secondary = GoldenSaplight,
-    onSecondary = BurntRoot,
-    secondaryContainer = PineGlowMist,
-    onSecondaryContainer = BurntRoot,
-    background = BurntRoot,
+    secondary = NeonViolet,
+    onSecondary = PineGlowMist,
+    secondaryContainer = NeonMagenta,
+    onSecondaryContainer = PineGlowMist,
+    tertiary = LensCyan,
+    onTertiary = NightVoid,
+    tertiaryContainer = NightEdge,
+    onTertiaryContainer = LensCyan,
+    background = NightVoid,
     onBackground = PineGlowMist,
-    surface = HoneyDark,
+    surface = NightPanel,
     onSurface = PineGlowMist,
+    surfaceVariant = NightRaised,
+    onSurfaceVariant = WingLavender,
+    outline = NightEdge,
+    outlineVariant = NightRaised,
     error = Error,
-    onError = BurntRoot,
+    onError = NightVoid,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = AmberResin,
-    onPrimary = PineGlowMist,
-    primaryContainer = HoneyDark,
-    onPrimaryContainer = PineGlowMist,
-    secondary = GoldenSaplight,
-    onSecondary = BurntRoot,
-    secondaryContainer = PineGlowMist,
-    onSecondaryContainer = BurntRoot,
-    background = PineGlowMist,
-    onBackground = BurntRoot,
-    surface = PineGlowMist,
-    onSurface = BurntRoot,
-    error = Error,
-    onError = PineGlowMist,
+// The app is a night-themed emulator: there is no light scheme, only the dark
+// one. This alias keeps `GeeBeeAyyTheme(darkTheme = false)` from silently
+// producing an unreadable screen.
+private val LightColorScheme = DarkColorScheme
+
+// GB's own lettering. Pixelify Sans is the only face allowed to carry the
+// app's identity, and it is allowed only at 28sp and above - the wordmark and
+// screen titles. Below that the platform default takes over: a pixel face
+// loses its grid under font scaling and stops being readable at body sizes.
+// See docs/design/DESIGN-SYSTEM.md.
+val Pixelify = FontFamily(
+    Font(R.font.pixelify_sans_regular, FontWeight.Normal),
+    Font(R.font.pixelify_sans_bold, FontWeight.Bold),
 )
 
 private val GeeBeeAyyTypography = Typography(
     displayLarge = TextStyle(
-        fontFamily = FontFamily.Default,
+        fontFamily = Pixelify,
         fontWeight = FontWeight.Bold,
         fontSize = 36.sp,
-        lineHeight = 44.sp,
-        letterSpacing = 0.sp,
+        lineHeight = 48.sp,
+        letterSpacing = 0.5.sp,
     ),
     headlineLarge = TextStyle(
-        fontFamily = FontFamily.Default,
+        fontFamily = Pixelify,
         fontWeight = FontWeight.Bold,
         fontSize = 28.sp,
-        lineHeight = 36.sp,
-        letterSpacing = 0.sp,
+        lineHeight = 38.sp,
+        letterSpacing = 0.5.sp,
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,

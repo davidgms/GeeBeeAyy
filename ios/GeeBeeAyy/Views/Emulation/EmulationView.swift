@@ -10,7 +10,7 @@ struct EmulationView: View {
 
     var body: some View {
         ZStack {
-            Color.burntRoot
+            Color.nightVoid
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -126,7 +126,7 @@ struct GameControlsView: View {
                 )
                 ControlButton(
                     icon: "forward.fill",
-                    color: isFastForward ? .goldenSaplight : .honeyMid,
+                    color: isFastForward ? .goldenSaplight : .nightEdge,
                     action: onToggleFastForward
                 )
             }
@@ -147,7 +147,7 @@ struct DPadButton: View {
             Image(systemName: icon)
                 .foregroundColor(.pineGlowMist)
                 .frame(width: 48, height: 48)
-                .background(Color.honeyDark)
+                .background(Color.nightPanel)
                 .clipShape(Circle())
         }
     }
@@ -172,7 +172,7 @@ struct ActionButton: View {
                 .font(.system(size: 20, weight: .bold))
                 .foregroundColor(.pineGlowMist)
                 .frame(width: 56, height: 56)
-                .background(Color.honeyDark)
+                .background(Color.nightPanel)
                 .clipShape(Circle())
         }
     }

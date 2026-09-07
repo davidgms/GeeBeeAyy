@@ -103,11 +103,11 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = BurntRoot,
+                    containerColor = NightVoid,
                 ),
             )
         },
-        containerColor = BurntRoot
+        containerColor = NightVoid
     ) { padding ->
         Column(
             modifier = Modifier
@@ -355,7 +355,7 @@ fun SettingsSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(HoneyDark),
+                .background(NightPanel),
         ) {
             content()
         }
@@ -472,7 +472,7 @@ fun SettingsSwitch(
                 checkedThumbColor = GoldenSaplight,
                 checkedTrackColor = AmberResin,
                 uncheckedThumbColor = PineGlowMist,
-                uncheckedTrackColor = HoneyMid,
+                uncheckedTrackColor = NightEdge,
             )
         )
     }

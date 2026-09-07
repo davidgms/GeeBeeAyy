@@ -94,7 +94,7 @@ fun RomBrowserScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = BurntRoot,
+                    containerColor = NightVoid,
                     titleContentColor = PineGlowMist,
                 ),
                 actions = {
@@ -145,7 +145,7 @@ fun RomBrowserScreen(
                 }
             )
         },
-        containerColor = BurntRoot
+        containerColor = NightVoid
     ) { padding ->
         if (roms.isEmpty()) {
             EmptyState(modifier = Modifier.padding(padding))
@@ -228,7 +228,7 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit) {
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = HoneyDark,
+            containerColor = NightPanel,
         ),
     ) {
         Row(

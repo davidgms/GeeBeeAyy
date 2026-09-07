@@ -224,11 +224,11 @@ fun EmulationScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // Plain black rather than the palette's BurntRoot: this is the
+            // Plain black rather than the palette's NightVoid: this is the
             // in-game screen, so the background should recede and let the
             // palette-coloured icons and buttons be the only colour on it.
             // Dialogs (save states, layouts) and overlay chrome (the state
-            // toast, the layout-edit bar) keep BurntRoot/HoneyDark - they are
+            // toast, the layout-edit bar) keep NightVoid/NightPanel - they are
             // not this background.
             .background(Color.Black)
     ) {
@@ -322,7 +322,7 @@ fun EmulationScreen(
                             onClick = { showMenu = false; showSlots = true },
                             leadingIcon = { Icon(Icons.Default.Bookmarks, null, tint = AmberResin) }
                         )
-                        HorizontalDivider(color = HoneyMid)
+                        HorizontalDivider(color = NightEdge)
                         DropdownMenuItem(
                             text = { Text("Customise Layout") },
                             onClick = {
@@ -651,7 +651,7 @@ private fun LayoutEditBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(BurntRoot.copy(alpha = 0.92f))
+            .background(NightVoid.copy(alpha = 0.92f))
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         // The hint and the controls used to share one row with SpaceBetween.
@@ -1022,7 +1022,7 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
                 }
             },
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isPressed) AmberResin else HoneyDark,
+            containerColor = if (isPressed) AmberResin else NightPanel,
         ),
         shape = RoundedCornerShape(24.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
@@ -1102,7 +1102,7 @@ fun CustomButtonView(
             containerColor = when {
                 held -> GoldenSaplight
                 isPressed -> AmberResin
-                else -> HoneyDark
+                else -> NightPanel
             },
         ),
         shape = pillShape,
@@ -1137,7 +1137,7 @@ fun DPad(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
-    val buttonColor = HoneyDark
+    val buttonColor = NightPanel
     val pressColor = AmberResin
 
     Column(
@@ -1243,7 +1243,7 @@ fun ActionButtons(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
-    val buttonColor = HoneyDark
+    val buttonColor = NightPanel
     val pressColor = GoldenSaplight
 
     // A above B in a single column. Side by side reads left-to-right as "B
@@ -1352,7 +1352,7 @@ private fun StateToast(
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
-                .background(HoneyDark)
+                .background(NightPanel)
                 .border(1.dp, GoldenSaplight.copy(alpha = 0.45f), RoundedCornerShape(50))
                 .padding(horizontal = 16.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1393,7 +1393,7 @@ private fun SaveStateDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = HoneyDark,
+        containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
         title = { Text("Save states", fontWeight = FontWeight.Bold) },
@@ -1469,7 +1469,7 @@ private fun LayoutsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = HoneyDark,
+        containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
         title = { Text("Control Layouts", fontWeight = FontWeight.Bold) },
@@ -1555,7 +1555,7 @@ private fun LayoutNameDialog(
     var name by remember { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = HoneyDark,
+        containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
         title = { Text(title) },

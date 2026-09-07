@@ -70,7 +70,7 @@ fun CustomButtonsListDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = HoneyDark,
+        containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
         title = { Text("Custom Buttons", fontWeight = FontWeight.Bold) },
@@ -155,7 +155,7 @@ private fun CustomButtonEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = HoneyDark,
+        containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
         title = { Text(if (existing == null) "New custom button" else "Edit custom button") },
@@ -292,7 +292,7 @@ private fun KeyPickerGrid(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSelected) GoldenSaplight else BurntRoot)
+                            .background(if (isSelected) GoldenSaplight else NightVoid)
                             .clickable { onTap(key) }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center,

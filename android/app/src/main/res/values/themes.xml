@@ -1,19 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.GeeBeeAyy" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/burnt_root</item>
-        <item name="colorPrimaryContainer">@color/honey_dark</item>
-        <item name="colorSecondary">@color/amber_resin</item>
-        <item name="colorSecondaryContainer">@color/honey_mid</item>
-        <item name="android:windowBackground">@color/burnt_root</item>
-        <item name="android:statusBarColor">@color/burnt_root</item>
-        <item name="android:navigationBarColor">@color/burnt_root</item>
+        <item name="colorPrimary">@color/golden_saplight</item>
+        <item name="colorPrimaryContainer">@color/amber_resin</item>
+        <item name="colorSecondary">@color/neon_violet</item>
+        <item name="colorSecondaryContainer">@color/neon_magenta</item>
+        <item name="android:windowBackground">@color/night_void</item>
+        <item name="android:statusBarColor">@color/night_void</item>
+        <item name="android:navigationBarColor">@color/night_void</item>
     </style>
 
-    <color name="burnt_root">#1A0F00</color>
-    <color name="amber_resin">#A16207</color>
+    <!-- Mirrors ui/theme/Color.kt. Keep the two in step. -->
+    <color name="night_void">#150A2B</color>
+    <color name="night_panel">#221046</color>
+    <color name="night_raised">#2E1660</color>
+    <color name="night_edge">#45268A</color>
     <color name="golden_saplight">#FACC15</color>
+    <color name="amber_resin">#A16207</color>
     <color name="pine_glow_mist">#FFF9C2</color>
-    <color name="honey_dark">#2D1A00</color>
-    <color name="honey_mid">#6B4A00</color>
+    <color name="burnt_root">#1A0F00</color>
+    <color name="neon_violet">#7C30BC</color>
+    <color name="neon_magenta">#650EBA</color>
+    <color name="lens_cyan">#55F6FD</color>
 </resources>

@@ -1,0 +1,9 @@
+Pixelify Sans is licensed under the SIL Open Font License, Version 1.1.
+
+Copyright 2023 The Pixelify Sans Project Authors
+(https://github.com/StefieJ/pixelify-sans)
+
+The full licence text is at https://openfontlicense.org and ships with the
+upstream project. Under the OFL the font files may be bundled and redistributed
+inside this application; they may not be sold on their own, and the reserved
+font name must not be used for a modified version.
