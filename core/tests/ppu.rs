@@ -874,3 +874,76 @@ fn obj_mosaic_only_applies_to_the_sprites_that_asked_for_it() {
         "the next block samples dot 4, which is green"
     );
 }
+
+/// One full frame of PPU time, split at HBlank the way the hardware is, with
+/// no CPU involved. `Gba::run_frame` spends a cycle budget instead, so it can
+/// straddle a frame boundary; these tests need exactly one frame per call.
+fn tick_one_frame(gba: &mut Gba) {
+    for _ in 0..228 {
+        gba.ppu.tick(960, &mut gba.bus, &mut gba.dma);
+        gba.ppu.tick(272, &mut gba.bus, &mut gba.dma);
+    }
+}
+
+#[test]
+fn interframe_blending_averages_each_frame_with_the_one_before() {
+    // The GBA's LCD smeared consecutive frames together, and games leaned on
+    // it: Yggdra Union draws its "SAVE DATA" title on alternating scanlines
+    // every other frame to fake a 50% ghost, which is a hard flicker on a
+    // modern panel. Blending has to average the two frames the game drew, and
+    // must not feed its own output back in - that would fade the picture out
+    // frame after frame instead of settling.
+    let mut gba = Gba::new();
+    let mut rom = vec![0u8; 0x200];
+    rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&rom).expect("ROM should load");
+
+    // Mode 0 with no background enabled: every pixel is the backdrop, so
+    // palette entry 0 alone decides the colour of the frame.
+    gba.bus.write16(0x0400_0000, 0x0000);
+    gba.set_interframe_blend(true);
+
+    gba.bus.write16(0x0500_0000, 0x7FFF); // white
+    tick_one_frame(&mut gba);
+    tick_one_frame(&mut gba);
+    assert_eq!(
+        gba.frame_buffer()[0],
+        248,
+        "two identical frames must blend to themselves"
+    );
+
+    gba.bus.write16(0x0500_0000, 0x0000); // black
+    tick_one_frame(&mut gba);
+    assert_eq!(
+        gba.frame_buffer()[0],
+        124,
+        "a black frame after a white one must come out half lit"
+    );
+
+    tick_one_frame(&mut gba);
+    assert_eq!(
+        gba.frame_buffer()[0],
+        0,
+        "the blend must average the frames the game drew, not its own output"
+    );
+}
+
+#[test]
+fn interframe_blending_off_leaves_the_frame_untouched() {
+    let mut gba = Gba::new();
+    let mut rom = vec![0u8; 0x200];
+    rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+    gba.load_rom(&rom).expect("ROM should load");
+
+    gba.bus.write16(0x0400_0000, 0x0000);
+    gba.bus.write16(0x0500_0000, 0x7FFF);
+    tick_one_frame(&mut gba);
+    gba.bus.write16(0x0500_0000, 0x0000);
+    tick_one_frame(&mut gba);
+
+    assert_eq!(
+        gba.frame_buffer()[0],
+        0,
+        "blending is off by default, so the black frame must stay black"
+    );
+}

@@ -46,6 +46,19 @@ class DisplaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_FORCE_PORTRAIT, forced).apply()
     }
 
+    /**
+     * Whether the core averages each frame with the one before it.
+     *
+     * Defaults to on, because it is what the hardware did: the GBA's LCD was
+     * slow enough to smear two frames together, and games counted on it to
+     * fake transparency. Off shows exactly what the PPU drew, flicker and all.
+     */
+    fun getInterframeBlend(): Boolean = prefs.getBoolean(KEY_INTERFRAME_BLEND, true)
+
+    fun setInterframeBlend(on: Boolean) {
+        prefs.edit().putBoolean(KEY_INTERFRAME_BLEND, on).apply()
+    }
+
     fun getScreenFilter(): ScreenFilter =
         prefs.getString(KEY_SCREEN_FILTER, null)
             ?.let { saved -> runCatching { ScreenFilter.valueOf(saved) }.getOrNull() }
@@ -98,5 +111,6 @@ class DisplaySettings(context: Context) {
         private const val KEY_CONTROL_SCALE = "control_scale"
         private const val KEY_CONTROL_OPACITY = "control_opacity"
         private const val KEY_SCREEN_FILTER = "screen_filter"
+        private const val KEY_INTERFRAME_BLEND = "interframe_blend"
     }
 }

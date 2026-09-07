@@ -292,6 +292,14 @@ impl Gba {
         &self.bus.cart
     }
 
+    /// Average each finished frame with the one before it, the way the GBA's
+    /// slow LCD did. Games that fake transparency by alternating what they
+    /// draw every other frame - Yggdra Union's "SAVE DATA" title, for one -
+    /// flicker hard on a modern panel without it.
+    pub fn set_interframe_blend(&mut self, on: bool) {
+        self.ppu.set_interframe_blend(on);
+    }
+
     pub fn frame_buffer(&self) -> &[u8; 240 * 160 * 3] {
         self.ppu.frame_buffer()
     }

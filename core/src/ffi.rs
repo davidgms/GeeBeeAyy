@@ -224,6 +224,22 @@ pub unsafe extern "C" fn geebeeayy_set_keys(ptr: *mut c_void, keys: u16) {
     handle.inner.bus.set_keys(keys);
 }
 
+/// Turn interframe blending on (`1`) or off (`0`).
+///
+/// Averages each finished frame with the one before it, the way the GBA's LCD
+/// did. Off by default.
+///
+/// # Safety
+/// `ptr` must be a valid handle from `geebeeayy_create`.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_set_interframe_blend(ptr: *mut c_void, on: i32) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.inner.set_interframe_blend(on != 0);
+}
+
 /// Size of the cartridge's battery save in bytes, or 0 if it has no save chip.
 ///
 /// # Safety
@@ -584,6 +600,20 @@ pub mod android {
         }
         let gba = unsafe { &mut *(handle as *mut GbaHandle) };
         gba.inner.bus.set_keys(keys as u16);
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSetInterframeBlend(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        on: jint,
+    ) {
+        if handle == 0 {
+            return;
+        }
+        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
+        gba.inner.set_interframe_blend(on != 0);
     }
 
     #[no_mangle]

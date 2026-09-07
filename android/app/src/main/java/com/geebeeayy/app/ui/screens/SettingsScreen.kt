@@ -56,6 +56,7 @@ fun SettingsScreen(
     var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
     var showScaleMenu by remember { mutableStateOf(false) }
     var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
+    var interframeBlend by remember { mutableStateOf(displaySettings.getInterframeBlend()) }
     var folderError by remember { mutableStateOf<String?>(null) }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -254,6 +255,16 @@ fun SettingsScreen(
                         }
                     }
                 }
+                SettingsSwitch(
+                    icon = Icons.Default.BlurOn,
+                    title = "Frame Blending",
+                    subtitle = "Smooths flicker, like the GBA screen",
+                    checked = interframeBlend,
+                    onCheckedChange = { checked ->
+                        interframeBlend = checked
+                        displaySettings.setInterframeBlend(checked)
+                    }
+                )
                 SettingsSlider(
                     icon = Icons.Default.OpenInFull,
                     title = "Control Size",
