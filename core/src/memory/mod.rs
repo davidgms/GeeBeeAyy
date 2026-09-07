@@ -122,6 +122,17 @@ impl MemoryBus {
     }
 
     pub fn read8(&self, address: u32) -> u8 {
+        // A serial EEPROM cannot be read by the CPU - GBATEK requires DMA to
+        // clock data out - but the standard save library still polls this
+        // window with plain loads after a write, spinning until bit 0 comes
+        // back 1 to say the chip has finished programming. Without this the
+        // poll read the ROM mirror underneath instead: at 0x0DFFFF00 that is
+        // 0xFF80, bit 0 clear, so the game waited for a chip that was never
+        // going to answer and gave up with "Save failed!". Programming here
+        // is instant, so the chip is always ready.
+        if self.is_eeprom_region(address) {
+            return 1;
+        }
         match address {
             0x0000_0000..=0x0000_3FFF => self.bios[(address & 0x3FFF) as usize],
             0x0200_0000..=0x02FF_FFFF => self.ewram[(address & 0x3_FFFF) as usize],
