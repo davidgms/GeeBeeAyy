@@ -179,6 +179,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # Checked out before the artifact download so nothing clobbers apk/.
+      # The job needs the repository only for .github/scripts.
+      - uses: actions/checkout@v4
+
       - name: Download debug APK
         uses: actions/download-artifact@v4
         with:
@@ -202,16 +206,7 @@ jobs:
           arch: x86_64
           profile: pixel_5
           disable-animations: true
-          script: |
-            set -e
-            apk_path=$(find apk -name "*.apk" | head -1)
-            echo "Installing ${apk_path}"
-            adb install -r "${apk_path}"
-            adb shell monkey -p com.geebeeayy.app -c android.intent.category.LAUNCHER 1
-            sleep 5
-            if ! adb shell pidof com.geebeeayy.app; then
-              echo "com.geebeeayy.app is not running after launch - crashed or failed to start"
-              adb logcat -d | tail -300
-              exit 1
-            fi
-            echo "com.geebeeayy.app launched and is still running."
+          # A single line on purpose: this action runs each line of `script`
+          # in its own `sh -c`, so a multi-line script loses every variable
+          # between lines. See .github/scripts/emulator-smoke-test.sh.
+          script: bash .github/scripts/emulator-smoke-test.sh
