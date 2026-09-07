@@ -78,7 +78,7 @@ jobs:
           workspaces: core
 
       - name: Add Rust Android targets
-        run: rustup target add aarch64-linux-android armv7-linux-androideabi
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
@@ -106,9 +106,13 @@ jobs:
       # (<abi>/libgeebeeayy_core.so), overwriting whatever stale copy was
       # already there. --lib skips the desktop CLI binary target, which
       # nothing here needs.
-      - name: Build libgeebeeayy_core.so for arm64-v8a and armeabi-v7a
+      # x86_64 is here for the emulator smoke test below, not for shipping:
+      # android/app/build.gradle.kts adds x86_64 to abiFilters for the debug
+      # build type only, so the release APK still carries just the two ARM
+      # slices.
+      - name: Build libgeebeeayy_core.so for arm64-v8a, armeabi-v7a and x86_64
         working-directory: core
-        run: cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release --lib
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../android/app/src/main/jniLibs build --release --lib
 
       - name: Upload native libraries
         uses: actions/upload-artifact@v4
@@ -143,24 +147,38 @@ jobs:
   # launches and stays alive. This is the only check in this workflow that
   # runs anything on an actual (virtual) device.
   emulator-smoke-test:
-    name: Emulator smoke test (arm64-v8a)
+    name: Emulator smoke test (x86_64)
     needs: android
-    # abiFilters in android/app/build.gradle.kts are arm64-v8a and
-    # armeabi-v7a only - no x86_64 slice is ever built, so an x86_64 AVD
-    # image would install the APK and immediately UnsatisfiedLinkError on
-    # the first JNI call. The alternative to this job (an x86_64 image on a
-    # Linux runner) can never pass.
+    # This job ran on macos-14 for its first month and failed every single
+    # time, always with the same two lines:
     #
-    # arm64-v8a system images need a real ARM host for hardware-accelerated
-    # virtualization; x86_64 GitHub-hosted Linux runners can only emulate
-    # arm64-v8a in pure software, which is far too slow to boot inside a CI
-    # timeout. macos-14 runners are Apple Silicon (arm64 host), so the
-    # arm64-v8a emulator gets hardware acceleration via Apple's Hypervisor
-    # framework instead. Trade-off: macOS runner minutes are billed at a
-    # higher multiplier than Linux ones, and this job is unverified - it has
-    # never been run, since there is no local device or SDK to test it with.
-    runs-on: macos-14
+    #   HVF error: HV_UNSUPPORTED
+    #   qemu-system-aarch64-headless: failed to initialize HVF: Invalid argument
+    #
+    # GitHub's Apple Silicon runners are themselves virtual machines, and they
+    # do not expose Hypervisor.framework to the guest. Without it QEMU dies
+    # about two seconds after launch, so every arm64-v8a AVD times out waiting
+    # for a boot that already failed. Nothing in this repository can fix that;
+    # it is a property of the hosted runner.
+    #
+    # So the emulator runs x86_64 on Linux instead, where GitHub does expose
+    # /dev/kvm. The old comment here said an x86_64 image "can never pass"
+    # because no x86_64 slice is built - that premise was the fixable half:
+    # android/app/build.gradle.kts already adds x86_64 to abiFilters for the
+    # debug build type, and the android job above now builds that slice. The
+    # release APK is unaffected.
+    runs-on: ubuntu-latest
     steps:
+      # Hosted Linux runners ship /dev/kvm owned by root with no group access.
+      # Without this the emulator silently falls back to software emulation
+      # and never boots inside the timeout.
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Download debug APK
         uses: actions/download-artifact@v4
         with:
@@ -181,7 +199,7 @@ jobs:
         with:
           api-level: 30
           target: google_apis
-          arch: arm64-v8a
+          arch: x86_64
           profile: pixel_5
           disable-animations: true
           script: |
