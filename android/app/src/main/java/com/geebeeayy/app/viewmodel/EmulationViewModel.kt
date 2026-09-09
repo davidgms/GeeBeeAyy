@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.engine.AudioOutput
@@ -321,6 +322,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         // handle costs nothing.
                         engine.rewindConfigure(REWIND_DEPTH)
                         rewindFrameCounter = 0
+                        // Read per ROM launch, the same as the scale mode and
+                        // screen filter, so a change in Settings takes effect
+                        // the next time a game is opened.
+                        engine.setInterframeBlend(
+                            DisplaySettings(getApplication()).getInterframeBlend()
+                        )
                         resolveSavePaths(file, data)
                         loadExistingSave()
                     }

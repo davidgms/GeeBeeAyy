@@ -900,3 +900,79 @@ brightened).
 flag that per-pixel layer gating was skipped - check what BLDCNT's target
 bits are being checked against, if anything, before trusting a colour effect
 outside mode 0.
+
+### A scanline drawn at the end of its own line eats the HBlank handler's writes
+
+**2026-09-07**, found from a user save state of Yggdra Union: the two battle
+condition panels flickered, the frame buffer alternating between exactly two
+pictures forever with 11895 pixels changing per frame.
+
+It was not blending, palette or VRAM. With the state loaded, `io`, `pal`,
+`vram` and `oam` hash **identical** between the two frames - the difference was
+entirely inside the PPU.
+
+The game's HBlank handler writes `BG1VOFS` (`0x04000016`) once per line, on
+lines 55-83 and 95-134, the exact rows that diverged. That is the trick that
+locks one BG row to the screen and draws the panels. `Ppu::tick` drew the line
+at the **end** of it, when `cycle_counter` crossed 1232, but the HBlank IRQ
+fires at cycle 960 of the same line - 272 cycles earlier. On hardware the
+HBlank of line N sets up line **N+1**, because line N is already drawn. Here
+the write still had time to land on line N, and whether it did was a race the
+CPU won or lost depending on the CPU/PPU phase, which shifts every frame:
+
+```
+frame 0 line 55 drawn with BG1VOFS 105  (BG row 160 - the panel)
+frame 1 line 55 drawn with BG1VOFS 104  (BG row 159 - the map)
+```
+
+Fix: draw the line when its HBlank starts, before `hblank_irq_pending` is set.
+A `line_rendered` flag keeps the line-end path as a catch-up for a `step` long
+enough to jump over cycle 960 entirely. Test:
+`tests/integration.rs::a_register_written_during_hblank_takes_effect_on_the_next_line`.
+
+**Application**: any per-scanline effect that is one line off, or flickers
+between two frames with the game's memory unchanged, is a render-timing
+question, not a rendering one. Hash `io`/`pal`/`vram`/`oam` across frames
+first - identical hashes mean the bug is ours.
+
+### EEPROM's ready flag is polled by the CPU, not by DMA
+
+**2026-09-07**: Yggdra Union answered "Save failed!" and never wrote a `.sav`.
+Save type detection was right (`EEPROM_V126`, 8 KB). Tracing the serial line
+showed the game sending six write commands - `addr=2` and `addr=618`, three
+tries each - and **no reads at all**.
+
+After a write command the standard save library spins reading the EEPROM
+window with a plain `ldrh`, waiting for bit 0 to come back 1. Only
+`MemoryBus::read16_mut` - the DMA path - consulted the chip; `read8`, and so
+`read16`/`read32`, fell through to the ROM mirror underneath. On this 32 MB
+cart the window is `0x0DFFFF00-0x0DFFFFFF` (GBATEK: above 16 MB the EEPROM
+shrinks to the last 256 bytes, because the ROM itself reaches those addresses
+through the WS2 mirror), and the ROM holds `80 ff` there - `read16` = 0xFF80,
+bit 0 clear, "still programming", forever.
+
+Fix: `read8` returns 1 anywhere in the EEPROM window. Reading *data* by CPU
+stays impossible, as on hardware. Test:
+`tests/saves.rs::a_cpu_read_of_the_eeprom_window_reports_the_chip_ready`.
+
+**Application**: a save chip that never gets read back is not a protocol bug,
+it is a handshake the game gave up on. Check the poll path before the data
+path.
+
+### Games fake transparency by alternating frames; the LCD hid it
+
+**2026-09-07**: Yggdra Union's "SAVE DATA" title blinks hard. Unlike the panel
+bug above, `vram` and `oam` **do** change every frame while `io` and `pal` do
+not - the game itself redraws the title on alternating scanlines to fake a 50%
+ghost, which the GBA's slow LCD smeared into a steady image.
+
+`Ppu::set_interframe_blend` averages each finished frame with the one before
+it. Two details that matter: `prev_frame` keeps the *unblended* frame, so the
+average never feeds on its own output and fade out; and the result goes to a
+separate `blend_out` buffer, because `run_frame` spends a cycle budget and can
+stop part way down the next frame - blending in place handed the frontend a
+few freshly drawn unblended lines over an older blended picture, which left
+the top 7 rows still flickering.
+
+**Application**: before hunting a flicker in the PPU, hash `vram`/`oam` across
+two frames. Changing means the game is doing it on purpose.

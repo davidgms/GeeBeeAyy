@@ -33,6 +33,10 @@ const uint8_t *geebeeayy_frame_buffer_ptr(void *ptr);
 /// Copy audio samples (f32 mono) into out. Returns number of samples written.
 size_t geebeeayy_audio_copy(void *ptr, float *out, size_t max_samples);
 
+/// Average each frame with the one before it (1) or not (0), the way the
+/// GBA's LCD did. Off by default.
+void geebeeayy_set_interframe_blend(void *ptr, int on);
+
 /// Create a save state. Returns an opaque pointer.
 void *geebeeayy_save_state_create(void *ptr);
 

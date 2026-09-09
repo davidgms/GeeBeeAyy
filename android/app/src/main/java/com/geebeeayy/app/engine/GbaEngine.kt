@@ -108,6 +108,20 @@ class GbaEngine {
     }
 
     /**
+     * Average each finished frame with the one before it, the way the GBA's
+     * LCD did.
+     *
+     * Games fake transparency by drawing something on alternating scanlines
+     * every other frame - Yggdra Union's "SAVE DATA" title is one - which the
+     * real screen smeared into a steady 50% ghost and a modern panel shows as
+     * a hard flicker.
+     */
+    fun setInterframeBlend(on: Boolean) {
+        ensureHandle()
+        nativeSetInterframeBlend(handle, if (on) 1 else 0)
+    }
+
+    /**
      * Drain the core's audio buffer into [out] (f32 mono).
      *
      * The caller owns the array so the emulation loop does not allocate once
@@ -230,6 +244,7 @@ class GbaEngine {
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int
     private external fun nativeSetKeys(handle: Long, keys: Int)
+    private external fun nativeSetInterframeBlend(handle: Long, on: Int)
     private external fun nativeSaveTakeDirty(handle: Long): Int
     private external fun nativeSaveRead(handle: Long): ByteArray
     private external fun nativeSaveWrite(handle: Long, data: ByteArray): Int

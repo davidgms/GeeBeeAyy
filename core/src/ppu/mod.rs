@@ -12,6 +12,22 @@ pub struct Ppu {
     pub mode: u8,
     pub vblank: bool,
     pub hblank: bool,
+    /// Whether each finished frame is averaged with the one before it.
+    ///
+    /// The GBA's LCD was slow enough to smear two frames together, and games
+    /// leaned on that: Yggdra Union draws its "SAVE DATA" title on alternating
+    /// scanlines every other frame to fake a 50% ghost. Presented untouched on
+    /// a modern panel that reads as a hard flicker.
+    interframe_blend: bool,
+    /// The frame before the one in `frame_buffer`, as it was rendered.
+    /// Allocated only while [`Self::interframe_blend`] is on.
+    prev_frame: Vec<u8>,
+    /// What the frontend sees while blending is on: the last two frames
+    /// averaged. Kept apart from `frame_buffer` so it only ever holds a whole
+    /// frame - `run_frame` spends a cycle budget and can stop part way down
+    /// the next one, which would otherwise hand over a few freshly drawn,
+    /// unblended lines above an older blended picture.
+    blend_out: Option<Box<[u8; FRAME_SIZE]>>,
     /// Whether the current scanline has already been drawn. The line is
     /// drawn when HBlank starts, so this stops the line-end catch-up from
     /// drawing it a second time.
@@ -128,6 +144,9 @@ impl Ppu {
             mode: 0,
             vblank: false,
             hblank: false,
+            interframe_blend: false,
+            prev_frame: Vec::new(),
+            blend_out: None,
             line_rendered: false,
             vblank_irq_pending: false,
             hblank_irq_pending: false,
@@ -243,6 +262,7 @@ impl Ppu {
             if self.scanline >= 228 {
                 self.scanline = 0;
                 self.vblank = false;
+                self.blend_with_previous_frame();
                 dma.on_vcounter(bus);
             }
 
@@ -1504,8 +1524,52 @@ impl Ppu {
         }
     }
 
+    /// Turn interframe blending on or off. See [`Self::interframe_blend`].
+    pub fn set_interframe_blend(&mut self, on: bool) {
+        if on == self.interframe_blend {
+            return;
+        }
+        self.interframe_blend = on;
+        if on {
+            // Seed both from the frame on screen, so the first blended frame
+            // is a blend rather than a half-black fade-in.
+            self.prev_frame = self.frame_buffer.to_vec();
+            let out: Box<[u8]> = self.frame_buffer.to_vec().into_boxed_slice();
+            self.blend_out = out.try_into().ok();
+        } else {
+            self.prev_frame = Vec::new();
+            self.blend_out = None;
+        }
+    }
+
+    /// Average the finished frame with the one before it, into `blend_out`.
+    ///
+    /// `prev_frame` keeps the *unblended* frame, so the average is always of
+    /// two frames the game actually drew rather than of an ever-dimming trail
+    /// of its own output.
+    fn blend_with_previous_frame(&mut self) {
+        if !self.interframe_blend {
+            return;
+        }
+        let Some(out) = self.blend_out.as_mut() else {
+            return;
+        };
+        if self.prev_frame.len() != FRAME_SIZE {
+            self.prev_frame = self.frame_buffer.to_vec();
+            return;
+        }
+        for i in 0..FRAME_SIZE {
+            let raw = self.frame_buffer[i];
+            out[i] = ((raw as u16 + self.prev_frame[i] as u16) / 2) as u8;
+            self.prev_frame[i] = raw;
+        }
+    }
+
     pub fn frame_buffer(&self) -> &[u8; FRAME_SIZE] {
-        &self.frame_buffer
+        match &self.blend_out {
+            Some(blended) => blended,
+            None => &self.frame_buffer,
+        }
     }
 
     pub fn frame_buffer_mut(&mut self) -> &mut [u8; FRAME_SIZE] {
