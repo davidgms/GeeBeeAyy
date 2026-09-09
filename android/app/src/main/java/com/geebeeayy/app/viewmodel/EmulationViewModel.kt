@@ -106,6 +106,16 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         /**
+         * What a slot is called in a message, matching the slot list's labels.
+         *
+         * Slot 0 is the quick save the toolbar buttons use, and the rest are
+         * numbered by their index. The messages used to say `slot ${slot + 1}`,
+         * so saving into the row labelled "Slot 2" reported "slot 3".
+         */
+        fun slotName(slot: Int): String =
+            if (slot == 0) "quick save slot" else "slot $slot"
+
+        /**
          * A game saving touches thousands of bytes across many CPU cycles;
          * waiting this long after the last dirty flag before writing avoids a
          * file write per byte.
@@ -196,6 +206,16 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private val engineLock = Mutex()
     private var romLoaded = false
+
+    /**
+     * The path [loadRomFromPath] last loaded, so asking for the same one again
+     * resumes instead of reloading.
+     *
+     * The emulation composable is a nav back-stack entry: opening Settings
+     * over it disposes it, and coming back re-runs its `LaunchedEffect`. That
+     * used to reload the ROM from byte zero and throw away unsaved progress.
+     */
+    private var loadedRomPath: String? = null
 
     /** True if backgrounding paused a session the player had not paused themselves. */
     private var pausedByBackground = false
@@ -291,6 +311,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun loadRomFromPath(filePath: String) {
+        // Already playing this ROM: this is a return from another screen, not
+        // a new game. Resume what leaving paused and keep the session.
+        if (romLoaded && loadedRomPath == filePath) {
+            _isLoading.value = false
+            onAppForegrounded()
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             _errorMessage.value = null
@@ -315,6 +342,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 val success = engineLock.withLock { engine.loadRom(data) }
                 if (success) {
                     romLoaded = true
+                    loadedRomPath = filePath
                     LastPlayed(getApplication()).record(filePath)
                     engineLock.withLock {
                         // A fresh ROM means a fresh history; the ring is
@@ -660,6 +688,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun stateFile(slot: Int): File = File(statesDir, "${romStateKey}_slot$slot.state")
 
+
     /**
      * What each save-state slot holds, for the slot list.
      *
@@ -751,9 +780,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
         viewModelScope.launch(Dispatchers.IO) {
             if (tryAtomicWrite(stateFile(slot).absolutePath, bytes)) {
-                _stateMessage.value = "Saved to slot ${slot + 1}"
+                _stateMessage.value = "Saved to ${slotName(slot)}"
             } else {
-                _stateMessage.value = "Failed to write save state slot ${slot + 1}"
+                _stateMessage.value = "Failed to write ${slotName(slot)}"
             }
         }
     }
@@ -768,14 +797,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             val file = stateFile(slot)
             if (!file.exists()) {
-                _stateMessage.value = "No save state in slot ${slot + 1}"
+                _stateMessage.value = "Nothing in ${slotName(slot)}"
                 return@launch
             }
             val bytes = try {
                 file.readBytes()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed reading save state slot $slot", e)
-                _stateMessage.value = "Could not read save state slot ${slot + 1}"
+                _stateMessage.value = "Could not read ${slotName(slot)}"
                 return@launch
             }
             if (_isRunning.value) {

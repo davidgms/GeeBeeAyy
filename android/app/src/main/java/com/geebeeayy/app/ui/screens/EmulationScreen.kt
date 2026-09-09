@@ -94,6 +94,7 @@ fun EmulationScreen(
     onLoadState: (Int) -> Unit,
     stateSlots: () -> List<StateSlot> = { emptyList() },
     onScreenshot: () -> Unit = {},
+    onSettings: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
     gameKey: () -> String? = { null },
 ) {
@@ -352,7 +353,7 @@ fun EmulationScreen(
                         )
                         DropdownMenuItem(
                             text = { Text("Settings") },
-                            onClick = { showMenu = false },
+                            onClick = { showMenu = false; onSettings() },
                             leadingIcon = { Icon(Icons.Default.Settings, null, tint = AmberResin) }
                         )
                     }
@@ -1490,7 +1491,7 @@ private fun SaveStateDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (slot.index == 0) "Quick save" else "Slot ${slot.index}",
+                                text = if (slot.index == 0) "Quick save slot" else "Slot ${slot.index}",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = PineGlowMist,
