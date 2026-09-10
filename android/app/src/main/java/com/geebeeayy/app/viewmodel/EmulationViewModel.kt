@@ -226,6 +226,19 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         _fastForward.value = on
     }
 
+    /**
+     * Whether the emulator's sound plays. Persisted, so muting a game stays
+     * muted the next time it is opened.
+     */
+    private val _soundEnabled = MutableStateFlow(true)
+    val soundEnabled: StateFlow<Boolean> = _soundEnabled
+
+    fun toggleSound() {
+        val on = !_soundEnabled.value
+        _soundEnabled.value = on
+        DisplaySettings(getApplication()).setSoundEnabled(on)
+    }
+
     /** True while the player is holding the rewind button. */
     private val _isRewinding = MutableStateFlow(false)
     val isRewinding: StateFlow<Boolean> = _isRewinding
@@ -411,9 +424,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         // Read per ROM launch, the same as the scale mode and
                         // screen filter, so a change in Settings takes effect
                         // the next time a game is opened.
-                        engine.setInterframeBlend(
-                            DisplaySettings(getApplication()).getInterframeBlend()
-                        )
+                        val settings = DisplaySettings(getApplication())
+                        engine.setInterframeBlend(settings.getInterframeBlend())
+                        _soundEnabled.value = settings.getSoundEnabled()
                         resolveSavePaths(file, data)
                         loadExistingSave()
                     }
@@ -628,8 +641,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // of once per batch.
                     val toWrite =
                         if (fastForwarding) decimate(audioSamples, count, ratio) else count
-                    // Silence, not skipping the write: the write is the clock.
-                    if (fastForwarding && muteOnFastForward) {
+                    // Silence, not skipping the write: the write is the clock,
+                    // and a loop with no clock free-runs.
+                    if (!_soundEnabled.value || (fastForwarding && muteOnFastForward)) {
                         audioSamples.fill(0f, 0, toWrite)
                     }
                     if (!audio.write(audioSamples, toWrite)) {

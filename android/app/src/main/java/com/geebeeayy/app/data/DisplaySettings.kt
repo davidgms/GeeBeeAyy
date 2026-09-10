@@ -98,6 +98,19 @@ class DisplaySettings(context: Context) {
         prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
     }
 
+    /**
+     * Whether the emulator's sound plays.
+     *
+     * Muting does not stop the audio being written - that write is the frame
+     * clock, and skipping it would let the loop free-run. The samples are
+     * zeroed instead.
+     */
+    fun getSoundEnabled(): Boolean = prefs.getBoolean(KEY_SOUND_ENABLED, true)
+
+    fun setSoundEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SOUND_ENABLED, enabled).apply()
+    }
+
     /** How large the letters on the on-screen buttons are drawn. */
     fun getControlFontSize(): ControlFontSize =
         prefs.getString(KEY_CONTROL_FONT, null)
@@ -183,6 +196,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
         private const val KEY_CONTROL_TINT = "control_tint"
         private const val KEY_CONTROL_FONT = "control_font_size"
+        private const val KEY_SOUND_ENABLED = "sound_enabled"
 
         /**
          * Highest ratio offered.

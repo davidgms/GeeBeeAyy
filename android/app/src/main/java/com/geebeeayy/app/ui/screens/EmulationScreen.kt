@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
+import android.os.BatteryManager
 import com.geebeeayy.app.data.ControlButton
 import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
@@ -97,6 +98,8 @@ fun EmulationScreen(
     stateSlots: () -> List<StateSlot> = { emptyList() },
     onScreenshot: () -> Unit = {},
     onSettings: () -> Unit = {},
+    soundEnabled: Boolean = true,
+    onToggleSound: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
     gameKey: () -> String? = { null },
 ) {
@@ -297,6 +300,16 @@ fun EmulationScreen(
                 // rather than among the game buttons: they are things you do
                 // *to* the emulator, and putting them beside A and B is how
                 // you fast-forward when you meant to jump.
+                IconButton(onClick = onToggleSound) {
+                    Icon(
+                        if (soundEnabled) Icons.Default.VolumeUp
+                        else Icons.Default.VolumeOff,
+                        contentDescription = if (soundEnabled) "Mute" else "Unmute",
+                        // Lit only when muted: the interesting state is the one
+                        // that explains why a game went quiet.
+                        tint = if (soundEnabled) PineGlowMist else GoldenSaplight,
+                    )
+                }
                 IconButton(onClick = { onSaveState(0) }) {
                     Icon(Icons.Default.Save, "Save state", tint = PineGlowMist)
                 }
@@ -512,6 +525,13 @@ fun EmulationScreen(
                 }
                 }
             }
+        }
+
+        // Battery and clock, in the two bottom corners. Small and dim, and in
+        // the corners on purpose: Start and Select sit centred at the bottom,
+        // so this is the one strip of screen no control wants.
+        if (!editingLayout) {
+            StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
         }
 
         // Custom buttons float over everything, positioned absolutely rather
@@ -1889,3 +1909,52 @@ private data class LayoutSnapshot(
     val scales: Map<ControlButton, Float>,
     val customScales: Map<String, Float>,
 )
+
+/**
+ * The phone's battery level and the time, along the bottom edge.
+ *
+ * A game covers the system status bar, and the two things a player still
+ * wants from it during a long session are how much battery is left and how
+ * late it is.
+ *
+ * Ticks once a minute. The clock only shows minutes, and a battery percentage
+ * that moved in under a minute would be a bigger problem than the readout.
+ */
+@Composable
+private fun StatusStrip(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var battery by remember { mutableIntStateOf(-1) }
+    var clock by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        val formatter = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        while (true) {
+            battery = context.getSystemService(BatteryManager::class.java)
+                ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                ?: -1
+            clock = formatter.format(java.util.Date())
+            // Wake on the minute rather than every 60 s from whenever this
+            // started, or the clock changes a random number of seconds after
+            // the minute it is showing.
+            kotlinx.coroutines.delay(60_000L - System.currentTimeMillis() % 60_000L)
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = if (battery >= 0) "$battery%" else "",
+            color = PineGlowMist.copy(alpha = 0.45f),
+            fontSize = 11.sp,
+        )
+        Text(
+            text = clock,
+            color = PineGlowMist.copy(alpha = 0.45f),
+            fontSize = 11.sp,
+        )
+    }
+}
