@@ -71,6 +71,19 @@ Worth writing down, because the goal is a good product and not a clone:
 - **A save-state slot list** with times, rather than a bare quick save.
 - **Homebrew downloads** from a curated, legal catalogue.
 
+## Decisions taken, 2026-09-10
+
+- **Thumbnails**: cover art when the player supplied it, and a **generated
+  placeholder** - the game's own initials over a colour derived from its name -
+  when they did not. No screenshots as thumbnails: the reason written into
+  `RomArtwork.kt` stands, and this closes the real gap, which was every row
+  showing the same grey pad.
+- **System bars**: hidden while a game is running, behind a setting. This is
+  what makes the clock and battery strip earn its place rather than duplicate
+  the one above it.
+- **First**: haptics and the D-pad diagonal setting, ahead of the ROM list
+  pass. Both are felt on every press.
+
 ## Suggested order
 
 1. **Haptics** and the **D-pad diagonal setting** - both are felt on every
