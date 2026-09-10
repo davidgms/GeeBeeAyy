@@ -166,6 +166,41 @@ class ControlLayoutStore(context: Context) {
             .apply()
     }
 
+    /**
+     * How much bigger or smaller than default one control is drawn, per
+     * layout.
+     *
+     * The whole block already has a global size slider in Settings. This is
+     * the other half: a thumb that wants a big D-pad usually wants the same
+     * Start and Select it always had, and one multiplier over everything
+     * cannot say that.
+     */
+    fun getControlScale(layoutId: String, button: ControlButton): Float =
+        prefs.getFloat("$KEY_SCALE_PREFIX${layoutId}_${button.name}", 1f)
+            .coerceIn(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE)
+
+    fun setControlScale(layoutId: String, button: ControlButton, scale: Float) {
+        prefs.edit()
+            .putFloat(
+                "$KEY_SCALE_PREFIX${layoutId}_${button.name}",
+                scale.coerceIn(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE),
+            )
+            .apply()
+    }
+
+    fun getCustomButtonScale(layoutId: String, buttonId: String): Float =
+        prefs.getFloat("$KEY_CUSTOM_SCALE_PREFIX${layoutId}_$buttonId", 1f)
+            .coerceIn(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE)
+
+    fun setCustomButtonScale(layoutId: String, buttonId: String, scale: Float) {
+        prefs.edit()
+            .putFloat(
+                "$KEY_CUSTOM_SCALE_PREFIX${layoutId}_$buttonId",
+                scale.coerceIn(MIN_CONTROL_SCALE, MAX_CONTROL_SCALE),
+            )
+            .apply()
+    }
+
     /** Put every button of [layoutId] back at its base position. */
     fun resetLayoutOffsets(layoutId: String) {
         val edit = prefs.edit()
@@ -174,6 +209,14 @@ class ControlLayoutStore(context: Context) {
             edit.remove("$KEY_OFFSET_PREFIX${layoutId}_${button.name}_y")
         }
         edit.apply()
+        // Sizes are part of a layout too, so Reset has to put them back as
+        // well - otherwise Reset leaves a giant D-pad in its default spot.
+        prefs.edit().apply {
+            ControlButton.entries.forEach { remove("$KEY_SCALE_PREFIX${layoutId}_${it.name}") }
+            customButtonIds(layoutId).forEach {
+                remove("$KEY_CUSTOM_SCALE_PREFIX${layoutId}_$it")
+            }
+        }.apply()
     }
 
     private fun layoutIds(): List<String> {
@@ -191,6 +234,15 @@ class ControlLayoutStore(context: Context) {
         private const val KEY_DEFAULT_LAYOUT = "default_layout"
         private const val KEY_NAME_PREFIX = "layout_name_"
         private const val KEY_OFFSET_PREFIX = "offset_"
+        private const val KEY_SCALE_PREFIX = "scale_"
+        private const val KEY_CUSTOM_SCALE_PREFIX = "custom_scale_"
+
+        /** How far a single control may be shrunk or grown, as a multiplier. */
+        const val MIN_CONTROL_SCALE = 0.6f
+        const val MAX_CONTROL_SCALE = 1.8f
+
+        /** One press of the smaller/bigger buttons in the layout editor. */
+        const val CONTROL_SCALE_STEP = 0.1f
         private const val KEY_GAME_LAYOUT_PREFIX = "game_layout_"
         private const val KEY_CUSTOM_IDS_PREFIX = "custom_ids_"
         private const val KEY_CUSTOM_PREFIX = "custom_"

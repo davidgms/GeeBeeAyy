@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.data.ControlFontSize
 import com.geebeeayy.app.data.ControlTint
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.DisplaySettings
@@ -84,6 +85,8 @@ fun SettingsScreen(
     var showLayoutMenu by remember { mutableStateOf(false) }
     var controlTint by remember { mutableStateOf(displaySettings.getControlTint()) }
     var showTintMenu by remember { mutableStateOf(false) }
+    var controlFont by remember { mutableStateOf(displaySettings.getControlFontSize()) }
+    var showFontMenu by remember { mutableStateOf(false) }
     var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var muteFastForward by remember { mutableStateOf(displaySettings.getMuteOnFastForward()) }
@@ -452,6 +455,30 @@ fun SettingsScreen(
                                     controlTint = tint
                                     displaySettings.setControlTint(tint)
                                     showTintMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.FormatSize,
+                        title = "Button Text Size",
+                        subtitle = controlFont.label,
+                        onClick = { showFontMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showFontMenu,
+                        onDismissRequest = { showFontMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        ControlFontSize.entries.forEach { size ->
+                            DropdownMenuItem(
+                                text = { Text(size.label) },
+                                onClick = {
+                                    controlFont = size
+                                    displaySettings.setControlFontSize(size)
+                                    showFontMenu = false
                                 }
                             )
                         }
