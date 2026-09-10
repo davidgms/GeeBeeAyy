@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
         // the equivalent lock, driven by a user-togglable setting instead of a fixed value.
         // android:configChanges="orientation|..." on this activity means setting this does not
         // trigger a recreate, so it is safe to call before setContent and again from Settings.
-        requestedOrientation = orientationFor(DisplaySettings(this).getForcePortrait())
+        requestedOrientation = orientationFor(DisplaySettings(this).getScreenOrientation())
         setContent {
             GeeBeeAyyTheme(darkTheme = true) {
                 GeeBeeAyyNavHost()
@@ -203,6 +203,10 @@ fun GeeBeeAyyNavHost() {
             val dpadCardinal = remember(filePath) {
                 DisplaySettings(context).getDpadCardinalHalfDegrees()
             }
+            val fullscreen = remember(filePath) { DisplaySettings(context).getFullscreenInGame() }
+            val showStatusStrip = remember(filePath) {
+                DisplaySettings(context).getShowStatusStrip()
+            }
             // Re-read on every press, not per ROM: a player changing the
             // strength in Settings wants to feel the difference on the next
             // button, not the next game. The store itself is held, so a press
@@ -263,6 +267,8 @@ fun GeeBeeAyyNavHost() {
                 onLoadState = { slot -> viewModel.loadState(slot) },
                 stateSlots = { viewModel.stateSlots() },
                 onScreenshot = { viewModel.takeScreenshot() },
+                fullscreen = fullscreen,
+                showStatusStrip = showStatusStrip,
                 soundEnabled = soundEnabled,
                 onToggleSound = { viewModel.toggleSound() },
                 onSettings = {
