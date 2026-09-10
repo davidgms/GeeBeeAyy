@@ -127,3 +127,9 @@ fun GeeBeeAyyTheme(
  * eight arguments for drag handling - buys nothing.
  */
 val LocalControlPalette = staticCompositionLocalOf { ControlTint.NIGHT.palette }
+
+/**
+ * Multiplier on the on-screen buttons' label sizes. See
+ * [com.geebeeayy.app.data.ControlFontSize].
+ */
+val LocalControlFontScale = staticCompositionLocalOf { 1f }

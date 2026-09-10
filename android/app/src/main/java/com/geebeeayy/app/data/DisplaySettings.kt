@@ -98,6 +98,16 @@ class DisplaySettings(context: Context) {
         prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
     }
 
+    /** How large the letters on the on-screen buttons are drawn. */
+    fun getControlFontSize(): ControlFontSize =
+        prefs.getString(KEY_CONTROL_FONT, null)
+            ?.let { saved -> runCatching { ControlFontSize.valueOf(saved) }.getOrNull() }
+            ?: ControlFontSize.MEDIUM
+
+    fun setControlFontSize(size: ControlFontSize) {
+        prefs.edit().putString(KEY_CONTROL_FONT, size.name).apply()
+    }
+
     /** Which colour scheme the on-screen controls draw themselves in. */
     fun getControlTint(): ControlTint =
         prefs.getString(KEY_CONTROL_TINT, null)
@@ -172,6 +182,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
         private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
         private const val KEY_CONTROL_TINT = "control_tint"
+        private const val KEY_CONTROL_FONT = "control_font_size"
 
         /**
          * Highest ratio offered.

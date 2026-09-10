@@ -23,6 +23,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import androidx.compose.runtime.CompositionLocalProvider
+import com.geebeeayy.app.ui.theme.LocalControlFontScale
 import com.geebeeayy.app.ui.theme.LocalControlPalette
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomEntry
@@ -195,6 +196,7 @@ fun GeeBeeAyyNavHost() {
             val controlOpacity = remember(filePath) { DisplaySettings(context).getControlOpacity() }
             val screenFilter = remember(filePath) { DisplaySettings(context).getScreenFilter() }
             val controlTint = remember(filePath) { DisplaySettings(context).getControlTint() }
+            val controlFont = remember(filePath) { DisplaySettings(context).getControlFontSize() }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -217,7 +219,10 @@ fun GeeBeeAyyNavHost() {
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
-            CompositionLocalProvider(LocalControlPalette provides controlTint.palette) {
+            CompositionLocalProvider(
+                LocalControlPalette provides controlTint.palette,
+                LocalControlFontScale provides controlFont.scale,
+            ) {
             EmulationScreen(
                 frameBuffer = frameBuffer,
                 isLoading = isLoading,

@@ -116,6 +116,8 @@ fun EmulationScreen(
     // every button being outlined at once.
     var selectedButton by remember { mutableStateOf<ControlButton?>(null) }
     val offsets = remember { mutableStateMapOf<ControlButton, Offset>() }
+    /** Per-control size multipliers, alongside [offsets] and saved with them. */
+    val scales = remember { mutableStateMapOf<ControlButton, Float>() }
     // Custom buttons (combos, sequences, hold toggles) belong to the layout
     // the same way the real buttons' positions do. Their drag is separate
     // from the real buttons' undo/redo/Done staging below - each drag saves
@@ -123,6 +125,7 @@ fun EmulationScreen(
     // this edit" concern for a position with no default to revert to.
     var customButtons by remember { mutableStateOf<List<CustomButton>>(emptyList()) }
     val customOffsets = remember { mutableStateMapOf<String, Offset>() }
+    val customScales = remember { mutableStateMapOf<String, Float>() }
     val heldToggles = remember { mutableStateMapOf<String, Boolean>() }
     var selectedCustomId by remember { mutableStateOf<String?>(null) }
     var customButtonsModalOpen by remember { mutableStateOf(false) }
@@ -135,16 +138,20 @@ fun EmulationScreen(
             }
         }
         offsets.clear()
+        scales.clear()
         ControlButton.entries.forEach { button ->
             val (x, y) = layoutStore.getControlOffset(layoutId, button)
             offsets[button] = Offset(x, y)
+            scales[button] = layoutStore.getControlScale(layoutId, button)
         }
         customButtons = layoutStore.getCustomButtons(layoutId)
         customOffsets.clear()
+        customScales.clear()
         heldToggles.clear()
         customButtons.forEach { button ->
             val (x, y) = layoutStore.getCustomButtonOffset(layoutId, button.id)
             customOffsets[button.id] = Offset(x, y)
+            customScales[button.id] = layoutStore.getCustomButtonScale(layoutId, button.id)
         }
     }
     // Leaving the screen with a TOGGLE_HOLD button on used to leave those
@@ -172,41 +179,66 @@ fun EmulationScreen(
     // Undo/redo history for the current edit session: a stack of full-layout
     // snapshots taken before each change (a drag gesture or Reset), not one
     // per pixel of movement - a single drag is one undo step, not hundreds.
-    val undoStack = remember { mutableStateListOf<Map<ControlButton, Offset>>() }
-    val redoStack = remember { mutableStateListOf<Map<ControlButton, Offset>>() }
+    val undoStack = remember { mutableStateListOf<LayoutSnapshot>() }
+    val redoStack = remember { mutableStateListOf<LayoutSnapshot>() }
+    fun snapshot() = LayoutSnapshot(offsets.toMap(), scales.toMap(), customScales.toMap())
+    fun restore(state: LayoutSnapshot) {
+        offsets.clear(); offsets.putAll(state.offsets)
+        scales.clear(); scales.putAll(state.scales)
+        customScales.clear(); customScales.putAll(state.customScales)
+    }
     val pushUndoSnapshot: () -> Unit = {
-        undoStack.add(offsets.toMap())
+        undoStack.add(snapshot())
         redoStack.clear()
     }
     val undoEdit: () -> Unit = {
         undoStack.removeLastOrNull()?.let { previous ->
-            redoStack.add(offsets.toMap())
-            offsets.clear()
-            offsets.putAll(previous)
+            redoStack.add(snapshot())
+            restore(previous)
         }
     }
     val redoEdit: () -> Unit = {
         redoStack.removeLastOrNull()?.let { next ->
-            undoStack.add(offsets.toMap())
-            offsets.clear()
-            offsets.putAll(next)
+            undoStack.add(snapshot())
+            restore(next)
+        }
+    }
+    // One press of smaller/bigger, applied to whatever is selected. Each
+    // press is its own undo step, which is what a stepper should be: a slider
+    // would bury a whole gesture's worth of change behind one undo.
+    val resizeSelected: (Float) -> Unit = { delta ->
+        pushUndoSnapshot()
+        val customId = selectedCustomId
+        val button = selectedButton
+        if (customId != null) {
+            customScales[customId] = ((customScales[customId] ?: 1f) + delta)
+                .coerceIn(ControlLayoutStore.MIN_CONTROL_SCALE, ControlLayoutStore.MAX_CONTROL_SCALE)
+        } else if (button != null) {
+            scales[button] = ((scales[button] ?: 1f) + delta)
+                .coerceIn(ControlLayoutStore.MIN_CONTROL_SCALE, ControlLayoutStore.MAX_CONTROL_SCALE)
         }
     }
     val handleDragStart: (ControlButton) -> Unit = { button ->
         pushUndoSnapshot()
         selectedButton = button
+        selectedCustomId = null
     }
-    val handleDragEnd: () -> Unit = { selectedButton = null }
+    // The selection outlives the drag on purpose: the size buttons in the
+    // edit bar act on whatever is selected, and clearing it here left nothing
+    // to act on the moment the finger came up.
+    val handleDragEnd: () -> Unit = {}
     // A custom button's position saves the moment the drag ends - there is
     // no Done to stage it behind, so `selectedCustomId` still names the one
     // that just finished when this fires.
-    val handleCustomDragStart: (String) -> Unit = { id -> selectedCustomId = id }
+    val handleCustomDragStart: (String) -> Unit = { id ->
+        selectedCustomId = id
+        selectedButton = null
+    }
     val handleCustomDragEnd: () -> Unit = {
         selectedCustomId?.let { id ->
             val pos = customOffsets[id] ?: Offset.Zero
             layoutStore.setCustomButtonOffset(activeLayoutId, id, pos.x, pos.y)
         }
-        selectedCustomId = null
     }
     // Makes `layout` the current game's layout - a radio pick just switches
     // what is on screen; opening its editor also closes the modal and drops
@@ -377,6 +409,7 @@ fun EmulationScreen(
                         editingLayout = editingLayout,
                         selectedButton = selectedButton,
                         offsets = offsets,
+                        scales = scales,
                         onDragStart = handleDragStart,
                         onDragEnd = handleDragEnd,
                     )
@@ -404,6 +437,7 @@ fun EmulationScreen(
                             editingLayout = editingLayout,
                             selectedButton = selectedButton,
                             offsets = offsets,
+                            scales = scales,
                             onDragStart = handleDragStart,
                             onDragEnd = handleDragEnd,
                         )
@@ -470,6 +504,7 @@ fun EmulationScreen(
                     onKeyChange = onKeyChange,
                     editingLayout = editingLayout,
                     offsets = offsets,
+                    scales = scales,
                     selectedButton = selectedButton,
                     onDragStart = handleDragStart,
                     onDragEnd = handleDragEnd,
@@ -494,6 +529,7 @@ fun EmulationScreen(
                     customOffsets,
                     handleCustomDragStart,
                     handleCustomDragEnd,
+                    customScales,
                 )
             ) {
                 CustomButtonView(
@@ -511,10 +547,18 @@ fun EmulationScreen(
 
         if (editingLayout) {
             LayoutEditBar(
+                selectionLabel = selectedCustomId
+                    ?.let { id -> customButtons.firstOrNull { it.id == id }?.name }
+                    ?: selectedButton?.label,
+                onResize = resizeSelected,
                 onDone = {
                     ControlButton.entries.forEach { button ->
                         val o = offsets[button] ?: Offset.Zero
                         layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
+                        layoutStore.setControlScale(activeLayoutId, button, scales[button] ?: 1f)
+                    }
+                    customScales.forEach { (id, scale) ->
+                        layoutStore.setCustomButtonScale(activeLayoutId, id, scale)
                     }
                     editingLayout = false
                     selectedButton = null
@@ -524,7 +568,11 @@ fun EmulationScreen(
                 onReset = {
                     pushUndoSnapshot()
                     layoutStore.resetLayoutOffsets(activeLayoutId)
-                    ControlButton.entries.forEach { offsets[it] = Offset.Zero }
+                    ControlButton.entries.forEach {
+                        offsets[it] = Offset.Zero
+                        scales[it] = 1f
+                    }
+                    customScales.keys.toList().forEach { customScales[it] = 1f }
                 },
                 canUndo = undoStack.isNotEmpty(),
                 canRedo = redoStack.isNotEmpty(),
@@ -681,6 +729,8 @@ private fun ScreenContainer(
  */
 @Composable
 private fun LayoutEditBar(
+    selectionLabel: String?,
+    onResize: (Float) -> Unit,
     onDone: () -> Unit,
     onReset: () -> Unit,
     canUndo: Boolean,
@@ -701,11 +751,49 @@ private fun LayoutEditBar(
         // for five controls: "Reset" wrapped to two lines and "Done" was
         // pushed off the right edge entirely, so there was no way out of edit
         // mode. Giving the controls a row of their own fits them at any width.
-        Text(
-            text = "Touch a button, then drag it",
-            color = PineGlowMist,
-            fontSize = 14.sp,
-        )
+        // The hint and the size stepper share a row: the bar floats over the
+        // toolbar, and a third row buried the back button behind it.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selectionLabel?.let { "$it selected" } ?: "Touch a button, then drag it",
+                color = PineGlowMist,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // Greyed rather than hidden: a stepper that appears and vanishes
+            // makes the bar jump under the finger that is still dragging.
+            val canResize = selectionLabel != null
+            Text(
+                text = "Size",
+                color = if (canResize) PineGlowMist else PineGlowMist.copy(alpha = 0.3f),
+                fontSize = 14.sp,
+            )
+            IconButton(
+                onClick = { onResize(-ControlLayoutStore.CONTROL_SCALE_STEP) },
+                enabled = canResize,
+            ) {
+                Icon(
+                    Icons.Default.Remove,
+                    contentDescription = "Smaller",
+                    tint = if (canResize) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+            IconButton(
+                onClick = { onResize(ControlLayoutStore.CONTROL_SCALE_STEP) },
+                enabled = canResize,
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Bigger",
+                    tint = if (canResize) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -885,10 +973,17 @@ private fun <T> Modifier.movableControl(
     offsets: MutableMap<T, Offset>,
     onDragStart: (T) -> Unit = {},
     onDragEnd: () -> Unit = {},
+    scales: Map<T, Float> = emptyMap(),
 ): Modifier {
     val offset = offsets[button] ?: Offset.Zero
+    val scale = scales[button] ?: 1f
     return this
         .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+        // A layer, not a size change. Compose maps pointer input back through
+        // it, so the touch target grows with the drawing and stays in
+        // register - and the neighbours do not move to make room, which is
+        // the point of a layout the player positioned by hand.
+        .graphicsLayer(scaleX = scale, scaleY = scale)
         .then(
             if (!editing) {
                 Modifier
@@ -927,6 +1022,7 @@ fun GameControls(
     onKeyChange: (Int, Boolean) -> Unit,
     editingLayout: Boolean = false,
     offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
     selectedButton: ControlButton? = null,
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
@@ -934,7 +1030,7 @@ fun GameControls(
     Column(modifier = Modifier.fillMaxWidth()) {
         // Shoulder buttons sit above the rest, where the real hardware puts
         // them: L on the far left, R on the far right.
-        ShoulderRow(onKeyChange, editingLayout, selectedButton, offsets, onDragStart, onDragEnd)
+        ShoulderRow(onKeyChange, editingLayout, selectedButton, offsets, scales, onDragStart, onDragEnd)
 
         // D-pad hard left, face buttons hard right, nothing between them -
         // the thumbs rest at the edges of the phone, not in the middle.
@@ -950,15 +1046,16 @@ fun GameControls(
                 editingLayout = editingLayout,
                 selectedButton = selectedButton,
                 offsets = offsets,
+                scales = scales,
                 onDragStart = onDragStart,
                 onDragEnd = onDragEnd,
             )
-            ActionButtons(onKeyChange, editingLayout, selectedButton, offsets, onDragStart, onDragEnd)
+            ActionButtons(onKeyChange, editingLayout, selectedButton, offsets, scales, onDragStart, onDragEnd)
         }
 
         // Start and Select. Without these most games cannot get past a title
         // screen, so they are not optional extras.
-        StartSelectRow(onKeyChange, editingLayout, selectedButton, offsets, onDragStart, onDragEnd)
+        StartSelectRow(onKeyChange, editingLayout, selectedButton, offsets, scales, onDragStart, onDragEnd)
     }
 }
 
@@ -971,6 +1068,7 @@ fun ShoulderRow(
     editingLayout: Boolean = false,
     selectedButton: ControlButton? = null,
     offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
@@ -982,14 +1080,14 @@ fun ShoulderRow(
     ) {
         Box(
             modifier = Modifier.movableControl(
-                ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+                ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
             )
         ) {
             PillButton("L", GbaEngine.KEY_L, onKeyChange)
         }
         Box(
             modifier = Modifier.movableControl(
-                ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+                ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
             )
         ) {
             PillButton("R", GbaEngine.KEY_R, onKeyChange)
@@ -1004,6 +1102,7 @@ fun StartSelectRow(
     editingLayout: Boolean = false,
     selectedButton: ControlButton? = null,
     offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
@@ -1015,7 +1114,7 @@ fun StartSelectRow(
     ) {
         Box(
             modifier = Modifier.movableControl(
-                ControlButton.SELECT, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+                ControlButton.SELECT, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
             )
         ) {
             PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
@@ -1023,7 +1122,7 @@ fun StartSelectRow(
         Spacer(modifier = Modifier.width(24.dp))
         Box(
             modifier = Modifier.movableControl(
-                ControlButton.START, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd
+                ControlButton.START, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
             )
         ) {
             PillButton("START", GbaEngine.KEY_START, onKeyChange)
@@ -1080,7 +1179,7 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
         Text(
             label,
             color = if (isPressed) controls.labelPressed else controls.label,
-            fontSize = 13.sp,
+            fontSize = (13 * LocalControlFontScale.current).sp,
             fontWeight = FontWeight.Bold,
         )
     }
@@ -1167,7 +1266,7 @@ fun CustomButtonView(
         Text(
             button.name,
             color = if (held || isPressed) controls.labelPressed else controls.label,
-            fontSize = 12.sp,
+            fontSize = (12 * LocalControlFontScale.current).sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1203,6 +1302,7 @@ fun DPad(
     editingLayout: Boolean = false,
     selectedButton: ControlButton? = null,
     offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
@@ -1211,7 +1311,7 @@ fun DPad(
 
     Box(
         modifier = modifier.movableControl(
-            ControlButton.DPAD, editingLayout, selectedButton, DPadCrossShape, offsets, onDragStart, onDragEnd
+            ControlButton.DPAD, editingLayout, selectedButton, DPadCrossShape, offsets, onDragStart, onDragEnd, scales
         )
     ) {
         Canvas(
@@ -1430,6 +1530,7 @@ fun ActionButtons(
     editingLayout: Boolean = false,
     selectedButton: ControlButton? = null,
     offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
@@ -1445,10 +1546,10 @@ fun ActionButtons(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         val aModifier = Modifier.movableControl(
-            ControlButton.BUTTON_A, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+            ControlButton.BUTTON_A, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd, scales
         )
         val bModifier = Modifier.movableControl(
-            ControlButton.BUTTON_B, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd
+            ControlButton.BUTTON_B, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd, scales
         )
         ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, aModifier, onKeyChange)
         ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, bModifier, onKeyChange)
@@ -1505,7 +1606,7 @@ fun ActionButton(
         Text(
             text = label,
             color = if (isPressed) controls.labelPressed else controls.label,
-            fontSize = 20.sp,
+            fontSize = (20 * LocalControlFontScale.current).sp,
             fontWeight = FontWeight.Bold,
         )
     }
@@ -1775,3 +1876,16 @@ private fun LayoutNameDialog(
         },
     )
 }
+
+/**
+ * One step of the layout editor's undo history.
+ *
+ * Positions and sizes travel together because they are edited together: undo
+ * after "move it, then make it bigger" has to put back the size the move was
+ * made at, not just the position.
+ */
+private data class LayoutSnapshot(
+    val offsets: Map<ControlButton, Offset>,
+    val scales: Map<ControlButton, Float>,
+    val customScales: Map<String, Float>,
+)
