@@ -494,9 +494,14 @@ fun EmulationScreen(
                 // multiplier threaded through every button: Compose maps
                 // pointer input through the layer, so the touch targets grow
                 // with the drawing and stay in register.
+                // Full size, not wrapped tight around the buttons. `alpha`
+                // forces this into its own layer, and the layer is what was
+                // cutting off any control dragged above the block - and, with
+                // it, the touches on that control. It covers the whole play
+                // area now, so a control can go anywhere over the picture.
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
+                        .fillMaxSize()
                         .graphicsLayer(
                             scaleX = controlScale,
                             scaleY = controlScale,
@@ -1047,108 +1052,140 @@ fun GameControls(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // Shoulder buttons sit above the rest, where the real hardware puts
-        // them: L on the far left, R on the far right.
-        ShoulderRow(onKeyChange, editingLayout, selectedButton, offsets, scales, onDragStart, onDragEnd)
+    val controls = LocalControlPalette.current
 
-        // D-pad hard left, face buttons hard right, nothing between them -
-        // the thumbs rest at the edges of the phone, not in the middle.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            DPad(
-                onKeyChange = onKeyChange,
-                editingLayout = editingLayout,
-                selectedButton = selectedButton,
-                offsets = offsets,
-                scales = scales,
-                onDragStart = onDragStart,
-                onDragEnd = onDragEnd,
-            )
-            ActionButtons(onKeyChange, editingLayout, selectedButton, offsets, scales, onDragStart, onDragEnd)
-        }
-
-        // Start and Select. Without these most games cannot get past a title
-        // screen, so they are not optional extras.
-        StartSelectRow(onKeyChange, editingLayout, selectedButton, offsets, scales, onDragStart, onDragEnd)
-    }
-}
-
-private val pillShape = RoundedCornerShape(24.dp)
-
-/** L and R, pushed to the outer edges. */
-@Composable
-fun ShoulderRow(
-    onKeyChange: (Int, Boolean) -> Unit,
-    editingLayout: Boolean = false,
-    selectedButton: ControlButton? = null,
-    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
-    scales: Map<ControlButton, Float> = emptyMap(),
-    onDragStart: (ControlButton) -> Unit = {},
-    onDragEnd: () -> Unit = {},
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
+    // Every control is a direct child of this one full-size box, placed by
+    // alignment and a bottom padding rather than by a column of rows.
+    //
+    // The rows were why a control could not be dragged over the picture and a
+    // custom button could: a child moved outside its parent's bounds is not
+    // hit-tested out there, so a D-pad dragged up went dead, and the block's
+    // alpha layer cut off its drawing at the same edge. Giving every control
+    // the whole play area as its parent is what the custom buttons always had.
+    //
+    // The paddings reproduce where the rows used to put things: shoulders on
+    // top, D-pad hard left and face buttons hard right with nothing between
+    // them - thumbs rest at the edges of a phone, not in the middle - and
+    // Start and Select centred underneath.
+    Box(modifier = Modifier.fillMaxSize()) {
         Box(
-            modifier = Modifier.movableControl(
-                ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
-            )
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = EDGE_PADDING, bottom = SHOULDER_BOTTOM)
+                .movableControl(
+                    ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
         ) {
             PillButton("L", GbaEngine.KEY_L, onKeyChange)
         }
         Box(
-            modifier = Modifier.movableControl(
-                ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
-            )
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = EDGE_PADDING, bottom = SHOULDER_BOTTOM)
+                .movableControl(
+                    ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
         ) {
             PillButton("R", GbaEngine.KEY_R, onKeyChange)
         }
-    }
-}
 
-/** Start and Select, centred under the main controls. */
-@Composable
-fun StartSelectRow(
-    onKeyChange: (Int, Boolean) -> Unit,
-    editingLayout: Boolean = false,
-    selectedButton: ControlButton? = null,
-    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
-    scales: Map<ControlButton, Float> = emptyMap(),
-    onDragStart: (ControlButton) -> Unit = {},
-    onDragEnd: () -> Unit = {},
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.Center,
-    ) {
+        DPad(
+            onKeyChange = onKeyChange,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = MAIN_PADDING, bottom = MAIN_BOTTOM),
+            editingLayout = editingLayout,
+            selectedButton = selectedButton,
+            offsets = offsets,
+            scales = scales,
+            onDragStart = onDragStart,
+            onDragEnd = onDragEnd,
+        )
+
+        // A above B. Side by side reads left-to-right as "B then A", which is
+        // the wrong way round from the hardware and puts the button pressed
+        // most under the weaker part of the thumb's arc.
+        ActionButton(
+            "A", GbaEngine.KEY_A, controls.fill, controls.pressed,
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = MAIN_PADDING, bottom = FACE_A_BOTTOM)
+                .movableControl(
+                    ControlButton.BUTTON_A, editingLayout, selectedButton, CircleShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                ),
+            onKeyChange,
+        )
+        ActionButton(
+            "B", GbaEngine.KEY_B, controls.fill, controls.pressed,
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = MAIN_PADDING, bottom = FACE_B_BOTTOM)
+                .movableControl(
+                    ControlButton.BUTTON_B, editingLayout, selectedButton, CircleShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                ),
+            onKeyChange,
+        )
+
+        // Start and Select. Without these most games cannot get past a title
+        // screen, so they are not optional extras.
         Box(
-            modifier = Modifier.movableControl(
-                ControlButton.SELECT, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
-            )
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = START_SELECT_BOTTOM)
+                .offset(x = -START_SELECT_SPREAD)
+                .movableControl(
+                    ControlButton.SELECT, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
         ) {
             PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
         }
-        Spacer(modifier = Modifier.width(24.dp))
         Box(
-            modifier = Modifier.movableControl(
-                ControlButton.START, editingLayout, selectedButton, pillShape, offsets, onDragStart, onDragEnd, scales
-            )
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = START_SELECT_BOTTOM)
+                .offset(x = START_SELECT_SPREAD)
+                .movableControl(
+                    ControlButton.START, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
         ) {
             PillButton("START", GbaEngine.KEY_START, onKeyChange)
         }
     }
 }
+
+/**
+ * Where each control sits by default, measured up from the bottom of the play
+ * area. These reproduce the row layout they replaced: the D-pad is 144.dp and
+ * a face button 56.dp, so the A/B pair (56 + 16 + 56 = 128) sits 8.dp higher
+ * than the D-pad's foot to stay centred against it, exactly as the row that
+ * held them both did.
+ */
+private val EDGE_PADDING = 16.dp
+private val MAIN_PADDING = 24.dp
+private val SHOULDER_BOTTOM = 232.dp
+private val MAIN_BOTTOM = 72.dp
+private val FACE_B_BOTTOM = 80.dp
+private val FACE_A_BOTTOM = 152.dp
+private val START_SELECT_BOTTOM = 12.dp
+
+/**
+ * How far Start and Select sit either side of centre.
+ *
+ * An offset rather than padding: padding would change each pill's own bounds,
+ * and where the content then lands depends on how wide the word inside it is -
+ * "SELECT" is wider than "START", so the pair would not be symmetric.
+ */
+private val START_SELECT_SPREAD = 56.dp
+
+private val pillShape = RoundedCornerShape(24.dp)
+
+
 
 /**
  * A wide, short button for the controls that are pressed deliberately rather
@@ -1250,10 +1287,45 @@ fun CustomButtonView(
                             button.keys.forEach { key -> onKeyChange(key, false) }
                         }
                     }
-                    CustomButtonMode.TOGGLE_HOLD -> detectTapGestures(onTap = { onToggleHeld() })
-                    CustomButtonMode.SEQUENCE -> detectTapGestures(
-                        onTap = {
-                            scope.launch {
+                    // Raw events, not `detectTapGestures`, and toggled on the
+                    // press rather than the release.
+                    //
+                    // `detectTapGestures` starts at `awaitFirstDown(
+                    // requireUnconsumed = true)`, so it never fires if
+                    // anything inner claimed the press first - and this sits
+                    // on a Material `Button`, which carries its own
+                    // `clickable`. Combo mode already reads the pointer
+                    // stream directly for the same reason, and combo mode is
+                    // the one that works.
+                    //
+                    // On the press is also the right moment for a control:
+                    // holding L should start the instant the finger lands,
+                    // not when it leaves.
+                    CustomButtonMode.TOGGLE_HOLD -> try {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val down = event.changes.any { it.pressed }
+                                if (down && !isPressed) {
+                                    isPressed = true
+                                    onToggleHeld()
+                                } else if (!down) {
+                                    isPressed = false
+                                }
+                                event.changes.forEach { if (it.pressed) it.consume() }
+                            }
+                        }
+                    } finally {
+                        isPressed = false
+                    }
+                    // Same raw-pointer reason as TOGGLE_HOLD above.
+                    CustomButtonMode.SEQUENCE -> awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val down = event.changes.any { it.pressed }
+                            if (down && !isPressed) {
+                                isPressed = true
+                                scope.launch {
                                 try {
                                     for (key in button.keys) {
                                         onKeyChange(key, true)
@@ -1268,9 +1340,13 @@ fun CustomButtonView(
                                     // leave that key down for good.
                                     button.keys.forEach { key -> onKeyChange(key, false) }
                                 }
+                                }
+                            } else if (!down) {
+                                isPressed = false
                             }
-                        },
-                    )
+                            event.changes.forEach { if (it.pressed) it.consume() }
+                        }
+                    }
                 }
             },
         colors = ButtonDefaults.buttonColors(
