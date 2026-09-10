@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.LastPlayed
+import com.geebeeayy.app.data.RomHeader
 import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
@@ -450,21 +451,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private fun fallbackSaveDir(): File =
         File(getApplication<Application>().filesDir, "saves").apply { mkdirs() }
 
-    /** Title (0xA0, 12 bytes) + game code (0xAC, 4 bytes), sanitized to a safe filename fragment. */
-    private fun computeRomStateKey(romData: ByteArray): String {
-        fun readAscii(offset: Int, len: Int): String =
-            String(romData, offset, len, Charsets.US_ASCII).substringBefore('\u0000').trim()
-
-        val title = readAscii(0xA0, 12)
-        val gameCode = readAscii(0xAC, 4)
-        val raw = when {
-            gameCode.isNotBlank() && title.isNotBlank() -> "${title}_$gameCode"
-            gameCode.isNotBlank() -> gameCode
-            title.isNotBlank() -> title
-            else -> "rom"
-        }
-        return raw.uppercase().replace(Regex("[^A-Z0-9_]"), "_").ifBlank { "rom" }
-    }
+    /**
+     * The filename fragment this cart's saves and states are keyed on.
+     *
+     * The parsing lives in [RomHeader] because the ROM browser's info dialog
+     * needs the same two fields, and two copies of a rule that decides where
+     * save states live is one copy too many.
+     */
+    private fun computeRomStateKey(romData: ByteArray): String =
+        RomHeader.from(romData)?.stateKey() ?: "rom"
 
     /**
      * Load a battery save into the core before the first frame runs, or the

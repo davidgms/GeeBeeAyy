@@ -155,6 +155,7 @@ fun GeeBeeAyyNavHost() {
                     navController.navigate("homebrew")
                 },
                 onAboutClick = { },
+                onRefresh = { rescanRoms() },
             )
         }
 

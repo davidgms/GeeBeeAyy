@@ -1,7 +1,12 @@
 package com.geebeeayy.app.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import java.io.File
+import com.geebeeayy.app.data.RomHeader
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,7 +61,7 @@ enum class RomSortOrder(val label: String) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun RomBrowserScreen(
     roms: List<RomEntry>,
@@ -62,8 +69,15 @@ fun RomBrowserScreen(
     onSettingsClick: () -> Unit,
     onDownloadClick: () -> Unit,
     onAboutClick: () -> Unit,
+    onRefresh: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
+    var infoRom by remember { mutableStateOf<RomEntry?>(null) }
+    // The scan is a coroutine on an IO dispatcher and gives no completion
+    // signal back, so the spinner is held for a beat rather than until the
+    // list changes: a rescan that finds nothing new changes nothing, and a
+    // spinner waiting for that would never stop.
+    val refreshState = rememberPullToRefreshState()
     var sortOrder by remember { mutableStateOf(RomSortOrder.LAST_PLAYED_DESC) }
     var sortMenuOpen by remember { mutableStateOf(false) }
 
@@ -78,20 +92,17 @@ fun RomBrowserScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                // The wordmark alone. A fifth action button went in beside
+                // it and the old "GeeBeeAyy! ROMs" pair had nowhere left to
+                // go, so it wrapped mid-word to "RO / Ms". The list under it
+                // says what the screen is.
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "GeeBeeAyy!",
-                            fontWeight = FontWeight.Bold,
-                            color = GoldenSaplight,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "ROMs",
-                            fontWeight = FontWeight.Light,
-                            color = PineGlowMist,
-                        )
-                    }
+                    Text(
+                        text = "GeeBeeAyy!",
+                        fontWeight = FontWeight.Bold,
+                        color = GoldenSaplight,
+                        maxLines = 1,
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = NightVoid,
@@ -120,6 +131,13 @@ fun RomBrowserScreen(
                                 )
                             }
                         }
+                    }
+                    IconButton(onClick = onRefresh) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Rescan ROM folders",
+                            tint = AmberResin
+                        )
                     }
                     IconButton(onClick = onDownloadClick) {
                         Icon(
@@ -183,6 +201,14 @@ fun RomBrowserScreen(
                         modifier = Modifier.padding(16.dp),
                     )
                 } else {
+                    // Clipped on purpose. At rest the spinner is translated
+                    // up by its own height, and without a clip it drew as a
+                    // dark disc parked on the filter field above.
+                    Box(
+                        modifier = Modifier
+                            .clipToBounds()
+                            .nestedScroll(refreshState.nestedScrollConnection)
+                    ) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
@@ -200,7 +226,11 @@ fun RomBrowserScreen(
                                 )
                             }
                             items(favorites) { rom ->
-                                RomCard(rom = rom, onClick = { onRomClick(rom) })
+                                RomCard(
+                                    rom = rom,
+                                    onClick = { onRomClick(rom) },
+                                    onLongClick = { infoRom = rom },
+                                )
                             }
                         }
                         // The rest, not all of them: `favorites` is a subset of
@@ -208,25 +238,49 @@ fun RomBrowserScreen(
                         // every favourite a second time. Latent only because
                         // nothing sets `isFavorite` yet.
                         items(visibleRoms.filterNot { it.isFavorite }) { rom ->
-                            RomCard(rom = rom, onClick = { onRomClick(rom) })
+                            RomCard(
+                                rom = rom,
+                                onClick = { onRomClick(rom) },
+                                onLongClick = { infoRom = rom },
+                            )
                         }
+                    }
+                    PullToRefreshContainer(
+                        state = refreshState,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                        containerColor = NightPanel,
+                        contentColor = GoldenSaplight,
+                    )
                     }
                 }
             }
         }
+    }
+
+    if (refreshState.isRefreshing) {
+        LaunchedEffect(Unit) {
+            onRefresh()
+            kotlinx.coroutines.delay(600)
+            refreshState.endRefresh()
+        }
+    }
+
+    infoRom?.let { rom ->
+        RomInfoDialog(rom = rom, onDismiss = { infoRom = null })
     }
 }
 
 private fun formatLastPlayed(millis: Long): String =
     java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault()).format(millis)
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun RomCard(rom: RomEntry, onClick: () -> Unit) {
+fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(
             containerColor = NightPanel,
         ),
@@ -350,6 +404,65 @@ fun EmptyState(modifier: Modifier = Modifier) {
             fontSize = 14.sp,
             color = PineGlowMist.copy(alpha = 0.7f),
             lineHeight = 20.sp,
+        )
+    }
+}
+
+/**
+ * What the app knows about one ROM, on a long press.
+ *
+ * The cartridge title and game code come from the file's own header rather
+ * than its name, because they are what the emulator keys saves on - a file
+ * renamed on disk keeps its saves, and this dialog is where that becomes
+ * visible.
+ */
+@Composable
+fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
+    var header by remember(rom.filePath) { mutableStateOf<RomHeader?>(null) }
+    LaunchedEffect(rom.filePath) {
+        header = withContext(Dispatchers.IO) { RomHeader.read(File(rom.filePath)) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightRaised,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text("Game info", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                InfoRow("Name", rom.name)
+                InfoRow("File", rom.fileName)
+                InfoRow("Location", File(rom.filePath).parent ?: "-")
+                InfoRow("File size", rom.size)
+                InfoRow("Cartridge title", header?.title?.ifBlank { "-" } ?: "Reading...")
+                InfoRow("Game code", header?.gameCode?.ifBlank { "-" } ?: "Reading...")
+                InfoRow(
+                    "Last played",
+                    rom.lastPlayedMillis?.let { formatLastPlayed(it) } ?: "Never",
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("OK", color = GoldenSaplight)
+            }
+        },
+    )
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Column {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            color = AmberResin,
+        )
+        Text(
+            text = value,
+            fontSize = 14.sp,
+            color = PineGlowMist,
         )
     }
 }
