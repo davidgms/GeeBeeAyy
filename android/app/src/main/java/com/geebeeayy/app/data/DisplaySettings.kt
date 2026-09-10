@@ -121,6 +121,41 @@ class DisplaySettings(context: Context) {
         prefs.edit().putString(KEY_CONTROL_FONT, size.name).apply()
     }
 
+    /** How hard the phone answers a press of an on-screen button. */
+    fun getHapticStrength(): HapticStrength =
+        prefs.getString(KEY_HAPTICS, null)
+            ?.let { saved -> runCatching { HapticStrength.valueOf(saved) }.getOrNull() }
+            ?: HapticStrength.LIGHT
+
+    fun setHapticStrength(strength: HapticStrength) {
+        prefs.edit().putString(KEY_HAPTICS, strength.name).apply()
+    }
+
+    /**
+     * Half the width, in degrees, of each of the D-pad's four straight
+     * directions. What is left between them is a diagonal.
+     *
+     * 45 leaves no diagonals at all - the four sectors meet. 30, the default,
+     * gives a 60-degree straight and a 30-degree diagonal. Down at 15 the
+     * diagonals are twice as wide as the straights.
+     *
+     * There is no right answer here, which is why it is a setting and not a
+     * constant: it depends on the size of the thumb, where the pad sits, and
+     * whether the game is a platformer or a menu.
+     */
+    fun getDpadCardinalHalfDegrees(): Float =
+        prefs.getFloat(KEY_DPAD_CARDINAL, 30f)
+            .coerceIn(MIN_DPAD_CARDINAL_HALF, MAX_DPAD_CARDINAL_HALF)
+
+    fun setDpadCardinalHalfDegrees(degrees: Float) {
+        prefs.edit()
+            .putFloat(
+                KEY_DPAD_CARDINAL,
+                degrees.coerceIn(MIN_DPAD_CARDINAL_HALF, MAX_DPAD_CARDINAL_HALF),
+            )
+            .apply()
+    }
+
     /** Which colour scheme the on-screen controls draw themselves in. */
     fun getControlTint(): ControlTint =
         prefs.getString(KEY_CONTROL_TINT, null)
@@ -197,6 +232,14 @@ class DisplaySettings(context: Context) {
         private const val KEY_CONTROL_TINT = "control_tint"
         private const val KEY_CONTROL_FONT = "control_font_size"
         private const val KEY_SOUND_ENABLED = "sound_enabled"
+        private const val KEY_HAPTICS = "haptic_strength"
+        private const val KEY_DPAD_CARDINAL = "dpad_cardinal_half_degrees"
+
+        /** At 45 the four straight sectors meet and there is no diagonal left. */
+        const val MAX_DPAD_CARDINAL_HALF = 45f
+
+        /** At 15 a diagonal is twice as wide as a straight. */
+        const val MIN_DPAD_CARDINAL_HALF = 15f
 
         /**
          * Highest ratio offered.

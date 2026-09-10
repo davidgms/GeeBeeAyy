@@ -23,8 +23,10 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import androidx.compose.runtime.CompositionLocalProvider
+import com.geebeeayy.app.ui.Haptics
 import com.geebeeayy.app.ui.theme.LocalControlFontScale
 import com.geebeeayy.app.ui.theme.LocalControlPalette
+import com.geebeeayy.app.ui.theme.LocalDpadCardinalHalf
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
@@ -198,6 +200,14 @@ fun GeeBeeAyyNavHost() {
             val screenFilter = remember(filePath) { DisplaySettings(context).getScreenFilter() }
             val controlTint = remember(filePath) { DisplaySettings(context).getControlTint() }
             val controlFont = remember(filePath) { DisplaySettings(context).getControlFontSize() }
+            val dpadCardinal = remember(filePath) {
+                DisplaySettings(context).getDpadCardinalHalfDegrees()
+            }
+            // Re-read on every press, not per ROM: a player changing the
+            // strength in Settings wants to feel the difference on the next
+            // button, not the next game.
+            val haptics = remember { Haptics(context) }
+            val hapticStrength = { DisplaySettings(context).getHapticStrength() }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -223,6 +233,7 @@ fun GeeBeeAyyNavHost() {
             CompositionLocalProvider(
                 LocalControlPalette provides controlTint.palette,
                 LocalControlFontScale provides controlFont.scale,
+                LocalDpadCardinalHalf provides dpadCardinal,
             ) {
             EmulationScreen(
                 frameBuffer = frameBuffer,
@@ -260,7 +271,10 @@ fun GeeBeeAyyNavHost() {
                     viewModel.onAppBackgrounded()
                     navController.navigate("settings")
                 },
-                onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
+                onKeyChange = { key, pressed ->
+                    if (pressed) haptics.press(hapticStrength())
+                    viewModel.setKey(key, pressed)
+                },
                 gameKey = { viewModel.currentRomKey() },
             )
             }

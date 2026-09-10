@@ -133,3 +133,9 @@ val LocalControlPalette = staticCompositionLocalOf { ControlTint.NIGHT.palette }
  * [com.geebeeayy.app.data.ControlFontSize].
  */
 val LocalControlFontScale = staticCompositionLocalOf { 1f }
+
+/**
+ * Half the width, in degrees, of each of the D-pad's straight directions. See
+ * [com.geebeeayy.app.data.DisplaySettings.getDpadCardinalHalfDegrees].
+ */
+val LocalDpadCardinalHalf = staticCompositionLocalOf { 30f }
