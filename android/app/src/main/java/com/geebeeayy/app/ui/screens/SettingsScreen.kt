@@ -38,6 +38,12 @@ import com.geebeeayy.app.ui.orientationFor
 import com.geebeeayy.app.ui.theme.*
 import java.io.File
 
+/** The ratios offered, with 0 meaning unlimited. */
+private val FastForwardRatios = listOf(2, 3, 4, 0)
+
+private fun fastForwardLabel(ratio: Int): String =
+    if (ratio == 0) "Unlimited - no audio" else "${ratio}x"
+
 private val ScaleMode.label: String
     get() = when (this) {
         ScaleMode.FIT -> "Fit"
@@ -67,6 +73,8 @@ fun SettingsScreen(
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var defaultLayoutId by remember { mutableStateOf(layoutStore.getDefaultLayoutId()) }
     var showLayoutMenu by remember { mutableStateOf(false) }
+    var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
+    var showSpeedMenu by remember { mutableStateOf(false) }
     // Read once: a pad paired while this screen is open is rare enough that a
     // reopen is a fair price for not polling the input system every frame.
     //
@@ -326,6 +334,33 @@ fun SettingsScreen(
                         context.findActivity()?.requestedOrientation = orientationFor(checked)
                     }
                 )
+            }
+
+            SettingsSection(title = "Emulation") {
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.FastForward,
+                        title = "Fast Forward Speed",
+                        subtitle = fastForwardLabel(fastForwardRatio),
+                        onClick = { showSpeedMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showSpeedMenu,
+                        onDismissRequest = { showSpeedMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        FastForwardRatios.forEach { ratio ->
+                            DropdownMenuItem(
+                                text = { Text(fastForwardLabel(ratio)) },
+                                onClick = {
+                                    fastForwardRatio = ratio
+                                    displaySettings.setFastForwardRatio(ratio)
+                                    showSpeedMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
             }
 
             SettingsSection(title = "Audio") {

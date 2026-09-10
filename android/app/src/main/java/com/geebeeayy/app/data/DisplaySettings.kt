@@ -59,6 +59,31 @@ class DisplaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_INTERFRAME_BLEND, on).apply()
     }
 
+    /**
+     * How many times real time fast forward runs, or 0 for unlimited.
+     *
+     * The ratio is a promise the audio clock enforces: the loop runs this
+     * many emulated frames per real frame period, so 2 really is 2x. A
+     * device that cannot keep up degrades to whatever it can do, with the
+     * audio underrunning, rather than quietly ignoring the number.
+     *
+     * Unlimited keeps the old behaviour - no audio, no throttle, whatever the
+     * CPU gives - which is what you want for seeking through a long cutscene
+     * and is why mGBA, RetroArch and BizHawk all keep an unbounded mode
+     * beside the ratio.
+     *
+     * 2x is the default, matching NanoBoyAdvance and Azahar, and sits inside
+     * the headroom a phone actually has.
+     */
+    fun getFastForwardRatio(): Int =
+        prefs.getInt(KEY_FAST_FORWARD_RATIO, 2).let { saved ->
+            if (saved == 0 || saved in 2..MAX_FAST_FORWARD_RATIO) saved else 2
+        }
+
+    fun setFastForwardRatio(ratio: Int) {
+        prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
+    }
+
     fun getScreenFilter(): ScreenFilter =
         prefs.getString(KEY_SCREEN_FILTER, null)
             ?.let { saved -> runCatching { ScreenFilter.valueOf(saved) }.getOrNull() }
@@ -112,5 +137,12 @@ class DisplaySettings(context: Context) {
         private const val KEY_CONTROL_OPACITY = "control_opacity"
         private const val KEY_SCREEN_FILTER = "screen_filter"
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
+        private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
+
+        /**
+         * Highest ratio offered. Above this the audio buffer would have to
+         * grow and the picture starts to outrun what the phone can render.
+         */
+        const val MAX_FAST_FORWARD_RATIO = 4
     }
 }

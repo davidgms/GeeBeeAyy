@@ -323,9 +323,19 @@ impl Gba {
         state.restore(self)
     }
 
+    /// Run `count` frames, drawing only the last one.
+    ///
+    /// This is the fast-forward path, and the frames in between are never
+    /// shown: drawing them costs as much as the one that is, for a picture
+    /// that is overwritten microseconds later. Everything else - CPU, DMA,
+    /// timers, interrupts, audio - runs exactly as it would frame by frame,
+    /// so nothing about the emulation changes, only what reaches the frame
+    /// buffer.
     pub fn run_frames(&mut self, count: u32) {
-        for _ in 0..count {
+        for frame in 0..count {
+            self.ppu.set_render_enabled(frame + 1 == count);
             self.run_frame();
         }
+        self.ppu.set_render_enabled(true);
     }
 }

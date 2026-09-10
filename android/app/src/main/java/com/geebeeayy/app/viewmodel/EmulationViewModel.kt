@@ -77,17 +77,50 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         const val REWIND_SPEED = 4
 
         /**
-         * Emulated frames per iteration while fast-forwarding.
+         * Emulated frames per iteration in *unlimited* fast forward.
          *
-         * Fast forward is unthrottled - RetroArch's `fastforward_ratio = 0`
-         * and mGBA's unbounded mode both simply skip the throttle - so this
-         * is not a speed multiplier. It only decides how much work happens
-         * between two frame-buffer publishes: one lock, one JNI crossing and
-         * one 150 KB copy per batch instead of per frame. Four keeps the
-         * picture updating often enough to aim with while the copies stay off
-         * the critical path.
+         * Unlimited skips the throttle entirely - RetroArch's
+         * `fastforward_ratio = 0` and mGBA's unbounded mode do the same - so
+         * this is not a speed multiplier. It only decides how much work
+         * happens between two frame-buffer publishes: one lock, one JNI
+         * crossing and one 150 KB copy per batch instead of per frame.
+         *
+         * At a fixed ratio the batch *is* the ratio, and the audio write
+         * paces it, so there is no such trade to make.
          */
         const val FAST_FORWARD_BATCH = 4
+
+        /**
+         * Average each run of [ratio] samples in `samples` into one, in
+         * place, and return how many are left.
+         *
+         * This is what makes a fast-forward ratio exact. `AudioOutput.write`
+         * blocks until the device has room, so it is the frame clock: hand it
+         * one real frame's worth of samples and it releases the loop one real
+         * frame later, however many emulated frames went into them.
+         *
+         * Averaging, not taking every Nth sample. Plain decimation folds the
+         * GBA's square waves back down over themselves and the result is
+         * audible grit; a box average is a cheap low-pass and costs one add
+         * per sample. Writing back over the input is safe because the output
+         * index never overtakes the read index.
+         *
+         * The short run at the end is averaged too rather than dropped -
+         * discarding it would shorten every batch and slowly drift the clock.
+         */
+        fun decimate(samples: FloatArray, count: Int, ratio: Int): Int {
+            if (ratio <= 1 || count <= 0) return count
+            var out = 0
+            var i = 0
+            while (i < count) {
+                val run = minOf(ratio, count - i)
+                var sum = 0f
+                for (j in 0 until run) sum += samples[i + j]
+                samples[out++] = sum / run
+                i += run
+            }
+            return out
+        }
 
         /**
          * Carry a pacing deadline forward by one `period`, or snap it to
@@ -126,8 +159,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private val engine = GbaEngine()
     private val audio = AudioOutput()
 
-    /** Reused across frames; four frames of headroom covers a fast-forward burst. */
-    private val audioSamples = FloatArray(AudioOutput.SAMPLES_PER_FRAME * 8)
+    /**
+     * Reused across frames. Sized from the real per-frame sample count and
+     * the highest fast-forward ratio, plus room to spare: a whole batch has
+     * to fit, or `geebeeayy_audio_copy` truncates its tail and the sound
+     * develops a periodic click.
+     */
+    private val audioSamples = FloatArray(
+        AudioOutput.MAX_SAMPLES_PER_FRAME * (DisplaySettings.MAX_FAST_FORWARD_RATIO + 2)
+    )
 
     /**
      * Fallback pacing when there is no audio device to block on. Measured
@@ -152,20 +192,32 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     val isRunning: StateFlow<Boolean> = _isRunning
 
     /**
-     * True while fast forward is on, and there is no speed to pick.
+     * True while fast forward is on. The speed comes from
+     * [DisplaySettings.getFastForwardRatio].
      *
-     * Fixed 2x/4x/8x steps only made sense while the throttle decided the
-     * speed. It does not: this core reaches roughly 2.5x real time on a
-     * phone, so every step above that asked for a multiplier the device
-     * could not deliver and quietly gave the same result with a different
-     * label on the button. Unthrottled gives whatever the hardware has,
-     * which is the honest version of the same thing.
+     * This used to be unthrottled with no speed to pick, on the grounds that
+     * a fixed multiplier the device could not reach was a lie. Pacing the
+     * batch with the audio write inverts that: the ratio is now enforced by
+     * the clock rather than hoped for, and a device that falls short degrades
+     * to what it can do instead of ignoring the setting.
      */
     private val _fastForward = MutableStateFlow(false)
     val fastForward: StateFlow<Boolean> = _fastForward
 
+    /**
+     * Emulated frames per real frame period while fast-forwarding, or 0 for
+     * unlimited. Re-read on every press rather than at ROM load: this is the
+     * one setting a player changes in order to feel the difference straight
+     * away.
+     */
+    private var fastForwardRatio = 2
+
     fun toggleFastForward() {
-        _fastForward.value = !_fastForward.value
+        val on = !_fastForward.value
+        if (on) {
+            fastForwardRatio = DisplaySettings(getApplication()).getFastForwardRatio()
+        }
+        _fastForward.value = on
     }
 
     /** True while the player is holding the rewind button. */
@@ -474,8 +526,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
                 while (isActive) {
                     val fastForwarding = fastForward.value
+                    // Sampled once per iteration: the batch size and the
+                    // audio squeeze have to agree, and the player can change
+                    // this mid-frame from Settings.
+                    val ratio = if (fastForwarding) fastForwardRatio else 1
                     val rewinding = isRewinding.value
-
                     // Everything that reaches into the core happens under the
                     // lock. The blocking audio write below deliberately does
                     // not: it is the frame clock, and holding the lock across
@@ -515,7 +570,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             -1
                         } else {
                             if (fastForwarding) {
-                                engine.runFrames(FAST_FORWARD_BATCH)
+                                // At a fixed ratio the batch is the ratio, so
+                                // the audio write below covers exactly one
+                                // real frame period and paces it. Unlimited
+                                // has no clock, so the batch is only there to
+                                // keep the copies off the critical path.
+                                engine.runFrames(
+                                    if (ratio == 0) FAST_FORWARD_BATCH else ratio
+                                )
                             } else {
                                 engine.runFrame()
                             }
@@ -550,16 +612,26 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // that stopEmulation() just stopped.
                     if (!isActive) continue
 
-                    // Fast forward runs unthrottled, so it neither writes the
-                    // samples - a blocking audio write would hold it to real
-                    // time - nor sleeps. `yield` is still needed: without a
-                    // suspension point the loop would never hand this
-                    // dispatcher thread to anything else.
-                    if (fastForwarding) {
+                    // Unlimited fast forward has no clock: it neither writes
+                    // the samples - a blocking audio write would hold it to
+                    // real time - nor sleeps. `yield` is still needed, or the
+                    // loop would never hand this dispatcher thread to
+                    // anything else.
+                    if (fastForwarding && ratio == 0) {
                         yield()
                         continue
                     }
-                    if (!audio.write(audioSamples, count)) {
+                    // A ratio batch holds `ratio` frames of samples. Squeezed
+                    // down to one frame's worth, the write blocks for one real
+                    // frame period, which is what makes the ratio exact and
+                    // publishes the picture at the display's own rate instead
+                    // of once per batch.
+                    val toWrite =
+                        if (fastForwarding) decimate(audioSamples, count, ratio) else count
+                    if (!audio.write(audioSamples, toWrite)) {
+                        // No audio device: one deadline per iteration is one
+                        // real frame period per batch, so the ratio still
+                        // holds without any arithmetic here.
                         delayUntilDeadline()
                     }
                 }
