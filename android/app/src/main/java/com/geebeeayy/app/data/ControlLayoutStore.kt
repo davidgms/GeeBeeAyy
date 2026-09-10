@@ -24,7 +24,22 @@ class ControlLayoutStore(context: Context) {
 
     /** Which layout [gameKey] uses - Default unless the player chose another. */
     fun getLayoutForGame(gameKey: String): String =
-        prefs.getString("$KEY_GAME_LAYOUT_PREFIX$gameKey", null) ?: DEFAULT_LAYOUT_ID
+        prefs.getString("$KEY_GAME_LAYOUT_PREFIX$gameKey", null) ?: getDefaultLayoutId()
+
+    /**
+     * The layout a game that has never been given one of its own starts with.
+     *
+     * Falls back to the built-in layout, and to it again if the chosen one was
+     * deleted - a dangling id here would leave a game with no controls at all.
+     */
+    fun getDefaultLayoutId(): String {
+        val saved = prefs.getString(KEY_DEFAULT_LAYOUT, null) ?: return DEFAULT_LAYOUT_ID
+        return if (layoutIds().contains(saved)) saved else DEFAULT_LAYOUT_ID
+    }
+
+    fun setDefaultLayoutId(layoutId: String) {
+        prefs.edit().putString(KEY_DEFAULT_LAYOUT, layoutId).apply()
+    }
 
     fun setLayoutForGame(gameKey: String, layoutId: String) {
         prefs.edit().putString("$KEY_GAME_LAYOUT_PREFIX$gameKey", layoutId).apply()
@@ -173,6 +188,7 @@ class ControlLayoutStore(context: Context) {
     companion object {
         const val DEFAULT_LAYOUT_ID = "default"
         private const val KEY_LAYOUT_IDS = "layout_ids"
+        private const val KEY_DEFAULT_LAYOUT = "default_layout"
         private const val KEY_NAME_PREFIX = "layout_name_"
         private const val KEY_OFFSET_PREFIX = "offset_"
         private const val KEY_GAME_LAYOUT_PREFIX = "game_layout_"

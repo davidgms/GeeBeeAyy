@@ -28,6 +28,14 @@ pub struct Ppu {
     /// the next one, which would otherwise hand over a few freshly drawn,
     /// unblended lines above an older blended picture.
     blend_out: Option<Box<[u8; FRAME_SIZE]>>,
+    /// Whether the pixel work happens at all.
+    ///
+    /// Fast forward runs several emulated frames per frame it shows, and the
+    /// ones it will not show cost the same to draw as the one it will. The
+    /// CPU, DMA, timers and interrupts all still run when this is false; only
+    /// the compositing is skipped, and the frame buffer keeps the last picture
+    /// that was drawn.
+    render_enabled: bool,
     /// Whether the current scanline has already been drawn. The line is
     /// drawn when HBlank starts, so this stops the line-end catch-up from
     /// drawing it a second time.
@@ -147,6 +155,7 @@ impl Ppu {
             interframe_blend: false,
             prev_frame: Vec::new(),
             blend_out: None,
+            render_enabled: true,
             line_rendered: false,
             vblank_irq_pending: false,
             hblank_irq_pending: false,
@@ -538,6 +547,9 @@ impl Ppu {
     }
 
     fn render_scanline(&mut self, bus: &mut super::memory::MemoryBus) {
+        if !self.render_enabled {
+            return;
+        }
         if self.force_blank {
             for x in 0..SCREEN_WIDTH {
                 let idx = (self.scanline as usize * SCREEN_WIDTH + x) * 3;
@@ -1524,6 +1536,11 @@ impl Ppu {
         }
     }
 
+    /// Turn the pixel work on or off. See [`Self::render_enabled`].
+    pub fn set_render_enabled(&mut self, on: bool) {
+        self.render_enabled = on;
+    }
+
     /// Turn interframe blending on or off. See [`Self::interframe_blend`].
     pub fn set_interframe_blend(&mut self, on: bool) {
         if on == self.interframe_blend {
@@ -1548,7 +1565,11 @@ impl Ppu {
     /// two frames the game actually drew rather than of an ever-dimming trail
     /// of its own output.
     fn blend_with_previous_frame(&mut self) {
-        if !self.interframe_blend {
+        // A frame that was not drawn is the previous frame still sitting in
+        // the buffer. Blending it would average the same picture with itself
+        // and, once fast forward skips several in a row, smear frames that
+        // are many apart.
+        if !self.interframe_blend || !self.render_enabled {
             return;
         }
         let Some(out) = self.blend_out.as_mut() else {

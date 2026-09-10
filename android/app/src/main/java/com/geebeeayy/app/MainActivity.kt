@@ -2,7 +2,6 @@ package com.geebeeayy.app
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -31,6 +30,7 @@ import com.geebeeayy.app.ui.theme.GeeBeeAyyTheme
 import com.geebeeayy.app.viewmodel.EmulationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.geebeeayy.app.ui.orientationFor
 import java.io.File
 
 private const val TAG = "GeeBeeAyy/Main"
@@ -42,11 +42,7 @@ class MainActivity : ComponentActivity() {
         // the equivalent lock, driven by a user-togglable setting instead of a fixed value.
         // android:configChanges="orientation|..." on this activity means setting this does not
         // trigger a recreate, so it is safe to call before setContent and again from Settings.
-        requestedOrientation = if (DisplaySettings(this).getForcePortrait()) {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
+        requestedOrientation = orientationFor(DisplaySettings(this).getForcePortrait())
         setContent {
             GeeBeeAyyTheme(darkTheme = true) {
                 GeeBeeAyyNavHost()
@@ -243,6 +239,14 @@ fun GeeBeeAyyNavHost() {
                 onLoadState = { slot -> viewModel.loadState(slot) },
                 stateSlots = { viewModel.stateSlots() },
                 onScreenshot = { viewModel.takeScreenshot() },
+                onSettings = {
+                    // Pausing first is what makes coming back work: the loop
+                    // would otherwise keep running behind Settings, and
+                    // `loadRomFromPath` resumes this same session on return
+                    // rather than reloading the ROM.
+                    viewModel.onAppBackgrounded()
+                    navController.navigate("settings")
+                },
                 onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
                 gameKey = { viewModel.currentRomKey() },
             )

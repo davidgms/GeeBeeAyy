@@ -947,3 +947,59 @@ fn interframe_blending_off_leaves_the_frame_untouched() {
         "blending is off by default, so the black frame must stay black"
     );
 }
+
+/// A spinning ROM: the CPU has to be doing something legal while the PPU is
+/// driven by hand.
+fn spinning_gba() -> Gba {
+    let mut rom = vec![0u8; 0x200];
+    rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    let mut gba = Gba::new();
+    gba.load_rom(&rom).expect("ROM should load");
+    // Mode 0 with no background enabled: every pixel is the backdrop, so
+    // palette entry 0 alone decides the colour of the frame.
+    gba.bus.write16(0x0400_0000, 0x0000);
+    gba
+}
+
+#[test]
+fn a_frame_the_frontend_will_not_show_is_not_drawn() {
+    // Fast forward runs several emulated frames per frame it shows. Drawing
+    // the ones it throws away costs as much as drawing the one it keeps, and
+    // that cost is about 30% of a frame.
+    let mut gba = spinning_gba();
+
+    gba.bus.write16(0x0500_0000, 0x7FFF); // white
+    tick_one_frame(&mut gba);
+    assert_eq!(gba.frame_buffer()[0], 248, "the white frame did not render");
+
+    gba.ppu.set_render_enabled(false);
+    gba.bus.write16(0x0500_0000, 0x0000); // black
+    tick_one_frame(&mut gba);
+    assert_eq!(
+        gba.frame_buffer()[0],
+        248,
+        "a frame drawn with rendering off overwrote the buffer"
+    );
+
+    gba.ppu.set_render_enabled(true);
+    tick_one_frame(&mut gba);
+    assert_eq!(gba.frame_buffer()[0], 0, "rendering did not come back on");
+}
+
+#[test]
+fn run_frames_leaves_rendering_on_for_whoever_runs_next() {
+    // `run_frames` turns rendering off for all but its last frame. Leaving it
+    // off would blank the picture for good the moment fast forward ended.
+    let mut gba = spinning_gba();
+    gba.bus.write16(0x0500_0000, 0x7FFF);
+
+    gba.run_frames(4);
+    gba.bus.write16(0x0500_0000, 0x0000);
+    gba.run_frame();
+
+    assert_eq!(
+        gba.frame_buffer()[0],
+        0,
+        "the frame after a fast-forward batch was not drawn"
+    );
+}

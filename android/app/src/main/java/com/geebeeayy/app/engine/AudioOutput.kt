@@ -34,6 +34,17 @@ class AudioOutput {
         const val SAMPLES_PER_FRAME = SAMPLE_RATE / 60
 
         /**
+         * Ceiling on the samples one emulated frame can produce.
+         *
+         * A GBA frame is 1/59.7275 s, not 1/60, so the core emits 803.65
+         * samples per frame and [SAMPLES_PER_FRAME]'s 800 is 0.45% short. A
+         * buffer sized on the round number silently loses the tail of any
+         * multi-frame batch, because `geebeeayy_audio_copy` stops at the
+         * array's length.
+         */
+        const val MAX_SAMPLES_PER_FRAME = 810
+
+        /**
          * Buffer depth, in emulated video frames.
          *
          * Audio is the timing master here - the emulation loop advances at

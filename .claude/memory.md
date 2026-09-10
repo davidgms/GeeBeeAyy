@@ -976,3 +976,26 @@ the top 7 rows still flickering.
 
 **Application**: before hunting a flicker in the PPU, hash `vram`/`oam` across
 two frames. Changing means the game is doing it on purpose.
+
+### The emulation core is only about 2.2x real time on a desktop
+
+**2026-09-09**, measured while fixing fast forward. Yggdra Union from a save
+state, release build, `Gba::run_frame` in a loop:
+
+- desktop (WSL2): 134 frames/s, **2.24x** real time
+- Mi 10T Pro (arm64): 80 frames/s, **1.34x** real time
+
+Confirmed to be the core and not the frontend: with the frame-buffer publish,
+the rewind snapshots and the blocking audio write all removed from the Kotlin
+loop, the phone still measured 80 frames/s.
+
+This is the number that decides what fast forward can be. `Gba::run_frames`
+now skips the pixel work on frames the frontend will not show, which is worth
+about 30% of a frame (2.24x to 3.22x on the desktop), and the phone still only
+reaches 1.45x. Ratios above 2 buy 0.08x and cost half the picture updates.
+
+**Application**: do not promise a speed multiplier anywhere in the UI without
+measuring first, and treat "make the core faster" as its own project rather
+than a side effect of a frontend change. The full write-up, including how nine
+other emulators handle fast forward, is in
+[`docs/research/fast-forward.md`](../docs/research/fast-forward.md).

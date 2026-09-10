@@ -1,10 +1,12 @@
 package com.geebeeayy.app.ui.screens
 
-import android.app.Activity
-import android.content.pm.ActivityInfo
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.Settings as AndroidSettings
+import android.view.KeyEvent
+import android.view.InputDevice
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -22,14 +24,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.data.ScreenFilter
+import com.geebeeayy.app.engine.AudioOutput
+import com.geebeeayy.app.ui.findActivity
+import com.geebeeayy.app.ui.orientationFor
 import com.geebeeayy.app.ui.theme.*
 import java.io.File
+
+/** The ratios offered, with 0 meaning unlimited. */
+private val FastForwardRatios = listOf(2, 3, 4, 0)
+
+private fun fastForwardLabel(ratio: Int): String =
+    if (ratio == 0) "Unlimited - no audio" else "${ratio}x"
 
 private val ScaleMode.label: String
     get() = when (this) {
@@ -56,6 +69,28 @@ fun SettingsScreen(
     var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
     var showScaleMenu by remember { mutableStateOf(false) }
     var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
+    val layoutStore = remember { ControlLayoutStore(context) }
+    var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
+    var defaultLayoutId by remember { mutableStateOf(layoutStore.getDefaultLayoutId()) }
+    var showLayoutMenu by remember { mutableStateOf(false) }
+    var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
+    var showSpeedMenu by remember { mutableStateOf(false) }
+    // Read once: a pad paired while this screen is open is rare enough that a
+    // reopen is a fair price for not polling the input system every frame.
+    //
+    // The source bits alone are not enough. This phone's fingerprint reader
+    // is a virtual uinput device that claims SOURCE_GAMEPAD, so it was listed
+    // as a paired controller. A real pad is physical and has an A button.
+    val gamepads = remember {
+        InputDevice.getDeviceIds().toList()
+            .mapNotNull { InputDevice.getDevice(it) }
+            .filter { device ->
+                !device.isVirtual &&
+                    device.supportsSource(InputDevice.SOURCE_GAMEPAD) &&
+                    device.hasKeys(KeyEvent.KEYCODE_BUTTON_A).firstOrNull() == true
+            }
+            .map { it.name }
+    }
     var interframeBlend by remember { mutableStateOf(displaySettings.getInterframeBlend()) }
     var folderError by remember { mutableStateOf<String?>(null) }
 
@@ -219,6 +254,7 @@ fun SettingsScreen(
                     DropdownMenu(
                         expanded = showScaleMenu,
                         onDismissRequest = { showScaleMenu = false },
+                        offset = SettingsMenuOffset,
                     ) {
                         ScaleMode.entries.forEach { mode ->
                             DropdownMenuItem(
@@ -242,6 +278,7 @@ fun SettingsScreen(
                     DropdownMenu(
                         expanded = showFilterMenu,
                         onDismissRequest = { showFilterMenu = false },
+                        offset = SettingsMenuOffset,
                     ) {
                         ScreenFilter.entries.forEach { f ->
                             DropdownMenuItem(
@@ -294,13 +331,36 @@ fun SettingsScreen(
                     onCheckedChange = { checked ->
                         forcePortrait = checked
                         displaySettings.setForcePortrait(checked)
-                        (context as? Activity)?.requestedOrientation = if (checked) {
-                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        } else {
-                            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        }
+                        context.findActivity()?.requestedOrientation = orientationFor(checked)
                     }
                 )
+            }
+
+            SettingsSection(title = "Emulation") {
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.FastForward,
+                        title = "Fast Forward Speed",
+                        subtitle = fastForwardLabel(fastForwardRatio),
+                        onClick = { showSpeedMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showSpeedMenu,
+                        onDismissRequest = { showSpeedMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        FastForwardRatios.forEach { ratio ->
+                            DropdownMenuItem(
+                                text = { Text(fastForwardLabel(ratio)) },
+                                onClick = {
+                                    fastForwardRatio = ratio
+                                    displaySettings.setFastForwardRatio(ratio)
+                                    showSpeedMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
             }
 
             SettingsSection(title = "Audio") {
@@ -311,27 +371,62 @@ fun SettingsScreen(
                     checked = true,
                     onCheckedChange = { }
                 )
-                SettingsItem(
+                // Not a button: there is one backend, so a row that opened a
+                // picker would be offering a choice that does not exist. It
+                // also used to claim "AAudio", which is not what the app
+                // builds - AudioOutput drives an AudioTrack directly.
+                SettingsInfo(
                     icon = Icons.Default.MusicNote,
                     title = "Audio Backend",
-                    subtitle = "AAudio",
-                    onClick = { }
+                    subtitle = "AudioTrack - ${AudioOutput.SAMPLE_RATE} Hz mono, low latency",
                 )
             }
 
             SettingsSection(title = "Controls") {
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Gamepad,
+                        title = "Layout",
+                        subtitle = layouts.firstOrNull { it.id == defaultLayoutId }?.name
+                            ?: "Default",
+                        onClick = {
+                            layouts = layoutStore.getLayouts()
+                            showLayoutMenu = true
+                        }
+                    )
+                    DropdownMenu(
+                        expanded = showLayoutMenu,
+                        onDismissRequest = { showLayoutMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        layouts.forEach { layout ->
+                            DropdownMenuItem(
+                                text = { Text(layout.name) },
+                                onClick = {
+                                    defaultLayoutId = layout.id
+                                    layoutStore.setDefaultLayoutId(layout.id)
+                                    showLayoutMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                // Reports what is actually paired and opens the system's own
+                // Bluetooth screen, which is the only place pairing happens.
+                // Mapping a pad's buttons to the GBA's is not built yet, so
+                // this deliberately does not claim it is.
                 SettingsItem(
-                    icon = Icons.Default.Gamepad,
-                    title = "Layout",
-                    subtitle = "Default",
-                    onClick = { }
-                )
-                SettingsSwitch(
                     icon = Icons.Default.Bluetooth,
                     title = "Bluetooth Controller",
-                    subtitle = "Xbox / PS / Switch Pro",
-                    checked = false,
-                    onCheckedChange = { }
+                    subtitle = gamepads.firstOrNull() ?: "None paired - tap to pair",
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(AndroidSettings.ACTION_BLUETOOTH_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
                 )
             }
 
@@ -369,6 +464,43 @@ fun SettingsSection(
                 .background(NightPanel),
         ) {
             content()
+        }
+    }
+}
+
+/**
+ * Where a settings row's dropdown opens.
+ *
+ * `DropdownMenu` anchors to the top-left of whatever it is nested in, which
+ * for a full-width row is the far left edge, under the icon - a menu floating
+ * clear of the words it belongs to. A row lays its title out at
+ * 16.dp padding + 24.dp icon + 16.dp spacer, so 56.dp lines the menu up with
+ * the title text the player just tapped.
+ */
+private val SettingsMenuOffset = DpOffset(x = 56.dp, y = 0.dp)
+
+/** A settings row that only reports something, with nothing to tap. */
+@Composable
+fun SettingsInfo(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = AmberResin, modifier = Modifier.size(24.dp))
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, fontSize = 16.sp, color = PineGlowMist)
+            Text(
+                text = subtitle,
+                fontSize = 12.sp,
+                color = PineGlowMist.copy(alpha = 0.6f),
+            )
         }
     }
 }
