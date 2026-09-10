@@ -157,11 +157,14 @@ class DisplaySettings(context: Context) {
         /**
          * Highest ratio offered.
          *
-         * Measured on a Mi 10T Pro, the emulated speed flattens out around
-         * 1.8x however high this goes - the core, not the throttle, is the
-         * ceiling - while the picture keeps getting choppier. 16 is where the
-         * last of the speed is, and past it the trade is all cost.
+         * Measured on a Mi 10T Pro: a game with headroom hits 2x, 3x and 4x
+         * exactly and peaks around 5.5x, after which a higher ratio is
+         * *slower* as well as choppier - the decimation pass and the audio
+         * read both grow with it, and the picture is published once per
+         * batch. 8 is past the peak already and is there for the games that
+         * are CPU-bound anyway, where the only thing left to trade is
+         * smoothness.
          */
-        const val MAX_FAST_FORWARD_RATIO = 16
+        const val MAX_FAST_FORWARD_RATIO = 8
     }
 }

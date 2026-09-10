@@ -41,13 +41,13 @@ import java.io.File
 /**
  * The ratios offered, with 0 meaning unlimited.
  *
- * A ladder rather than two or three steps, because the trade it controls is
- * gradual: at 2x the picture updates about 43 times a second and looks
- * normal, and by 16x it is down to a handful and looks like a slideshow that
- * happens to be quicker. Where a player wants to sit on that line is theirs
- * to pick, not ours.
+ * Three steps, doubling: 2x is exact and looks normal on a game with the
+ * headroom for it, 8x is the sloppy end where the picture starts skipping in
+ * exchange for getting through a grind. A finer ladder was tried and thrown
+ * away - the steps in between were not distinguishable in the hand, and past
+ * 8x the speed goes back *down* while the picture keeps getting worse.
  */
-private val FastForwardRatios = listOf(2, 3, 4, 6, 8, 12, 16, 0)
+private val FastForwardRatios = listOf(2, 4, 8, 0)
 
 private fun fastForwardLabel(ratio: Int): String =
     if (ratio == 0) "Unlimited - no audio" else "${ratio}x"
