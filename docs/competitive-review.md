@@ -59,6 +59,24 @@ game's own identity (its initials, a colour from its title hash).
 | Low latency mode, as a toggle | Always on (`PERFORMANCE_MODE_LOW_LATENCY`) | **Skip.** Theirs is a toggle because OpenSL made it a gamble. Ours is an AudioTrack asking politely; there is nothing to turn off. |
 | "Check buffer underrun" | - | **Skip as a setting, take as a fact.** Underruns are what fast forward above 4x sounds like. Worth counting and showing next to the FPS, not worth a checkbox. |
 
+## The smaller things, gone through a second time
+
+The first pass took the substantial features and skipped past the furniture.
+Everything visible in the screenshots is now accounted for, including what is
+being turned down and why.
+
+| Their app | Us | Verdict |
+|---|---|---|
+| **Share button** in the ROM list header | We save screenshots to `Pictures/GeeBeeAyy` and then forget about them | **Take, as share a screenshot.** We already take them; nothing in the app offers to send one anywhere. |
+| **Orientation** as three choices - auto, portrait, landscape | `Force Portrait`, a boolean | **Take.** Ours can lock to portrait or let go, and cannot lock to landscape - which is the one a player holding a phone sideways for a whole session wants. |
+| **"Reset and start"**, distinct from opening the game | - | **Take, once auto load state exists.** Only means anything when opening a game normally resumes it; the two features arrive together or not at all. |
+| **"Delete save data"** from the list | Only reachable by deleting files by hand | **Take.** It sits in the same context menu as the rest. |
+| **ROM size** beside file size in the info dialog | File size only | **Take with ZIP.** The two numbers only differ for a compressed ROM, so this is part of that work, not its own item. |
+| **Help dialog** explaining accepted formats | An empty state that says "Go to Settings, ROM Folders" | **Ours is close enough.** Theirs is a wall of text behind a menu; ours is on the screen where the problem is. |
+| Navigation drawer behind a hamburger | A row of icons in the top bar | **Skip.** A drawer earns its place at about a dozen destinations. We have four. |
+| Floating **search** button | - | **Skip.** It searches their remote catalogue of commercial ROMs, which is the one thing `HomebrewCatalog.kt` exists to refuse. |
+| "Hide Remote Games" | - | **Skip**, same reason. |
+
 ## What we have that they do not
 
 Worth writing down, because the goal is a good product and not a clone:
