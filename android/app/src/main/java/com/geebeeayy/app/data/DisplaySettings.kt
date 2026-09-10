@@ -98,6 +98,16 @@ class DisplaySettings(context: Context) {
         prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
     }
 
+    /** Which colour scheme the on-screen controls draw themselves in. */
+    fun getControlTint(): ControlTint =
+        prefs.getString(KEY_CONTROL_TINT, null)
+            ?.let { saved -> runCatching { ControlTint.valueOf(saved) }.getOrNull() }
+            ?: ControlTint.NIGHT
+
+    fun setControlTint(tint: ControlTint) {
+        prefs.edit().putString(KEY_CONTROL_TINT, tint.name).apply()
+    }
+
     fun getScreenFilter(): ScreenFilter =
         prefs.getString(KEY_SCREEN_FILTER, null)
             ?.let { saved -> runCatching { ScreenFilter.valueOf(saved) }.getOrNull() }
@@ -125,8 +135,16 @@ class DisplaySettings(context: Context) {
     }
 
     /** Opacity of the on-screen controls, 0.3 to 1.0. */
+    /**
+     * Opacity of the on-screen controls.
+     *
+     * Defaults to 0.65 rather than opaque: the controls now sit *over* the
+     * picture instead of under it, so at 1.0 the bottom third of the game
+     * would be behind solid buttons. An existing install keeps whatever it
+     * had.
+     */
     fun getControlOpacity(): Float =
-        prefs.getFloat(KEY_CONTROL_OPACITY, 1.0f).coerceIn(MIN_CONTROL_OPACITY, 1.0f)
+        prefs.getFloat(KEY_CONTROL_OPACITY, 0.65f).coerceIn(MIN_CONTROL_OPACITY, 1.0f)
 
     fun setControlOpacity(opacity: Float) {
         prefs.edit()
@@ -153,6 +171,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
         private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
+        private const val KEY_CONTROL_TINT = "control_tint"
 
         /**
          * Highest ratio offered.

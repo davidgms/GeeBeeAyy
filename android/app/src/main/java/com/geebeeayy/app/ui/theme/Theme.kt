@@ -2,6 +2,8 @@ package com.geebeeayy.app.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
+import androidx.compose.runtime.staticCompositionLocalOf
+import com.geebeeayy.app.data.ControlTint
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -115,3 +117,13 @@ fun GeeBeeAyyTheme(
         content = content
     )
 }
+
+/**
+ * The colours the on-screen controls draw themselves in.
+ *
+ * A composition local rather than a parameter: the D-pad, the face buttons,
+ * the pills and a player's own custom buttons all need the same five colours,
+ * and threading them through six signatures - most of which already carry
+ * eight arguments for drag handling - buys nothing.
+ */
+val LocalControlPalette = staticCompositionLocalOf { ControlTint.NIGHT.palette }

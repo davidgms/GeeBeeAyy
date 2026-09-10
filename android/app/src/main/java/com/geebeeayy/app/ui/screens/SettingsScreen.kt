@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.geebeeayy.app.data.ControlTint
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
@@ -81,6 +82,8 @@ fun SettingsScreen(
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var defaultLayoutId by remember { mutableStateOf(layoutStore.getDefaultLayoutId()) }
     var showLayoutMenu by remember { mutableStateOf(false) }
+    var controlTint by remember { mutableStateOf(displaySettings.getControlTint()) }
+    var showTintMenu by remember { mutableStateOf(false) }
     var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var muteFastForward by remember { mutableStateOf(displaySettings.getMuteOnFastForward()) }
@@ -425,6 +428,30 @@ fun SettingsScreen(
                                     defaultLayoutId = layout.id
                                     layoutStore.setDefaultLayoutId(layout.id)
                                     showLayoutMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Palette,
+                        title = "Button Colour",
+                        subtitle = controlTint.label,
+                        onClick = { showTintMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showTintMenu,
+                        onDismissRequest = { showTintMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        ControlTint.entries.forEach { tint ->
+                            DropdownMenuItem(
+                                text = { Text(tint.label) },
+                                onClick = {
+                                    controlTint = tint
+                                    displaySettings.setControlTint(tint)
+                                    showTintMenu = false
                                 }
                             )
                         }

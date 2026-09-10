@@ -22,6 +22,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import androidx.compose.runtime.CompositionLocalProvider
+import com.geebeeayy.app.ui.theme.LocalControlPalette
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
@@ -192,6 +194,7 @@ fun GeeBeeAyyNavHost() {
             val controlScale = remember(filePath) { DisplaySettings(context).getControlScale() }
             val controlOpacity = remember(filePath) { DisplaySettings(context).getControlOpacity() }
             val screenFilter = remember(filePath) { DisplaySettings(context).getScreenFilter() }
+            val controlTint = remember(filePath) { DisplaySettings(context).getControlTint() }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -214,6 +217,7 @@ fun GeeBeeAyyNavHost() {
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
+            CompositionLocalProvider(LocalControlPalette provides controlTint.palette) {
             EmulationScreen(
                 frameBuffer = frameBuffer,
                 isLoading = isLoading,
@@ -251,6 +255,7 @@ fun GeeBeeAyyNavHost() {
                 onKeyChange = { key, pressed -> viewModel.setKey(key, pressed) },
                 gameKey = { viewModel.currentRomKey() },
             )
+            }
         }
 
         composable("settings") {

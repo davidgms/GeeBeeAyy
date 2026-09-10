@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
@@ -44,6 +45,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
 import com.geebeeayy.app.data.ControlButton
+import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.CustomButton
@@ -408,6 +410,17 @@ fun EmulationScreen(
                     }
                 }
             } else {
+                // The controls float over the picture rather than sitting
+                // under it. Stacked, the screen gets the whole height instead
+                // of whatever the button block left over, which on a 20:9
+                // phone is most of the difference between a 3x and a 4x
+                // picture. The buttons are translucent so what they cover is
+                // still readable - see the opacity setting.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
                 ScreenContainer(
                     frameBuffer = frameBuffer,
                     isLoading = isLoading,
@@ -416,12 +429,18 @@ fun EmulationScreen(
                     scaleMode = scaleMode,
                     screenFilter = screenFilter,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
+                        .fillMaxSize()
                         // 24.dp a side left only 948 px of a 1080 px screen,
                         // and integer scaling rounds that down to 3x. 8.dp
                         // clears 960 px, which is exactly 4x.
                         .padding(horizontal = 8.dp, vertical = 8.dp),
+                    // Pinned to the top, not centred. A 3:2 picture on a 20:9
+                    // phone is limited by width, never by height, so the extra
+                    // height this layout hands it buys nothing - it only
+                    // decides where the leftover black goes. Putting all of it
+                    // below the picture is what leaves room for the controls
+                    // to float without covering the game.
+                    pictureVerticalBias = 0f,
                 )
 
                 // One transform on the whole block rather than a size
@@ -429,12 +448,14 @@ fun EmulationScreen(
                 // pointer input through the layer, so the touch targets grow
                 // with the drawing and stay in register.
                 Box(
-                    modifier = Modifier.graphicsLayer(
-                        scaleX = controlScale,
-                        scaleY = controlScale,
-                        alpha = controlOpacity,
-                        transformOrigin = TransformOrigin(0.5f, 1f),
-                    )
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .graphicsLayer(
+                            scaleX = controlScale,
+                            scaleY = controlScale,
+                            alpha = controlOpacity,
+                            transformOrigin = TransformOrigin(0.5f, 1f),
+                        )
                 ) {
                 GameControls(
                     isPaused = isPaused,
@@ -453,6 +474,7 @@ fun EmulationScreen(
                     onDragStart = handleDragStart,
                     onDragEnd = handleDragEnd,
                 )
+                }
                 }
             }
         }
@@ -606,6 +628,7 @@ private fun ScreenContainer(
     scaleMode: ScaleMode,
     screenFilter: ScreenFilter = ScreenFilter.NONE,
     modifier: Modifier = Modifier,
+    pictureVerticalBias: Float = 0.5f,
 ) {
     Box(
         modifier = modifier
@@ -614,7 +637,12 @@ private fun ScreenContainer(
         contentAlignment = Alignment.Center,
     ) {
         if (frameBuffer != null) {
-            GbaScreen(frameBuffer = frameBuffer, scaleMode = scaleMode, filter = screenFilter)
+            GbaScreen(
+                frameBuffer = frameBuffer,
+                scaleMode = scaleMode,
+                filter = screenFilter,
+                verticalBias = pictureVerticalBias,
+            )
         } else if (errorMessage != null) {
             Text(text = errorMessage, color = Color.Red, fontSize = 14.sp)
         } else if (isLoading) {
@@ -740,6 +768,13 @@ fun GbaScreen(
     frameBuffer: ByteArray,
     scaleMode: ScaleMode = ScaleMode.INTEGER,
     filter: ScreenFilter = ScreenFilter.NONE,
+    /**
+     * Where the picture sits in the space it is given, 0 for the top edge and
+     * 1 for the bottom. Only matters when the space is taller than the
+     * picture, which on a portrait phone it always is: a 3:2 picture is
+     * limited by width there, never by height.
+     */
+    verticalBias: Float = 0.5f,
 ) {
     val doubled = filter == ScreenFilter.SAI_2X
     val width = if (doubled) GbaEngine.SCREEN_WIDTH * 2 else GbaEngine.SCREEN_WIDTH
@@ -791,7 +826,7 @@ fun GbaScreen(
             ScaleMode.INTEGER -> integerSize(size.width, size.height, width, height)
         }
         val dstOffsetX = (size.width - dstWidth) / 2f
-        val dstOffsetY = (size.height - dstHeight) / 2f
+        val dstOffsetY = (size.height - dstHeight) * verticalBias.coerceIn(0f, 1f)
         drawImage(
             image = image,
             dstOffset = IntOffset(dstOffsetX.roundToInt(), dstOffsetY.roundToInt()),
@@ -1003,6 +1038,7 @@ fun StartSelectRow(
  */
 @Composable
 fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
+    val controls = LocalControlPalette.current
     var isPressed by remember { mutableStateOf(false) }
 
     Button(
@@ -1036,12 +1072,17 @@ fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
                 }
             },
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isPressed) AmberResin else NightPanel,
+            containerColor = if (isPressed) controls.pressed else controls.fill,
         ),
         shape = RoundedCornerShape(24.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
     ) {
-        Text(label, color = PineGlowMist, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            color = if (isPressed) controls.labelPressed else controls.label,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -1058,6 +1099,7 @@ fun CustomButtonView(
     onToggleHeld: () -> Unit,
     onKeyChange: (Int, Boolean) -> Unit,
 ) {
+    val controls = LocalControlPalette.current
     var isPressed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -1114,9 +1156,9 @@ fun CustomButtonView(
             },
         colors = ButtonDefaults.buttonColors(
             containerColor = when {
-                held -> GoldenSaplight
-                isPressed -> AmberResin
-                else -> NightPanel
+                held -> controls.pressed
+                isPressed -> controls.pressed
+                else -> controls.fill
             },
         ),
         shape = pillShape,
@@ -1124,7 +1166,7 @@ fun CustomButtonView(
     ) {
         Text(
             button.name,
-            color = if (held) BurntRoot else PineGlowMist,
+            color = if (held || isPressed) controls.labelPressed else controls.label,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
@@ -1164,6 +1206,7 @@ fun DPad(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
+    val controls = LocalControlPalette.current
     var held by remember { mutableStateOf(emptySet<Int>()) }
 
     Box(
@@ -1209,7 +1252,7 @@ fun DPad(
                 }
         ) {
             val cross = crossPath(size)
-            drawPath(cross, NightPanel)
+            drawPath(cross, controls.fill)
 
             // Held arms are clipped to the cross, so the outer end keeps the
             // cross's rounded cap and the inner end disappears under the dish.
@@ -1219,29 +1262,91 @@ fun DPad(
                 val top = (size.height - arm) / 2f
                 clipPath(cross) {
                     if (GbaEngine.KEY_UP in held) {
-                        drawRect(AmberResin, Offset(left, 0f), Size(arm, size.height / 2f))
+                        drawRect(controls.pressed, Offset(left, 0f), Size(arm, size.height / 2f))
                     }
                     if (GbaEngine.KEY_DOWN in held) {
-                        drawRect(AmberResin, Offset(left, size.height / 2f), Size(arm, size.height / 2f))
+                        drawRect(controls.pressed, Offset(left, size.height / 2f), Size(arm, size.height / 2f))
                     }
                     if (GbaEngine.KEY_LEFT in held) {
-                        drawRect(AmberResin, Offset(0f, top), Size(size.width / 2f, arm))
+                        drawRect(controls.pressed, Offset(0f, top), Size(size.width / 2f, arm))
                     }
                     if (GbaEngine.KEY_RIGHT in held) {
-                        drawRect(AmberResin, Offset(size.width / 2f, top), Size(size.width / 2f, arm))
+                        drawRect(controls.pressed, Offset(size.width / 2f, top), Size(size.width / 2f, arm))
                     }
                 }
             }
 
+            // An arrow at the end of each arm, the way the moulded ones sit
+            // on an AGB-001 pad. They also say which way a diagonal is,
+            // which the plain cross could not: the corner between two arms
+            // presses both, and nothing on the shape hinted at that.
+            drawDpadArrow(GbaEngine.KEY_UP, held, controls)
+            drawDpadArrow(GbaEngine.KEY_DOWN, held, controls)
+            drawDpadArrow(GbaEngine.KEY_LEFT, held, controls)
+            drawDpadArrow(GbaEngine.KEY_RIGHT, held, controls)
+
             // The dish is drawn at exactly the dead zone's radius, so what a
             // player sees as the thumb rest is the region that reports nothing.
-            drawCircle(NightRaised, radius = size.minDimension / 2f * DPAD_DEAD_ZONE, center = center)
+            drawCircle(controls.dish, radius = size.minDimension / 2f * DPAD_DEAD_ZONE, center = center)
         }
     }
 }
 
+/**
+ * One moulded arrow, pointing out along its arm.
+ *
+ * Ink on the honey fill when that direction is held and a light mark on the
+ * dark panel when it is not - a single colour would vanish against one of the
+ * two, and the arrow is most worth seeing at the moment it lights up.
+ */
+private fun DrawScope.drawDpadArrow(key: Int, held: Set<Int>, controls: ControlPalette) {
+    val arm = size.minDimension / 3f
+    val half = arm * DPAD_ARROW_HALF_WIDTH
+    val depth = arm * DPAD_ARROW_DEPTH
+    val inset = arm * DPAD_ARROW_INSET
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+
+    // Apex first, then the two base corners, walked clockwise.
+    val points = when (key) {
+        GbaEngine.KEY_UP -> listOf(
+            Offset(cx, inset),
+            Offset(cx + half, inset + depth),
+            Offset(cx - half, inset + depth),
+        )
+        GbaEngine.KEY_DOWN -> listOf(
+            Offset(cx, size.height - inset),
+            Offset(cx - half, size.height - inset - depth),
+            Offset(cx + half, size.height - inset - depth),
+        )
+        GbaEngine.KEY_LEFT -> listOf(
+            Offset(inset, cy),
+            Offset(inset + depth, cy - half),
+            Offset(inset + depth, cy + half),
+        )
+        else -> listOf(
+            Offset(size.width - inset, cy),
+            Offset(size.width - inset - depth, cy + half),
+            Offset(size.width - inset - depth, cy - half),
+        )
+    }
+
+    val path = Path().apply {
+        moveTo(points[0].x, points[0].y)
+        lineTo(points[1].x, points[1].y)
+        lineTo(points[2].x, points[2].y)
+        close()
+    }
+    drawPath(path, if (key in held) controls.labelPressed else controls.label)
+}
+
 /** Three 48dp arms, the same footprint the four separate buttons occupied. */
 private val DPAD_SIZE = 144.dp
+
+/** Arrow geometry, as fractions of one arm's width. */
+private const val DPAD_ARROW_HALF_WIDTH = 0.22f
+private const val DPAD_ARROW_DEPTH = 0.30f
+private const val DPAD_ARROW_INSET = 0.24f
 
 /**
  * Half-width of a cardinal's sector, in degrees. At 30 each cardinal owns 60
@@ -1328,8 +1433,9 @@ fun ActionButtons(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
-    val buttonColor = NightPanel
-    val pressColor = GoldenSaplight
+    val controls = LocalControlPalette.current
+    val buttonColor = controls.fill
+    val pressColor = controls.pressed
 
     // A above B in a single column. Side by side reads left-to-right as "B
     // then A", which is the wrong way round from the hardware and puts the
@@ -1358,6 +1464,7 @@ fun ActionButton(
     modifier: Modifier = Modifier,
     onKeyChange: (Int, Boolean) -> Unit,
 ) {
+    val controls = LocalControlPalette.current
     var isPressed by remember { mutableStateOf(false) }
 
     Button(
@@ -1397,7 +1504,7 @@ fun ActionButton(
     ) {
         Text(
             text = label,
-            color = PineGlowMist,
+            color = if (isPressed) controls.labelPressed else controls.label,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
         )
