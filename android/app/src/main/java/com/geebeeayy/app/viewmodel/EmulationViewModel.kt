@@ -212,10 +212,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private var fastForwardRatio = 2
 
+    /** Whether fast forward plays silence. See [DisplaySettings.getMuteOnFastForward]. */
+    private var muteOnFastForward = false
+
     fun toggleFastForward() {
         val on = !_fastForward.value
         if (on) {
-            fastForwardRatio = DisplaySettings(getApplication()).getFastForwardRatio()
+            val settings = DisplaySettings(getApplication())
+            fastForwardRatio = settings.getFastForwardRatio()
+            muteOnFastForward = settings.getMuteOnFastForward()
         }
         _fastForward.value = on
     }
@@ -628,6 +633,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // of once per batch.
                     val toWrite =
                         if (fastForwarding) decimate(audioSamples, count, ratio) else count
+                    // Silence, not skipping the write: the write is the clock.
+                    if (fastForwarding && muteOnFastForward) {
+                        audioSamples.fill(0f, 0, toWrite)
+                    }
                     if (!audio.write(audioSamples, toWrite)) {
                         // No audio device: one deadline per iteration is one
                         // real frame period per batch, so the ratio still

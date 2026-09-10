@@ -881,36 +881,45 @@ In order, with the cheapest first:
 
 ## Measured afterwards, on the real device
 
-The recommendation above assumed roughly 2.5x of CPU headroom, taken from a
-comment in `EmulationViewModel`. That comment was wrong, and the number
-changes what fast forward can be. Measured 2026-09-09, Yggdra Union from a
-save state, arm64 release core:
+Measured 2026-09-09 on a Mi 10T Pro, arm64 release core, from a save state,
+with the render skip in place. The first pass of this section was taken from a
+single game and drew the wrong conclusion from it; both games are here now,
+because the difference between them **is** the finding.
 
-| | frames/s | speed |
-|---|---|---|
-| Mi 10T Pro, one frame at a time | 80 | 1.34x |
-| Mi 10T Pro, ratio 2 with the render skip | 87 | **1.45x** |
-| Mi 10T Pro, ratio 4 with the render skip | 92 | 1.53x |
-| Desktop (WSL2), one frame at a time | 134 | 2.24x |
-| Desktop, batch of 4 with the render skip | 192 | 3.22x |
+| ratio | Yggdra Union | updates/s | Mario Tennis | updates/s |
+|---|---|---|---|---|
+| 2 | **2.00x** | 59.8 | 1.44x | 42.9 |
+| 3 | **3.00x** | 59.8 | - | - |
+| 4 | **4.00x** | 59.8 | 1.55x | 23.1 |
+| 6 | 5.46x | 54.4 | 1.59x | 15.8 |
+| 8 | 5.32x | 39.7 | 1.60x | 12.0 |
+| 12 | 4.70x | 23.4 | - | - |
+| 16 | 4.34x | 16.2 | 1.63x | 6.1 |
 
-Three things follow.
+Desktop (WSL2), Yggdra Union, `Gba::run_frames` straight through with no
+frontend at all: 2.15x one frame at a time, 3.17x in batches of 4, 3.74x at
+16, and slightly *down* again at 32 and 64.
 
-**The core is the ceiling, not the plumbing.** With the frame-buffer publish,
-the rewind snapshots and the audio write all removed from the loop, the phone
-still only reached 80 frames/s. The frontend is not what limits fast forward.
+**The ratio is exact until the CPU runs out, and where that happens is the
+game's business, not the emulator's.** Yggdra Union hits 2.00x, 3.00x and
+4.00x dead on, with the picture still updating 60 times a second - the audio
+write really is holding the clock. Mario Tennis cannot reach even 2x: it is
+CPU-bound from the start, so every ratio returns about 1.5x and the only thing
+a higher one changes is how choppy it looks.
 
-**The render skip is worth having and is not the answer.** Skipping the pixel
-work on frames that are never shown is about 30% of a frame's cost: 2.24x to
-3.22x on the desktop, 1.34x to 1.45x on the phone at ratio 2. Real, and far
-from a multiplier.
+**Past the point where the CPU runs out, a higher ratio is worse than
+useless.** On Yggdra the peak is around 5.5x at ratio 6, and 16 is both slower
+(4.34x) and a slideshow (16 updates/s). Two costs grow with the ratio: the
+decimation pass and the audio read both scale with it, and the frame buffer is
+published once per batch however long the batch is.
 
-**Above ratio 2 there is nothing to buy.** Ratio 4 gains 0.08x of speed and
-drops the picture from 43 to 23 updates a second, which is the choppiness this
-whole change set out to remove.
+**So the ladder has to be the player's to pick.** There is no single right
+ratio: 4 is free on one game and pointless on another, and only the person
+looking at the screen can say whether this game, right now, is better fast or
+better smooth.
 
-So the shipped default is 2x, and the honest description of what this change
-does is *fast forward is now smooth and evenly paced*, not *fast forward is now
-fast*. Making it fast is a core optimisation project: a 2.24x interpreter on a
-modern desktop is slow for a GBA, and the profile - not this report - should
-decide what to fix first.
+The desktop numbers still say the core is slow for a GBA - 2.15x
+frame-by-frame on a modern desktop is not a fast interpreter, and making it
+faster is its own project. But it is not the wall the first pass of this
+section claimed: for a game that fits inside the budget, fast forward already
+does exactly what it is told.

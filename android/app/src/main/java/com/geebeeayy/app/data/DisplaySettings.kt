@@ -80,6 +80,20 @@ class DisplaySettings(context: Context) {
             if (saved == 0 || saved in 2..MAX_FAST_FORWARD_RATIO) saved else 2
         }
 
+    /**
+     * Whether fast forward plays silence.
+     *
+     * The samples are still written, because the write is the frame clock.
+     * Only their contents are zeroed. Worth having above 4x: the device
+     * cannot produce samples fast enough to keep the track fed, and an
+     * underrunning track buzzes.
+     */
+    fun getMuteOnFastForward(): Boolean = prefs.getBoolean(KEY_MUTE_FAST_FORWARD, false)
+
+    fun setMuteOnFastForward(mute: Boolean) {
+        prefs.edit().putBoolean(KEY_MUTE_FAST_FORWARD, mute).apply()
+    }
+
     fun setFastForwardRatio(ratio: Int) {
         prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
     }
@@ -138,11 +152,19 @@ class DisplaySettings(context: Context) {
         private const val KEY_SCREEN_FILTER = "screen_filter"
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
+        private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
 
         /**
-         * Highest ratio offered. Above this the audio buffer would have to
-         * grow and the picture starts to outrun what the phone can render.
+         * Highest ratio offered.
+         *
+         * Measured on a Mi 10T Pro: a game with headroom hits 2x, 3x and 4x
+         * exactly and peaks around 5.5x, after which a higher ratio is
+         * *slower* as well as choppier - the decimation pass and the audio
+         * read both grow with it, and the picture is published once per
+         * batch. 8 is past the peak already and is there for the games that
+         * are CPU-bound anyway, where the only thing left to trade is
+         * smoothness.
          */
-        const val MAX_FAST_FORWARD_RATIO = 4
+        const val MAX_FAST_FORWARD_RATIO = 8
     }
 }

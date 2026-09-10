@@ -977,25 +977,33 @@ the top 7 rows still flickering.
 **Application**: before hunting a flicker in the PPU, hash `vram`/`oam` across
 two frames. Changing means the game is doing it on purpose.
 
-### The emulation core is only about 2.2x real time on a desktop
+### Fast-forward speed is the game's business, not the emulator's
 
-**2026-09-09**, measured while fixing fast forward. Yggdra Union from a save
-state, release build, `Gba::run_frame` in a loop:
+**2026-09-09**, measured on a Mi 10T Pro with the audio-clocked fast forward
+and the render skip in place, arm64 release core:
 
-- desktop (WSL2): 134 frames/s, **2.24x** real time
-- Mi 10T Pro (arm64): 80 frames/s, **1.34x** real time
+| ratio | Yggdra Union | Mario Tennis |
+|---|---|---|
+| 2 | **2.00x**, 60 updates/s | 1.44x, 43 updates/s |
+| 4 | **4.00x**, 60 updates/s | 1.55x, 23 updates/s |
+| 8 | 5.32x, 40 updates/s | 1.60x, 12 updates/s |
+| 16 | 4.34x, 16 updates/s | 1.63x, 6 updates/s |
 
-Confirmed to be the core and not the frontend: with the frame-buffer publish,
-the rewind snapshots and the blocking audio write all removed from the Kotlin
-loop, the phone still measured 80 frames/s.
+The ratio is exact until the CPU runs out. Yggdra Union hits 2x, 3x and 4x
+dead on with the picture still at 60 updates a second - the blocking audio
+write really is the clock. Mario Tennis is CPU-bound before 2x, so every ratio
+gives about 1.5x and a higher one only costs smoothness.
 
-This is the number that decides what fast forward can be. `Gba::run_frames`
-now skips the pixel work on frames the frontend will not show, which is worth
-about 30% of a frame (2.24x to 3.22x on the desktop), and the phone still only
-reaches 1.45x. Ratios above 2 buy 0.08x and cost half the picture updates.
+Past that point a higher ratio is actively worse: on Yggdra the peak is ~5.5x
+at ratio 6, and ratio 16 is both slower (4.34x) and a slideshow.
 
-**Application**: do not promise a speed multiplier anywhere in the UI without
-measuring first, and treat "make the core faster" as its own project rather
-than a side effect of a frontend change. The full write-up, including how nine
-other emulators handle fast forward, is in
+Desktop (WSL2), Yggdra, core alone: 2.15x frame by frame, 3.74x in batches of
+16. Slow for a GBA interpreter, and worth its own optimisation project - but
+not the wall.
+
+**Application**: never quote one game's speed as the emulator's speed. An
+earlier version of this note did exactly that, took Mario Tennis's 1.34x for a
+hard ceiling, and concluded fast forward could not go above 1.5x - which is
+wrong by a factor of three on the game the user actually plays. Measure at
+least two games, and let the player pick the ratio. Full write-up in
 [`docs/research/fast-forward.md`](../docs/research/fast-forward.md).
