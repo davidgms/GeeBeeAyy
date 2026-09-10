@@ -190,6 +190,7 @@ fun GeeBeeAyyNavHost() {
             val stateMessage by viewModel.stateMessage.collectAsState()
             val isRewinding by viewModel.isRewinding.collectAsState()
             val fastForward by viewModel.fastForward.collectAsState()
+            val soundEnabled by viewModel.soundEnabled.collectAsState()
             // Re-read per ROM launch, the same as the scale mode above, so a
             // change in Settings takes effect the next time a game is opened.
             val controlScale = remember(filePath) { DisplaySettings(context).getControlScale() }
@@ -249,6 +250,8 @@ fun GeeBeeAyyNavHost() {
                 onLoadState = { slot -> viewModel.loadState(slot) },
                 stateSlots = { viewModel.stateSlots() },
                 onScreenshot = { viewModel.takeScreenshot() },
+                soundEnabled = soundEnabled,
+                onToggleSound = { viewModel.toggleSound() },
                 onSettings = {
                     // Pausing first is what makes coming back work: the loop
                     // would otherwise keep running behind Settings, and

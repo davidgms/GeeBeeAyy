@@ -87,6 +87,7 @@ fun SettingsScreen(
     var showTintMenu by remember { mutableStateOf(false) }
     var controlFont by remember { mutableStateOf(displaySettings.getControlFontSize()) }
     var showFontMenu by remember { mutableStateOf(false) }
+    var soundEnabled by remember { mutableStateOf(displaySettings.getSoundEnabled()) }
     var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var muteFastForward by remember { mutableStateOf(displaySettings.getMuteOnFastForward()) }
@@ -393,8 +394,11 @@ fun SettingsScreen(
                     icon = Icons.Default.VolumeUp,
                     title = "Sound",
                     subtitle = "Enable audio output",
-                    checked = true,
-                    onCheckedChange = { }
+                    checked = soundEnabled,
+                    onCheckedChange = { checked ->
+                        soundEnabled = checked
+                        displaySettings.setSoundEnabled(checked)
+                    }
                 )
                 // Not a button: there is one backend, so a row that opened a
                 // picker would be offering a choice that does not exist. It
