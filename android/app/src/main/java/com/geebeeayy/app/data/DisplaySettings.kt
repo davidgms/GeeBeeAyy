@@ -35,15 +35,53 @@ class DisplaySettings(context: Context) {
     }
 
     /**
-     * Whether the app locks itself to portrait via [android.app.Activity.setRequestedOrientation].
-     * Defaults to true: the manifest used to hard-lock portrait unconditionally, so this keeps
-     * that behaviour as the default after the lock moves into user-togglable settings, rather
-     * than surprising an existing install with landscape it never asked for.
+     * Which way up the app is allowed to sit.
+     *
+     * Replaces a `force_portrait` boolean, which could lock upright or let go
+     * and had no way to say *landscape*. That old value is still read as the
+     * fallback, so an install that had portrait locked stays locked: `true`
+     * becomes [ScreenOrientation.PORTRAIT], `false` becomes
+     * [ScreenOrientation.AUTO].
      */
-    fun getForcePortrait(): Boolean = prefs.getBoolean(KEY_FORCE_PORTRAIT, true)
+    fun getScreenOrientation(): ScreenOrientation {
+        prefs.getString(KEY_ORIENTATION, null)?.let { saved ->
+            runCatching { ScreenOrientation.valueOf(saved) }.getOrNull()?.let { return it }
+        }
+        return if (prefs.getBoolean(KEY_FORCE_PORTRAIT, true)) {
+            ScreenOrientation.PORTRAIT
+        } else {
+            ScreenOrientation.AUTO
+        }
+    }
 
-    fun setForcePortrait(forced: Boolean) {
-        prefs.edit().putBoolean(KEY_FORCE_PORTRAIT, forced).apply()
+    fun setScreenOrientation(orientation: ScreenOrientation) {
+        prefs.edit().putString(KEY_ORIENTATION, orientation.name).apply()
+    }
+
+    /**
+     * Whether a running game hides the status and navigation bars.
+     *
+     * Worth about 200px on a 20:9 phone, on a picture already limited by
+     * width. The bars come back on a swipe from the edge, and the moment the
+     * player leaves the game.
+     */
+    fun getFullscreenInGame(): Boolean = prefs.getBoolean(KEY_FULLSCREEN, true)
+
+    fun setFullscreenInGame(fullscreen: Boolean) {
+        prefs.edit().putBoolean(KEY_FULLSCREEN, fullscreen).apply()
+    }
+
+    /**
+     * Whether the battery and clock strip shows along the bottom in game.
+     *
+     * On by default, and worth having as a switch precisely because the bar it
+     * stands in for can be brought back: with the system bars visible this is
+     * a second clock.
+     */
+    fun getShowStatusStrip(): Boolean = prefs.getBoolean(KEY_STATUS_STRIP, true)
+
+    fun setShowStatusStrip(show: Boolean) {
+        prefs.edit().putBoolean(KEY_STATUS_STRIP, show).apply()
     }
 
     /**
@@ -188,6 +226,9 @@ class DisplaySettings(context: Context) {
 
         private const val KEY_SCALE_MODE = "scale_mode"
         private const val KEY_FORCE_PORTRAIT = "force_portrait"
+        private const val KEY_ORIENTATION = "screen_orientation"
+        private const val KEY_FULLSCREEN = "fullscreen_in_game"
+        private const val KEY_STATUS_STRIP = "status_strip"
         private const val KEY_CONTROL_SCALE = "control_scale"
         private const val KEY_CONTROL_OPACITY = "control_opacity"
         private const val KEY_SCREEN_FILTER = "screen_filter"

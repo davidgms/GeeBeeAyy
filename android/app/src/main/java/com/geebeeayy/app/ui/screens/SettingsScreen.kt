@@ -32,6 +32,7 @@ import com.geebeeayy.app.data.ControlTint
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
+import com.geebeeayy.app.data.ScreenOrientation
 import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.data.ScreenFilter
 import com.geebeeayy.app.engine.AudioOutput
@@ -78,7 +79,10 @@ fun SettingsScreen(
     var controlScale by remember { mutableFloatStateOf(displaySettings.getControlScale()) }
     var controlOpacity by remember { mutableFloatStateOf(displaySettings.getControlOpacity()) }
     var showScaleMenu by remember { mutableStateOf(false) }
-    var forcePortrait by remember { mutableStateOf(displaySettings.getForcePortrait()) }
+    var orientation by remember { mutableStateOf(displaySettings.getScreenOrientation()) }
+    var showOrientationMenu by remember { mutableStateOf(false) }
+    var fullscreen by remember { mutableStateOf(displaySettings.getFullscreenInGame()) }
+    var showStatusStrip by remember { mutableStateOf(displaySettings.getShowStatusStrip()) }
     val layoutStore = remember { ControlLayoutStore(context) }
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var defaultLayoutId by remember { mutableStateOf(layoutStore.getDefaultLayoutId()) }
@@ -339,15 +343,50 @@ fun SettingsScreen(
                     onValueChange = { controlOpacity = it },
                     onValueChangeFinished = { displaySettings.setControlOpacity(controlOpacity) },
                 )
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.StayCurrentPortrait,
+                        title = "Orientation",
+                        subtitle = orientation.label,
+                        onClick = { showOrientationMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showOrientationMenu,
+                        onDismissRequest = { showOrientationMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        ScreenOrientation.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    orientation = option
+                                    displaySettings.setScreenOrientation(option)
+                                    context.findActivity()?.requestedOrientation =
+                                        orientationFor(option)
+                                    showOrientationMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
                 SettingsSwitch(
-                    icon = Icons.Default.StayCurrentPortrait,
-                    title = "Force Portrait",
-                    subtitle = "Lock orientation",
-                    checked = forcePortrait,
+                    icon = Icons.Default.Fullscreen,
+                    title = "Fullscreen In Game",
+                    subtitle = "Hide the status and navigation bars",
+                    checked = fullscreen,
                     onCheckedChange = { checked ->
-                        forcePortrait = checked
-                        displaySettings.setForcePortrait(checked)
-                        context.findActivity()?.requestedOrientation = orientationFor(checked)
+                        fullscreen = checked
+                        displaySettings.setFullscreenInGame(checked)
+                    }
+                )
+                SettingsSwitch(
+                    icon = Icons.Default.BatteryStd,
+                    title = "Clock & Battery",
+                    subtitle = "Along the bottom while playing",
+                    checked = showStatusStrip,
+                    onCheckedChange = { checked ->
+                        showStatusStrip = checked
+                        displaySettings.setShowStatusStrip(checked)
                     }
                 )
             }

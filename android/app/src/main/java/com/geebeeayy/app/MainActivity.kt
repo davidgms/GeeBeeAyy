@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
         // the equivalent lock, driven by a user-togglable setting instead of a fixed value.
         // android:configChanges="orientation|..." on this activity means setting this does not
         // trigger a recreate, so it is safe to call before setContent and again from Settings.
-        requestedOrientation = orientationFor(DisplaySettings(this).getForcePortrait())
+        requestedOrientation = orientationFor(DisplaySettings(this).getScreenOrientation())
         setContent {
             GeeBeeAyyTheme(darkTheme = true) {
                 GeeBeeAyyNavHost()
@@ -198,6 +198,10 @@ fun GeeBeeAyyNavHost() {
             val screenFilter = remember(filePath) { DisplaySettings(context).getScreenFilter() }
             val controlTint = remember(filePath) { DisplaySettings(context).getControlTint() }
             val controlFont = remember(filePath) { DisplaySettings(context).getControlFontSize() }
+            val fullscreen = remember(filePath) { DisplaySettings(context).getFullscreenInGame() }
+            val showStatusStrip = remember(filePath) {
+                DisplaySettings(context).getShowStatusStrip()
+            }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -250,6 +254,8 @@ fun GeeBeeAyyNavHost() {
                 onLoadState = { slot -> viewModel.loadState(slot) },
                 stateSlots = { viewModel.stateSlots() },
                 onScreenshot = { viewModel.takeScreenshot() },
+                fullscreen = fullscreen,
+                showStatusStrip = showStatusStrip,
                 soundEnabled = soundEnabled,
                 onToggleSound = { viewModel.toggleSound() },
                 onSettings = {
