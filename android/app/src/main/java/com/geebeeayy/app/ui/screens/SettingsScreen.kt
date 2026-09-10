@@ -38,8 +38,16 @@ import com.geebeeayy.app.ui.orientationFor
 import com.geebeeayy.app.ui.theme.*
 import java.io.File
 
-/** The ratios offered, with 0 meaning unlimited. */
-private val FastForwardRatios = listOf(2, 3, 4, 0)
+/**
+ * The ratios offered, with 0 meaning unlimited.
+ *
+ * A ladder rather than two or three steps, because the trade it controls is
+ * gradual: at 2x the picture updates about 43 times a second and looks
+ * normal, and by 16x it is down to a handful and looks like a slideshow that
+ * happens to be quicker. Where a player wants to sit on that line is theirs
+ * to pick, not ours.
+ */
+private val FastForwardRatios = listOf(2, 3, 4, 6, 8, 12, 16, 0)
 
 private fun fastForwardLabel(ratio: Int): String =
     if (ratio == 0) "Unlimited - no audio" else "${ratio}x"
@@ -75,6 +83,7 @@ fun SettingsScreen(
     var showLayoutMenu by remember { mutableStateOf(false) }
     var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
     var showSpeedMenu by remember { mutableStateOf(false) }
+    var muteFastForward by remember { mutableStateOf(displaySettings.getMuteOnFastForward()) }
     // Read once: a pad paired while this screen is open is rare enough that a
     // reopen is a fair price for not polling the input system every frame.
     //
@@ -361,6 +370,16 @@ fun SettingsScreen(
                         }
                     }
                 }
+                SettingsSwitch(
+                    icon = Icons.Default.VolumeOff,
+                    title = "Mute Fast Forward",
+                    subtitle = "Silence while speeding up",
+                    checked = muteFastForward,
+                    onCheckedChange = { checked ->
+                        muteFastForward = checked
+                        displaySettings.setMuteOnFastForward(checked)
+                    }
+                )
             }
 
             SettingsSection(title = "Audio") {

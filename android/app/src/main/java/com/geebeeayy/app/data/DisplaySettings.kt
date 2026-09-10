@@ -80,6 +80,20 @@ class DisplaySettings(context: Context) {
             if (saved == 0 || saved in 2..MAX_FAST_FORWARD_RATIO) saved else 2
         }
 
+    /**
+     * Whether fast forward plays silence.
+     *
+     * The samples are still written, because the write is the frame clock.
+     * Only their contents are zeroed. Worth having above 4x: the device
+     * cannot produce samples fast enough to keep the track fed, and an
+     * underrunning track buzzes.
+     */
+    fun getMuteOnFastForward(): Boolean = prefs.getBoolean(KEY_MUTE_FAST_FORWARD, false)
+
+    fun setMuteOnFastForward(mute: Boolean) {
+        prefs.edit().putBoolean(KEY_MUTE_FAST_FORWARD, mute).apply()
+    }
+
     fun setFastForwardRatio(ratio: Int) {
         prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
     }
@@ -138,11 +152,16 @@ class DisplaySettings(context: Context) {
         private const val KEY_SCREEN_FILTER = "screen_filter"
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
+        private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
 
         /**
-         * Highest ratio offered. Above this the audio buffer would have to
-         * grow and the picture starts to outrun what the phone can render.
+         * Highest ratio offered.
+         *
+         * Measured on a Mi 10T Pro, the emulated speed flattens out around
+         * 1.8x however high this goes - the core, not the throttle, is the
+         * ceiling - while the picture keeps getting choppier. 16 is where the
+         * last of the speed is, and past it the trade is all cost.
          */
-        const val MAX_FAST_FORWARD_RATIO = 4
+        const val MAX_FAST_FORWARD_RATIO = 16
     }
 }
