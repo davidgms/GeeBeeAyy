@@ -291,7 +291,13 @@ fun EmulationScreen(
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+        onDispose {
+            // Only undo what this effect did. `show` is not the plain inverse
+            // of `hide` below API 30 - it also clears the window's
+            // FLAG_FULLSCREEN - so it has no business running when nothing
+            // was hidden.
+            if (fullscreen) controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     Box(
@@ -304,6 +310,14 @@ fun EmulationScreen(
             // toast, the layout-edit bar) keep NightVoid/NightPanel - they are
             // not this background.
             .background(Color.Black)
+            // With the bars hidden there is nothing to avoid. With them shown
+            // there is: targetSdk 35 draws edge to edge, and this screen has
+            // no Scaffold to inset it, so the back button would sit under the
+            // status bar and the StatusStrip under the navigation bar.
+            .then(
+                if (fullscreen) Modifier
+                else Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+            )
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Top bar
