@@ -559,6 +559,7 @@ fun EmulationScreen(
             ) {
                 CustomButtonView(
                     button = button,
+                    editingLayout = editingLayout,
                     held = heldToggles[button.id] == true,
                     onToggleHeld = {
                         val nowHeld = heldToggles[button.id] != true
@@ -1136,7 +1137,7 @@ fun GameControls(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = START_SELECT_BOTTOM)
-                .offset(x = -START_SELECT_SPREAD)
+                .offset(x = -START_SELECT_SPREAD * LocalControlFontScale.current)
                 .movableControl(
                     ControlButton.SELECT, editingLayout, selectedButton, pillShape,
                     offsets, onDragStart, onDragEnd, scales,
@@ -1148,7 +1149,7 @@ fun GameControls(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = START_SELECT_BOTTOM)
-                .offset(x = START_SELECT_SPREAD)
+                .offset(x = START_SELECT_SPREAD * LocalControlFontScale.current)
                 .movableControl(
                     ControlButton.START, editingLayout, selectedButton, pillShape,
                     offsets, onDragStart, onDragEnd, scales,
@@ -1168,14 +1169,19 @@ fun GameControls(
  */
 private val EDGE_PADDING = 16.dp
 private val MAIN_PADDING = 24.dp
-private val SHOULDER_BOTTOM = 232.dp
+private val SHOULDER_BOTTOM = 228.dp
 private val MAIN_BOTTOM = 72.dp
 private val FACE_B_BOTTOM = 80.dp
 private val FACE_A_BOTTOM = 152.dp
-private val START_SELECT_BOTTOM = 12.dp
+private val START_SELECT_BOTTOM = 8.dp
 
 /**
- * How far Start and Select sit either side of centre.
+ * How far Start and Select sit either side of centre, before the button text
+ * size scales it.
+ *
+ * Scaled, because the pills grow with their label: at a fixed 56.dp the two
+ * of them touch once the text is large, and Start - composed last - wins the
+ * overlap and takes part of Select's touch area with it.
  *
  * An offset rather than padding: padding would change each pill's own bounds,
  * and where the content then lands depends on how wide the word inside it is -
@@ -1254,6 +1260,7 @@ fun CustomButtonView(
     held: Boolean,
     onToggleHeld: () -> Unit,
     onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
 ) {
     val controls = LocalControlPalette.current
     var isPressed by remember { mutableStateOf(false) }
@@ -1264,7 +1271,15 @@ fun CustomButtonView(
         modifier = Modifier
             .height(48.dp)
             .widthIn(min = 64.dp)
-            .pointerInput(button.id, button.mode, button.keys) {
+            // Keyed on `editingLayout` so opening the position editor cancels
+            // this block, which runs the `finally` below and lets go of
+            // anything still held. While it is open the parent's drag owns the
+            // touch: without this a button could not be picked up at all - the
+            // drag never starts - and touching it to move it pressed its keys
+            // into the running game. The D-pad has had the same guard since
+            // it became one cross.
+            .pointerInput(button.id, button.mode, button.keys, editingLayout) {
+                if (editingLayout) return@pointerInput
                 when (button.mode) {
                     // The `finally` is not decoration: this loop is cancelled
                     // whenever the pointerInput key changes or the button
@@ -1312,14 +1327,21 @@ fun CustomButtonView(
                                 } else if (!down) {
                                     isPressed = false
                                 }
-                                event.changes.forEach { if (it.pressed) it.consume() }
                             }
                         }
                     } finally {
                         isPressed = false
                     }
                     // Same raw-pointer reason as TOGGLE_HOLD above.
-                    CustomButtonMode.SEQUENCE -> awaitPointerEventScope {
+                    // The outer `finally` mirrors the one in TOGGLE_HOLD.
+                    // `isPressed` lives in `remember`, outside this block, so
+                    // a restart while a finger is down - editing this button
+                    // from the Custom Buttons dialog, say - would leave it
+                    // stuck true: the button would render pressed for good
+                    // and swallow the next tap, because the edge test is
+                    // `down && !isPressed`.
+                    CustomButtonMode.SEQUENCE -> try {
+                        awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
                             val down = event.changes.any { it.pressed }
@@ -1344,8 +1366,10 @@ fun CustomButtonView(
                             } else if (!down) {
                                 isPressed = false
                             }
-                            event.changes.forEach { if (it.pressed) it.consume() }
                         }
+                        }
+                    } finally {
+                        isPressed = false
                     }
                 }
             },
