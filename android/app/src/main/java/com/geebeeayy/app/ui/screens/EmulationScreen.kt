@@ -45,6 +45,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
 import android.os.BatteryManager
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.geebeeayy.app.ui.findActivity
 import com.geebeeayy.app.data.ControlButton
 import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
@@ -98,6 +101,8 @@ fun EmulationScreen(
     stateSlots: () -> List<StateSlot> = { emptyList() },
     onScreenshot: () -> Unit = {},
     onSettings: () -> Unit = {},
+    fullscreen: Boolean = true,
+    showStatusStrip: Boolean = true,
     soundEnabled: Boolean = true,
     onToggleSound: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
@@ -272,6 +277,29 @@ fun EmulationScreen(
         onDispose { view.keepScreenOn = false }
     }
 
+    // The status and navigation bars are worth about 200px on a tall phone,
+    // on a picture already limited by width. Hidden while a game runs and put
+    // back on the way out - a setting that leaves them off after the player
+    // has left is a setting that looks like a bug.
+    DisposableEffect(view, fullscreen) {
+        val window = view.context.findActivity()?.window
+        val controller = window?.let { WindowInsetsControllerCompat(it, view) }
+        if (fullscreen && controller != null) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            // A swipe from the edge brings them back for a moment rather than
+            // for good: the player wants the clock, not a changed layout.
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            // Only undo what this effect did. `show` is not the plain inverse
+            // of `hide` below API 30 - it also clears the window's
+            // FLAG_FULLSCREEN - so it has no business running when nothing
+            // was hidden.
+            if (fullscreen) controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -282,6 +310,14 @@ fun EmulationScreen(
             // toast, the layout-edit bar) keep NightVoid/NightPanel - they are
             // not this background.
             .background(Color.Black)
+            // With the bars hidden there is nothing to avoid. With them shown
+            // there is: targetSdk 35 draws edge to edge, and this screen has
+            // no Scaffold to inset it, so the back button would sit under the
+            // status bar and the StatusStrip under the navigation bar.
+            .then(
+                if (fullscreen) Modifier
+                else Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+            )
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Top bar
@@ -530,7 +566,7 @@ fun EmulationScreen(
         // Battery and clock, in the two bottom corners. Small and dim, and in
         // the corners on purpose: Start and Select sit centred at the bottom,
         // so this is the one strip of screen no control wants.
-        if (!editingLayout) {
+        if (showStatusStrip && !editingLayout) {
             StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
         }
 
