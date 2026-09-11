@@ -205,9 +205,11 @@ fun GeeBeeAyyNavHost() {
             }
             // Re-read on every press, not per ROM: a player changing the
             // strength in Settings wants to feel the difference on the next
-            // button, not the next game.
+            // button, not the next game. The store itself is held, so a press
+            // costs one preference read and not a fresh object.
             val haptics = remember { Haptics(context) }
-            val hapticStrength = { DisplaySettings(context).getHapticStrength() }
+            val settings = remember { DisplaySettings(context) }
+            val hapticStrength = { settings.getHapticStrength() }
 
             LaunchedEffect(filePath) {
                 viewModel.loadRomFromPath(filePath)
@@ -272,8 +274,11 @@ fun GeeBeeAyyNavHost() {
                     navController.navigate("settings")
                 },
                 onKeyChange = { key, pressed ->
-                    if (pressed) haptics.press(hapticStrength())
+                    // Key first, buzz second: `Vibrator.vibrate` is a
+                    // blocking binder call into the system, and input latency
+                    // is the product here.
                     viewModel.setKey(key, pressed)
+                    if (pressed) haptics.press(hapticStrength())
                 },
                 gameKey = { viewModel.currentRomKey() },
             )

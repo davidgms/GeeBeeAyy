@@ -1343,7 +1343,10 @@ fun DPad(
                 // cancels this block, which runs the `finally` below and
                 // releases anything still down. Dragging the pad must not
                 // also press it.
-                .pointerInput(editingLayout) {
+                // cardinalHalf is in the key because the block captures it:
+                // recomposition alone would leave the old sector width in a
+                // gesture loop that is already running.
+                .pointerInput(editingLayout, cardinalHalf) {
                     if (editingLayout) return@pointerInput
                     try {
                         awaitPointerEventScope {
@@ -1469,13 +1472,6 @@ private const val DPAD_ARROW_HALF_WIDTH = 0.22f
 private const val DPAD_ARROW_DEPTH = 0.30f
 private const val DPAD_ARROW_INSET = 0.24f
 
-/**
- * Half-width of a cardinal's sector, in degrees. At 30 each cardinal owns 60
- * degrees and each diagonal 30, so a straight Up is hard to fumble into
- * Up+Right while the diagonal is still there when it is aimed for. Raise it
- * to make diagonals harder to hit, lower it to make them easier - this is the
- * one number worth tuning against a real thumb on real glass.
- */
 /**
  * Default half-width of a straight direction, in degrees. The live value comes
  * from [LocalDpadCardinalHalf] and is a setting - there is no right answer,
