@@ -7,6 +7,12 @@
          Nothing else in the app makes a network request. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Feedback under a finger on the on-screen buttons. A normal
+         permission: granted at install, no runtime prompt. Without it every
+         vibrate call is silently refused, which would leave the Vibration
+         setting looking like a dead switch. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 

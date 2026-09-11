@@ -88,4 +88,51 @@ class DPadDirectionTest {
             )
         }
     }
+
+    /**
+     * The width of a diagonal is a setting, because there is no right answer:
+     * it depends on the thumb, on where the pad sits, and on whether the game
+     * is a platformer or a menu. These pin the two ends of that range.
+     */
+    @Test
+    fun `at the widest straight setting there are no diagonals`() {
+        val size = IntSize(144, 144)
+        // 45 degrees of half-width means the four sectors meet edge to edge.
+        for (degrees in 0 until 360 step 3) {
+            val radians = Math.toRadians(degrees.toDouble())
+            val keys = dpadKeysAt(
+                Offset(
+                    72f + (60f * kotlin.math.cos(radians)).toFloat(),
+                    72f - (60f * kotlin.math.sin(radians)).toFloat(),
+                ),
+                size,
+                cardinalHalfDegrees = 45f,
+            )
+            assertEquals("$degrees deg reported $keys", 1, keys.size)
+        }
+    }
+
+    @Test
+    fun `a narrow straight setting makes the diagonals wider than the straights`() {
+        val size = IntSize(144, 144)
+        // 15 degrees of half-width: a straight spans 30 degrees, a diagonal 60.
+        var straight = 0
+        var diagonal = 0
+        for (degrees in 0 until 360 step 3) {
+            val radians = Math.toRadians(degrees.toDouble())
+            val keys = dpadKeysAt(
+                Offset(
+                    72f + (60f * kotlin.math.cos(radians)).toFloat(),
+                    72f - (60f * kotlin.math.sin(radians)).toFloat(),
+                ),
+                size,
+                cardinalHalfDegrees = 15f,
+            )
+            if (keys.size == 1) straight++ else diagonal++
+        }
+        assertTrue(
+            "straights $straight, diagonals $diagonal",
+            diagonal > straight,
+        )
+    }
 }

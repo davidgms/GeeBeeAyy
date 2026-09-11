@@ -1326,6 +1326,7 @@ fun DPad(
     onDragStart: (ControlButton) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
+    val cardinalHalf = LocalDpadCardinalHalf.current
     val controls = LocalControlPalette.current
     var held by remember { mutableStateOf(emptySet<Int>()) }
 
@@ -1342,7 +1343,10 @@ fun DPad(
                 // cancels this block, which runs the `finally` below and
                 // releases anything still down. Dragging the pad must not
                 // also press it.
-                .pointerInput(editingLayout) {
+                // cardinalHalf is in the key because the block captures it:
+                // recomposition alone would leave the old sector width in a
+                // gesture loop that is already running.
+                .pointerInput(editingLayout, cardinalHalf) {
                     if (editingLayout) return@pointerInput
                     try {
                         awaitPointerEventScope {
@@ -1352,7 +1356,7 @@ fun DPad(
                                 val next = if (pointer == null) {
                                     emptySet()
                                 } else {
-                                    dpadKeysAt(pointer.position, size)
+                                    dpadKeysAt(pointer.position, size, cardinalHalf)
                                 }
                                 if (next != held) {
                                     (held - next).forEach { onKeyChange(it, false) }
@@ -1469,11 +1473,9 @@ private const val DPAD_ARROW_DEPTH = 0.30f
 private const val DPAD_ARROW_INSET = 0.24f
 
 /**
- * Half-width of a cardinal's sector, in degrees. At 30 each cardinal owns 60
- * degrees and each diagonal 30, so a straight Up is hard to fumble into
- * Up+Right while the diagonal is still there when it is aimed for. Raise it
- * to make diagonals harder to hit, lower it to make them easier - this is the
- * one number worth tuning against a real thumb on real glass.
+ * Default half-width of a straight direction, in degrees. The live value comes
+ * from [LocalDpadCardinalHalf] and is a setting - there is no right answer,
+ * only the one that suits a particular thumb.
  */
 private const val DPAD_CARDINAL_HALF_DEGREES = 30f
 
@@ -1491,7 +1493,11 @@ private const val DPAD_DEAD_ZONE = 0.22f
  * this is the part with the arithmetic, and it needs a test more than the
  * drawing does.
  */
-internal fun dpadKeysAt(position: Offset, size: IntSize): Set<Int> {
+internal fun dpadKeysAt(
+    position: Offset,
+    size: IntSize,
+    cardinalHalfDegrees: Float = DPAD_CARDINAL_HALF_DEGREES,
+): Set<Int> {
     val half = minOf(size.width, size.height) / 2f
     if (half <= 0f) return emptySet()
 
@@ -1511,7 +1517,7 @@ internal fun dpadKeysAt(position: Offset, size: IntSize): Set<Int> {
         270f to GbaEngine.KEY_DOWN,
     ).firstOrNull { (centre, _) ->
         // Shortest angular distance to the sector's centre.
-        abs(((degrees - centre + 540f) % 360f) - 180f) <= DPAD_CARDINAL_HALF_DEGREES
+        abs(((degrees - centre + 540f) % 360f) - 180f) <= cardinalHalfDegrees
     }
     if (cardinal != null) return setOf(cardinal.second)
 
