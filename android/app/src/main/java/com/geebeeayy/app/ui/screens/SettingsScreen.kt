@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.geebeeayy.app.data.ControlFontSize
+import com.geebeeayy.app.data.HapticStrength
 import com.geebeeayy.app.data.ControlTint
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.DisplaySettings
@@ -87,6 +88,11 @@ fun SettingsScreen(
     var showTintMenu by remember { mutableStateOf(false) }
     var controlFont by remember { mutableStateOf(displaySettings.getControlFontSize()) }
     var showFontMenu by remember { mutableStateOf(false) }
+    var haptics by remember { mutableStateOf(displaySettings.getHapticStrength()) }
+    var showHapticMenu by remember { mutableStateOf(false) }
+    var dpadCardinal by remember {
+        mutableFloatStateOf(displaySettings.getDpadCardinalHalfDegrees())
+    }
     var soundEnabled by remember { mutableStateOf(displaySettings.getSoundEnabled()) }
     var fastForwardRatio by remember { mutableIntStateOf(displaySettings.getFastForwardRatio()) }
     var showSpeedMenu by remember { mutableStateOf(false) }
@@ -488,6 +494,49 @@ fun SettingsScreen(
                         }
                     }
                 }
+                Box {
+                    SettingsItem(
+                        icon = Icons.Default.Vibration,
+                        title = "Vibration",
+                        subtitle = haptics.label,
+                        onClick = { showHapticMenu = true }
+                    )
+                    DropdownMenu(
+                        expanded = showHapticMenu,
+                        onDismissRequest = { showHapticMenu = false },
+                        offset = SettingsMenuOffset,
+                    ) {
+                        HapticStrength.entries.forEach { strength ->
+                            DropdownMenuItem(
+                                text = { Text(strength.label) },
+                                onClick = {
+                                    haptics = strength
+                                    displaySettings.setHapticStrength(strength)
+                                    showHapticMenu = false
+                                }
+                            )
+                        }
+                    }
+                }
+                SettingsSlider(
+                    icon = Icons.Default.ControlCamera,
+                    title = "D-Pad Diagonals",
+                    // Shown as how wide a diagonal is, not as the internal
+                    // half-angle: "45 degrees of diagonal" is something a
+                    // thumb can picture, "30 degrees of cardinal half" is not.
+                    subtitle = "%.0f degrees wide".format(90f - dpadCardinal * 2f),
+                    // Reversed: dragging right should widen the diagonal, and
+                    // the number that widens it is the one that shrinks.
+                    value = DisplaySettings.MAX_DPAD_CARDINAL_HALF - dpadCardinal,
+                    range = 0f..(DisplaySettings.MAX_DPAD_CARDINAL_HALF -
+                        DisplaySettings.MIN_DPAD_CARDINAL_HALF),
+                    onValueChange = {
+                        dpadCardinal = DisplaySettings.MAX_DPAD_CARDINAL_HALF - it
+                    },
+                    onValueChangeFinished = {
+                        displaySettings.setDpadCardinalHalfDegrees(dpadCardinal)
+                    },
+                )
                 // Reports what is actually paired and opens the system's own
                 // Bluetooth screen, which is the only place pairing happens.
                 // Mapping a pad's buttons to the GBA's is not built yet, so
