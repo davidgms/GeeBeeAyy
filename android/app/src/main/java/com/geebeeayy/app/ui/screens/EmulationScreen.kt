@@ -1,6 +1,7 @@
 package com.geebeeayy.app.ui.screens
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -118,6 +119,10 @@ fun EmulationScreen(
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var activeLayoutId by remember { mutableStateOf(ControlLayoutStore.DEFAULT_LAYOUT_ID) }
     var editingLayout by remember { mutableStateOf(false) }
+    // Whether this editing session has changed anything yet. Leaving with
+    // nothing touched must not ask a question the player has no answer to.
+    var editDirty by remember { mutableStateOf(false) }
+    var showLeaveEditConfirm by remember { mutableStateOf(false) }
     var layoutsModalOpen by remember { mutableStateOf(false) }
     // The button currently being dragged, so only it gets the outline - a
     // player touches a button, sees it highlight, then drags it, rather than
@@ -127,10 +132,10 @@ fun EmulationScreen(
     /** Per-control size multipliers, alongside [offsets] and saved with them. */
     val scales = remember { mutableStateMapOf<ControlButton, Float>() }
     // Custom buttons (combos, sequences, hold toggles) belong to the layout
-    // the same way the real buttons' positions do. Their drag is separate
-    // from the real buttons' undo/redo/Done staging below - each drag saves
-    // its new position immediately, since there is no equivalent "abandon
-    // this edit" concern for a position with no default to revert to.
+    // the same way the real buttons' positions do, and they are staged behind
+    // Done the same way. They used to write their position the moment a drag
+    // ended, which is why leaving the editor put the fixed buttons back and
+    // left the custom ones where the abandoned edit had dropped them.
     var customButtons by remember { mutableStateOf<List<CustomButton>>(emptyList()) }
     val customOffsets = remember { mutableStateMapOf<String, Offset>() }
     val customScales = remember { mutableStateMapOf<String, Float>() }
@@ -189,15 +194,18 @@ fun EmulationScreen(
     // per pixel of movement - a single drag is one undo step, not hundreds.
     val undoStack = remember { mutableStateListOf<LayoutSnapshot>() }
     val redoStack = remember { mutableStateListOf<LayoutSnapshot>() }
-    fun snapshot() = LayoutSnapshot(offsets.toMap(), scales.toMap(), customScales.toMap())
+    fun snapshot() =
+        LayoutSnapshot(offsets.toMap(), scales.toMap(), customOffsets.toMap(), customScales.toMap())
     fun restore(state: LayoutSnapshot) {
         offsets.clear(); offsets.putAll(state.offsets)
         scales.clear(); scales.putAll(state.scales)
+        customOffsets.clear(); customOffsets.putAll(state.customOffsets)
         customScales.clear(); customScales.putAll(state.customScales)
     }
     val pushUndoSnapshot: () -> Unit = {
         undoStack.add(snapshot())
         redoStack.clear()
+        editDirty = true
     }
     val undoEdit: () -> Unit = {
         undoStack.removeLastOrNull()?.let { previous ->
@@ -235,18 +243,46 @@ fun EmulationScreen(
     // edit bar act on whatever is selected, and clearing it here left nothing
     // to act on the moment the finger came up.
     val handleDragEnd: () -> Unit = {}
-    // A custom button's position saves the moment the drag ends - there is
-    // no Done to stage it behind, so `selectedCustomId` still names the one
-    // that just finished when this fires.
     val handleCustomDragStart: (String) -> Unit = { id ->
+        pushUndoSnapshot()
         selectedCustomId = id
         selectedButton = null
     }
-    val handleCustomDragEnd: () -> Unit = {
-        selectedCustomId?.let { id ->
-            val pos = customOffsets[id] ?: Offset.Zero
-            layoutStore.setCustomButtonOffset(activeLayoutId, id, pos.x, pos.y)
+    // Nothing to do: the position is written by Done, along with everything
+    // else the editor staged.
+    val handleCustomDragEnd: () -> Unit = {}
+    // The three ways out of the editor - Done, Cancel and the system back
+    // button - are these two functions plus whether the caller leaves the
+    // screen afterwards.
+    fun saveLayoutEdits() {
+        ControlButton.entries.forEach { button ->
+            val o = offsets[button] ?: Offset.Zero
+            layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
+            layoutStore.setControlScale(activeLayoutId, button, scales[button] ?: 1f)
         }
+        customOffsets.forEach { (id, o) ->
+            layoutStore.setCustomButtonOffset(activeLayoutId, id, o.x, o.y)
+        }
+        customScales.forEach { (id, scale) ->
+            layoutStore.setCustomButtonScale(activeLayoutId, id, scale)
+        }
+        editingLayout = false
+        editDirty = false
+        selectedButton = null
+        selectedCustomId = null
+        undoStack.clear()
+        redoStack.clear()
+    }
+    fun discardLayoutEdits() {
+        // Re-reading the store is the whole revert: nothing this session
+        // touched was written to it.
+        loadLayout(activeLayoutId)
+        editingLayout = false
+        editDirty = false
+        selectedButton = null
+        selectedCustomId = null
+        undoStack.clear()
+        redoStack.clear()
     }
     // Makes `layout` the current game's layout - a radio pick just switches
     // what is on screen; opening its editor also closes the modal and drops
@@ -262,6 +298,7 @@ fun EmulationScreen(
         if (openEditor) {
             layoutsModalOpen = false
             editingLayout = true
+            editDirty = false
         }
     }
     var showSlots by remember { mutableStateOf(false) }
@@ -444,6 +481,16 @@ fun EmulationScreen(
             }
 
             if (isLandscape) {
+                // The same size and opacity the portrait overlay applies,
+                // applied here per control instead: landscape flanks the
+                // picture rather than floating over it, so there is no single
+                // overlay to hang the layer on. Without this the two settings
+                // did nothing at all in landscape.
+                val landscapeControlLayer = Modifier.graphicsLayer(
+                    scaleX = controlScale,
+                    scaleY = controlScale,
+                    alpha = controlOpacity,
+                )
                 // Controls flank the screen rather than sitting under it, so
                 // nothing overlaps the play area on a wide/short display.
                 Row(
@@ -454,7 +501,9 @@ fun EmulationScreen(
                 ) {
                     DPad(
                         onKeyChange = onKeyChange,
-                        modifier = Modifier.padding(start = 16.dp),
+                        modifier = Modifier
+                            .padding(start = 16.dp)
+                            .then(landscapeControlLayer),
                         editingLayout = editingLayout,
                         selectedButton = selectedButton,
                         offsets = offsets,
@@ -479,7 +528,9 @@ fun EmulationScreen(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(end = 16.dp),
+                        modifier = Modifier
+                            .padding(end = 16.dp)
+                            .then(landscapeControlLayer),
                     ) {
                         ActionButtons(
                             onKeyChange = onKeyChange,
@@ -526,25 +577,41 @@ fun EmulationScreen(
                     pictureVerticalBias = 0f,
                 )
 
-                // One transform on the whole block rather than a size
-                // multiplier threaded through every button: Compose maps
-                // pointer input through the layer, so the touch targets grow
-                // with the drawing and stay in register.
-                // Full size, not wrapped tight around the buttons. `alpha`
-                // forces this into its own layer, and the layer is what was
-                // cutting off any control dragged above the block - and, with
-                // it, the touches on that control. It covers the whole play
-                // area now, so a control can go anywhere over the picture.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = controlScale,
-                            scaleY = controlScale,
-                            alpha = controlOpacity,
-                            transformOrigin = TransformOrigin(0.5f, 1f),
-                        )
-                ) {
+                }
+            }
+        }
+
+        // Battery and clock, in the two bottom corners. Small and dim, and in
+        // the corners on purpose: Start and Select sit centred at the bottom,
+        // so this is the one strip of screen no control wants.
+        if (showStatusStrip && !editingLayout) {
+            StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
+        }
+
+        // Every control in one layer, the fixed buttons and the player's own
+        // together. One transform rather than a size multiplier threaded
+        // through each button: Compose maps pointer input back through the
+        // layer, so a touch target grows with the drawing and stays in
+        // register. The layer covers the whole play area, so a control
+        // dragged over the picture is still drawn and still touchable there.
+        //
+        // The custom buttons used to sit outside this layer and so ignored
+        // both the size and the opacity settings - a player-made button
+        // stayed fully opaque over a game the fixed buttons let through.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = controlScale,
+                    scaleY = controlScale,
+                    alpha = controlOpacity,
+                    transformOrigin = TransformOrigin(0.5f, 1f),
+                )
+        ) {
+            // Landscape puts the D-pad and the face buttons beside the
+            // picture instead, in the row above; only portrait floats the
+            // whole set over it.
+            if (!isLandscape) {
                 GameControls(
                     isPaused = isPaused,
                     isFastForward = fastForward,
@@ -563,47 +630,37 @@ fun EmulationScreen(
                     onDragStart = handleDragStart,
                     onDragEnd = handleDragEnd,
                 )
-                }
-                }
             }
-        }
 
-        // Battery and clock, in the two bottom corners. Small and dim, and in
-        // the corners on purpose: Start and Select sit centred at the bottom,
-        // so this is the one strip of screen no control wants.
-        if (showStatusStrip && !editingLayout) {
-            StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
-        }
-
-        // Custom buttons float over everything, positioned absolutely rather
-        // than nudged from a natural spot like the real buttons - a
-        // player-made button has no natural position to nudge from. Visible
-        // and live during play, not just while editing; only the drag
-        // affordance is gated on that.
-        customButtons.forEach { button ->
-            Box(
-                modifier = Modifier.movableControl(
-                    button.id,
-                    editingLayout,
-                    selectedCustomId,
-                    pillShape,
-                    customOffsets,
-                    handleCustomDragStart,
-                    handleCustomDragEnd,
-                    customScales,
-                )
-            ) {
-                CustomButtonView(
-                    button = button,
-                    editingLayout = editingLayout,
-                    held = heldToggles[button.id] == true,
-                    onToggleHeld = {
-                        val nowHeld = heldToggles[button.id] != true
-                        heldToggles[button.id] = nowHeld
-                        button.keys.forEach { key -> onKeyChange(key, nowHeld) }
-                    },
-                    onKeyChange = onKeyChange,
-                )
+            // Positioned absolutely rather than nudged from a natural spot
+            // like the fixed buttons - a player-made button has no natural
+            // position to nudge from. Visible and live during play, not just
+            // while editing; only the drag affordance is gated on that.
+            customButtons.forEach { button ->
+                Box(
+                    modifier = Modifier.movableControl(
+                        button.id,
+                        editingLayout,
+                        selectedCustomId,
+                        pillShape,
+                        customOffsets,
+                        handleCustomDragStart,
+                        handleCustomDragEnd,
+                        customScales,
+                    )
+                ) {
+                    CustomButtonView(
+                        button = button,
+                        editingLayout = editingLayout,
+                        held = heldToggles[button.id] == true,
+                        onToggleHeld = {
+                            val nowHeld = heldToggles[button.id] != true
+                            heldToggles[button.id] = nowHeld
+                            button.keys.forEach { key -> onKeyChange(key, nowHeld) }
+                        },
+                        onKeyChange = onKeyChange,
+                    )
+                }
             }
         }
 
@@ -613,20 +670,8 @@ fun EmulationScreen(
                     ?.let { id -> customButtons.firstOrNull { it.id == id }?.name }
                     ?: selectedButton?.label,
                 onResize = resizeSelected,
-                onDone = {
-                    ControlButton.entries.forEach { button ->
-                        val o = offsets[button] ?: Offset.Zero
-                        layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
-                        layoutStore.setControlScale(activeLayoutId, button, scales[button] ?: 1f)
-                    }
-                    customScales.forEach { (id, scale) ->
-                        layoutStore.setCustomButtonScale(activeLayoutId, id, scale)
-                    }
-                    editingLayout = false
-                    selectedButton = null
-                    undoStack.clear()
-                    redoStack.clear()
-                },
+                onDone = { saveLayoutEdits() },
+                onCancel = { discardLayoutEdits() },
                 onReset = {
                     pushUndoSnapshot()
                     layoutStore.resetLayoutOffsets(activeLayoutId)
@@ -642,6 +687,36 @@ fun EmulationScreen(
                 onRedo = redoEdit,
                 onCustomButtons = { customButtonsModalOpen = true },
                 modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
+
+        // The system back button used to walk straight out of an open editor,
+        // taking every unsaved change with it silently. It now offers to keep
+        // them, and either way leaves through `onBack` - the same exit the
+        // toolbar arrow uses, which is what stops the emulator.
+        BackHandler(enabled = editingLayout) {
+            if (editDirty) showLeaveEditConfirm = true else { discardLayoutEdits(); onBack() }
+        }
+
+        if (showLeaveEditConfirm) {
+            AlertDialog(
+                onDismissRequest = { showLeaveEditConfirm = false },
+                title = { Text("Unsaved layout changes") },
+                text = { Text("Save the changes to this layout before leaving?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showLeaveEditConfirm = false
+                        saveLayoutEdits()
+                        onBack()
+                    }) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showLeaveEditConfirm = false
+                        discardLayoutEdits()
+                        onBack()
+                    }) { Text("Don't save") }
+                },
             )
         }
 
@@ -794,6 +869,7 @@ private fun LayoutEditBar(
     selectionLabel: String?,
     onResize: (Float) -> Unit,
     onDone: () -> Unit,
+    onCancel: () -> Unit,
     onReset: () -> Unit,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -884,6 +960,13 @@ private fun LayoutEditBar(
             }
             TextButton(onClick = onReset) {
                 Text("Reset", color = AmberResin)
+            }
+            // Cancel next to Done, not hidden behind the system back button:
+            // Reset puts every control back at its base position, which is
+            // not the same as abandoning the edit and keeping the layout that
+            // was already saved.
+            TextButton(onClick = onCancel) {
+                Text("Cancel", color = PineGlowMist)
             }
             TextButton(onClick = onDone) {
                 Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
@@ -2049,6 +2132,7 @@ private fun LayoutNameDialog(
 private data class LayoutSnapshot(
     val offsets: Map<ControlButton, Offset>,
     val scales: Map<ControlButton, Float>,
+    val customOffsets: Map<String, Offset>,
     val customScales: Map<String, Float>,
 )
 
