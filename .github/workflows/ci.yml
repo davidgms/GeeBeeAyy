@@ -83,8 +83,15 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
+      # `packages` is set explicitly because the action's own default is
+      # `tools platform-tools`, and Google removed the obsolete `tools`
+      # package from the SDK repository - sdkmanager answers `Failed to find
+      # package 'tools'` and the job dies before a line of this project is
+      # built. The NDK is installed by the next step, not here.
       - name: Set up Android SDK (sdkmanager, licenses, ANDROID_HOME)
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android NDK ${{ env.ANDROID_NDK_VERSION }}
         run: |
@@ -202,8 +209,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Same reason as the android job above: the action's default `tools`
+      # package no longer exists.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install app and confirm it launches without crashing
         uses: reactivecircus/android-emulator-runner@v2
