@@ -30,11 +30,21 @@ suites. Point the tests at a path and let each developer supply the file.
 
 ## Permissions and commit messages
 
-Both are global rules and are not restated here. In short, for a contributor
-reading this file on its own: `git commit`, `git push` and `gh pr create` are
-allowed; `git merge` and `gh pr merge` are **not** - merges are done by hand.
-Commits are one short title-like line with no body and no AI co-author
-trailer, bundling with `and` and `&&`:
+Both are global rules, with **one exception granted for this repository on
+2026-09-14: merging is allowed here.** The global rule reserves merges for the
+human; in GeeBeeAyy the agent may run `gh pr merge` as well. Everything else
+about the global rule stands, and the exception does not travel to any other
+project.
+
+What the exception does not change: **order and readiness are still checked
+before a merge, never assumed.** A branch cut from another open branch merges
+after its parent, and a branch that conflicts is rebased and pushed first
+rather than merged with conflicts resolved in the merge commit.
+
+In short, for a contributor reading this file on its own: `git commit`,
+`git push`, `gh pr create` and `gh pr merge` are allowed. Commits are one short
+title-like line with no body and no AI co-author trailer, bundling with `and`
+and `&&`:
 
 ```
 fix: ARM7TDMI instruction dispatch and PC advance && add core test suite
