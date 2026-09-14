@@ -1708,9 +1708,16 @@ private fun DrawScope.drawDpadArrow(key: Int, held: Set<Int>, controls: ControlP
 /** Three 48dp arms, the same footprint the four separate buttons occupied. */
 private val DPAD_SIZE = 144.dp
 
-/** Arrow geometry, as fractions of one arm's width. */
-private const val DPAD_ARROW_HALF_WIDTH = 0.22f
-private const val DPAD_ARROW_DEPTH = 0.30f
+/**
+ * Arrow geometry, as fractions of one arm's width.
+ *
+ * Width and depth are 15% off the first drawn size: the arrows read as a
+ * moulded mark on the arm, not as the arm's content, and the first pass
+ * crowded the arm. The inset is untouched, so each tip stays where it was and
+ * the arrow shrinks back from it.
+ */
+private const val DPAD_ARROW_HALF_WIDTH = 0.187f
+private const val DPAD_ARROW_DEPTH = 0.255f
 private const val DPAD_ARROW_INSET = 0.24f
 
 /**
