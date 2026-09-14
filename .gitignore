@@ -58,3 +58,6 @@ Thumbs.db
 
 # Agent scratch space and working files (see CLAUDE.md)
 temp/
+
+# Personal, per-developer agent memory. The shared one is .claude/agent-memory/.
+.claude/agent-memory-local/
