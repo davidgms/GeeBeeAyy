@@ -68,7 +68,6 @@ fun RomBrowserScreen(
     onRomClick: (RomEntry) -> Unit,
     onSettingsClick: () -> Unit,
     onDownloadClick: () -> Unit,
-    onAboutClick: () -> Unit,
     onRefresh: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
@@ -150,13 +149,6 @@ fun RomBrowserScreen(
                         Icon(
                             Icons.Default.Settings,
                             contentDescription = "Settings",
-                            tint = AmberResin
-                        )
-                    }
-                    IconButton(onClick = onAboutClick) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = "About",
                             tint = AmberResin
                         )
                     }
