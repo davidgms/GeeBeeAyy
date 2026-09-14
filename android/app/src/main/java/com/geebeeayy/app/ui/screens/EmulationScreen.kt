@@ -1,6 +1,7 @@
 package com.geebeeayy.app.ui.screens
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,6 +55,7 @@ import com.geebeeayy.app.data.ControlLayout
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.CustomButton
 import com.geebeeayy.app.data.CustomButtonMode
+import com.geebeeayy.app.data.LayoutOrientation
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -114,10 +116,18 @@ fun EmulationScreen(
     // Layout editing. The offsets are held here while dragging and written
     // back only on Done, so an abandoned edit leaves the saved layout alone.
     val context = LocalContext.current
+    // Declared here rather than beside its first drawing use: which layout a
+    // game gets is chosen per orientation, so everything below needs it.
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val layoutStore = remember { ControlLayoutStore(context) }
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var activeLayoutId by remember { mutableStateOf(ControlLayoutStore.DEFAULT_LAYOUT_ID) }
     var editingLayout by remember { mutableStateOf(false) }
+    // Whether this editing session has changed anything yet. Leaving with
+    // nothing touched must not ask a question the player has no answer to.
+    var editDirty by remember { mutableStateOf(false) }
+    var showLeaveEditConfirm by remember { mutableStateOf(false) }
     var layoutsModalOpen by remember { mutableStateOf(false) }
     // The button currently being dragged, so only it gets the outline - a
     // player touches a button, sees it highlight, then drags it, rather than
@@ -127,10 +137,10 @@ fun EmulationScreen(
     /** Per-control size multipliers, alongside [offsets] and saved with them. */
     val scales = remember { mutableStateMapOf<ControlButton, Float>() }
     // Custom buttons (combos, sequences, hold toggles) belong to the layout
-    // the same way the real buttons' positions do. Their drag is separate
-    // from the real buttons' undo/redo/Done staging below - each drag saves
-    // its new position immediately, since there is no equivalent "abandon
-    // this edit" concern for a position with no default to revert to.
+    // the same way the real buttons' positions do, and they are staged behind
+    // Done the same way. They used to write their position the moment a drag
+    // ended, which is why leaving the editor put the fixed buttons back and
+    // left the custom ones where the abandoned edit had dropped them.
     var customButtons by remember { mutableStateOf<List<CustomButton>>(emptyList()) }
     val customOffsets = remember { mutableStateMapOf<String, Offset>() }
     val customScales = remember { mutableStateMapOf<String, Float>() }
@@ -178,10 +188,12 @@ fun EmulationScreen(
     }
 
     // The ROM loads asynchronously - its key (and so which layout it uses)
-    // is not known on first composition, only once loading finishes.
-    LaunchedEffect(gameKey()) {
+    // is not known on first composition, only once loading finishes. Turning
+    // the phone re-runs this too: a portrait arrangement does not fit
+    // sideways, so each orientation has its own choice of layout.
+    LaunchedEffect(gameKey(), isLandscape) {
         val key = gameKey() ?: return@LaunchedEffect
-        activeLayoutId = layoutStore.getLayoutForGame(key)
+        activeLayoutId = layoutStore.getLayoutForGame(key, isLandscape)
         loadLayout(activeLayoutId)
     }
     // Undo/redo history for the current edit session: a stack of full-layout
@@ -189,15 +201,18 @@ fun EmulationScreen(
     // per pixel of movement - a single drag is one undo step, not hundreds.
     val undoStack = remember { mutableStateListOf<LayoutSnapshot>() }
     val redoStack = remember { mutableStateListOf<LayoutSnapshot>() }
-    fun snapshot() = LayoutSnapshot(offsets.toMap(), scales.toMap(), customScales.toMap())
+    fun snapshot() =
+        LayoutSnapshot(offsets.toMap(), scales.toMap(), customOffsets.toMap(), customScales.toMap())
     fun restore(state: LayoutSnapshot) {
         offsets.clear(); offsets.putAll(state.offsets)
         scales.clear(); scales.putAll(state.scales)
+        customOffsets.clear(); customOffsets.putAll(state.customOffsets)
         customScales.clear(); customScales.putAll(state.customScales)
     }
     val pushUndoSnapshot: () -> Unit = {
         undoStack.add(snapshot())
         redoStack.clear()
+        editDirty = true
     }
     val undoEdit: () -> Unit = {
         undoStack.removeLastOrNull()?.let { previous ->
@@ -235,18 +250,46 @@ fun EmulationScreen(
     // edit bar act on whatever is selected, and clearing it here left nothing
     // to act on the moment the finger came up.
     val handleDragEnd: () -> Unit = {}
-    // A custom button's position saves the moment the drag ends - there is
-    // no Done to stage it behind, so `selectedCustomId` still names the one
-    // that just finished when this fires.
     val handleCustomDragStart: (String) -> Unit = { id ->
+        pushUndoSnapshot()
         selectedCustomId = id
         selectedButton = null
     }
-    val handleCustomDragEnd: () -> Unit = {
-        selectedCustomId?.let { id ->
-            val pos = customOffsets[id] ?: Offset.Zero
-            layoutStore.setCustomButtonOffset(activeLayoutId, id, pos.x, pos.y)
+    // Nothing to do: the position is written by Done, along with everything
+    // else the editor staged.
+    val handleCustomDragEnd: () -> Unit = {}
+    // The three ways out of the editor - Done, Cancel and the system back
+    // button - are these two functions plus whether the caller leaves the
+    // screen afterwards.
+    fun saveLayoutEdits() {
+        ControlButton.entries.forEach { button ->
+            val o = offsets[button] ?: Offset.Zero
+            layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
+            layoutStore.setControlScale(activeLayoutId, button, scales[button] ?: 1f)
         }
+        customOffsets.forEach { (id, o) ->
+            layoutStore.setCustomButtonOffset(activeLayoutId, id, o.x, o.y)
+        }
+        customScales.forEach { (id, scale) ->
+            layoutStore.setCustomButtonScale(activeLayoutId, id, scale)
+        }
+        editingLayout = false
+        editDirty = false
+        selectedButton = null
+        selectedCustomId = null
+        undoStack.clear()
+        redoStack.clear()
+    }
+    fun discardLayoutEdits() {
+        // Re-reading the store is the whole revert: nothing this session
+        // touched was written to it.
+        loadLayout(activeLayoutId)
+        editingLayout = false
+        editDirty = false
+        selectedButton = null
+        selectedCustomId = null
+        undoStack.clear()
+        redoStack.clear()
     }
     // Makes `layout` the current game's layout - a radio pick just switches
     // what is on screen; opening its editor also closes the modal and drops
@@ -254,7 +297,7 @@ fun EmulationScreen(
     // is not the one loaded.
     fun selectLayout(layout: ControlLayout, openEditor: Boolean) {
         activeLayoutId = layout.id
-        gameKey()?.let { layoutStore.setLayoutForGame(it, layout.id) }
+        gameKey()?.let { layoutStore.setLayoutForGame(it, isLandscape, layout.id) }
         loadLayout(layout.id)
         undoStack.clear()
         redoStack.clear()
@@ -262,12 +305,10 @@ fun EmulationScreen(
         if (openEditor) {
             layoutsModalOpen = false
             editingLayout = true
+            editDirty = false
         }
     }
     var showSlots by remember { mutableStateOf(false) }
-
-    val isLandscape =
-        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // A game is watched, not touched: without this the display times out
     // mid-play and the emulator keeps running behind a black screen.
@@ -444,6 +485,16 @@ fun EmulationScreen(
             }
 
             if (isLandscape) {
+                // The same size and opacity the portrait overlay applies,
+                // applied here per control instead: landscape flanks the
+                // picture rather than floating over it, so there is no single
+                // overlay to hang the layer on. Without this the two settings
+                // did nothing at all in landscape.
+                val landscapeControlLayer = Modifier.graphicsLayer(
+                    scaleX = controlScale,
+                    scaleY = controlScale,
+                    alpha = controlOpacity,
+                )
                 // Controls flank the screen rather than sitting under it, so
                 // nothing overlaps the play area on a wide/short display.
                 Row(
@@ -454,7 +505,9 @@ fun EmulationScreen(
                 ) {
                     DPad(
                         onKeyChange = onKeyChange,
-                        modifier = Modifier.padding(start = 16.dp),
+                        modifier = Modifier
+                            .padding(start = 16.dp)
+                            .then(landscapeControlLayer),
                         editingLayout = editingLayout,
                         selectedButton = selectedButton,
                         offsets = offsets,
@@ -479,7 +532,9 @@ fun EmulationScreen(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(end = 16.dp),
+                        modifier = Modifier
+                            .padding(end = 16.dp)
+                            .then(landscapeControlLayer),
                     ) {
                         ActionButtons(
                             onKeyChange = onKeyChange,
@@ -526,25 +581,41 @@ fun EmulationScreen(
                     pictureVerticalBias = 0f,
                 )
 
-                // One transform on the whole block rather than a size
-                // multiplier threaded through every button: Compose maps
-                // pointer input through the layer, so the touch targets grow
-                // with the drawing and stay in register.
-                // Full size, not wrapped tight around the buttons. `alpha`
-                // forces this into its own layer, and the layer is what was
-                // cutting off any control dragged above the block - and, with
-                // it, the touches on that control. It covers the whole play
-                // area now, so a control can go anywhere over the picture.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = controlScale,
-                            scaleY = controlScale,
-                            alpha = controlOpacity,
-                            transformOrigin = TransformOrigin(0.5f, 1f),
-                        )
-                ) {
+                }
+            }
+        }
+
+        // Battery and clock, in the two bottom corners. Small and dim, and in
+        // the corners on purpose: Start and Select sit centred at the bottom,
+        // so this is the one strip of screen no control wants.
+        if (showStatusStrip && !editingLayout) {
+            StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
+        }
+
+        // Every control in one layer, the fixed buttons and the player's own
+        // together. One transform rather than a size multiplier threaded
+        // through each button: Compose maps pointer input back through the
+        // layer, so a touch target grows with the drawing and stays in
+        // register. The layer covers the whole play area, so a control
+        // dragged over the picture is still drawn and still touchable there.
+        //
+        // The custom buttons used to sit outside this layer and so ignored
+        // both the size and the opacity settings - a player-made button
+        // stayed fully opaque over a game the fixed buttons let through.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = controlScale,
+                    scaleY = controlScale,
+                    alpha = controlOpacity,
+                    transformOrigin = TransformOrigin(0.5f, 1f),
+                )
+        ) {
+            // Landscape puts the D-pad and the face buttons beside the
+            // picture instead, in the row above; only portrait floats the
+            // whole set over it.
+            if (!isLandscape) {
                 GameControls(
                     isPaused = isPaused,
                     isFastForward = fastForward,
@@ -563,47 +634,37 @@ fun EmulationScreen(
                     onDragStart = handleDragStart,
                     onDragEnd = handleDragEnd,
                 )
-                }
-                }
             }
-        }
 
-        // Battery and clock, in the two bottom corners. Small and dim, and in
-        // the corners on purpose: Start and Select sit centred at the bottom,
-        // so this is the one strip of screen no control wants.
-        if (showStatusStrip && !editingLayout) {
-            StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
-        }
-
-        // Custom buttons float over everything, positioned absolutely rather
-        // than nudged from a natural spot like the real buttons - a
-        // player-made button has no natural position to nudge from. Visible
-        // and live during play, not just while editing; only the drag
-        // affordance is gated on that.
-        customButtons.forEach { button ->
-            Box(
-                modifier = Modifier.movableControl(
-                    button.id,
-                    editingLayout,
-                    selectedCustomId,
-                    pillShape,
-                    customOffsets,
-                    handleCustomDragStart,
-                    handleCustomDragEnd,
-                    customScales,
-                )
-            ) {
-                CustomButtonView(
-                    button = button,
-                    editingLayout = editingLayout,
-                    held = heldToggles[button.id] == true,
-                    onToggleHeld = {
-                        val nowHeld = heldToggles[button.id] != true
-                        heldToggles[button.id] = nowHeld
-                        button.keys.forEach { key -> onKeyChange(key, nowHeld) }
-                    },
-                    onKeyChange = onKeyChange,
-                )
+            // Positioned absolutely rather than nudged from a natural spot
+            // like the fixed buttons - a player-made button has no natural
+            // position to nudge from. Visible and live during play, not just
+            // while editing; only the drag affordance is gated on that.
+            customButtons.forEach { button ->
+                Box(
+                    modifier = Modifier.movableControl(
+                        button.id,
+                        editingLayout,
+                        selectedCustomId,
+                        pillShape,
+                        customOffsets,
+                        handleCustomDragStart,
+                        handleCustomDragEnd,
+                        customScales,
+                    )
+                ) {
+                    CustomButtonView(
+                        button = button,
+                        editingLayout = editingLayout,
+                        held = heldToggles[button.id] == true,
+                        onToggleHeld = {
+                            val nowHeld = heldToggles[button.id] != true
+                            heldToggles[button.id] = nowHeld
+                            button.keys.forEach { key -> onKeyChange(key, nowHeld) }
+                        },
+                        onKeyChange = onKeyChange,
+                    )
+                }
             }
         }
 
@@ -613,20 +674,8 @@ fun EmulationScreen(
                     ?.let { id -> customButtons.firstOrNull { it.id == id }?.name }
                     ?: selectedButton?.label,
                 onResize = resizeSelected,
-                onDone = {
-                    ControlButton.entries.forEach { button ->
-                        val o = offsets[button] ?: Offset.Zero
-                        layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
-                        layoutStore.setControlScale(activeLayoutId, button, scales[button] ?: 1f)
-                    }
-                    customScales.forEach { (id, scale) ->
-                        layoutStore.setCustomButtonScale(activeLayoutId, id, scale)
-                    }
-                    editingLayout = false
-                    selectedButton = null
-                    undoStack.clear()
-                    redoStack.clear()
-                },
+                onDone = { saveLayoutEdits() },
+                onCancel = { discardLayoutEdits() },
                 onReset = {
                     pushUndoSnapshot()
                     layoutStore.resetLayoutOffsets(activeLayoutId)
@@ -642,6 +691,36 @@ fun EmulationScreen(
                 onRedo = redoEdit,
                 onCustomButtons = { customButtonsModalOpen = true },
                 modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
+
+        // The system back button used to walk straight out of an open editor,
+        // taking every unsaved change with it silently. It now offers to keep
+        // them, and either way leaves through `onBack` - the same exit the
+        // toolbar arrow uses, which is what stops the emulator.
+        BackHandler(enabled = editingLayout) {
+            if (editDirty) showLeaveEditConfirm = true else { discardLayoutEdits(); onBack() }
+        }
+
+        if (showLeaveEditConfirm) {
+            AlertDialog(
+                onDismissRequest = { showLeaveEditConfirm = false },
+                title = { Text("Unsaved layout changes") },
+                text = { Text("Save the changes to this layout before leaving?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showLeaveEditConfirm = false
+                        saveLayoutEdits()
+                        onBack()
+                    }) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showLeaveEditConfirm = false
+                        discardLayoutEdits()
+                        onBack()
+                    }) { Text("Don't save") }
+                },
             )
         }
 
@@ -681,13 +760,23 @@ fun EmulationScreen(
 
         if (layoutsModalOpen) {
             LayoutsDialog(
-                layouts = layouts,
+                layouts = layouts.filter { it.orientation.appliesTo(isLandscape) },
                 activeLayoutId = activeLayoutId,
+                landscape = isLandscape,
                 onSelect = { layout -> selectLayout(layout, openEditor = false) },
                 onEdit = { layout -> selectLayout(layout, openEditor = true) },
-                onRename = { id, name ->
+                onRename = { id, name, orientation ->
                     layoutStore.renameLayout(id, name)
+                    layoutStore.setLayoutOrientation(id, orientation)
                     layouts = layoutStore.getLayouts()
+                    // A layout just told to stop applying here cannot stay
+                    // loaded here either.
+                    if (id == activeLayoutId && !orientation.appliesTo(isLandscape)) {
+                        gameKey()?.let { key ->
+                            activeLayoutId = layoutStore.getLayoutForGame(key, isLandscape)
+                            loadLayout(activeLayoutId)
+                        }
+                    }
                 },
                 onDelete = { layout ->
                     layoutStore.deleteLayout(layout.id)
@@ -696,10 +785,18 @@ fun EmulationScreen(
                         selectLayout(layouts.first { it.isDefault }, openEditor = false)
                     }
                 },
-                onCreate = { name ->
-                    val created = layoutStore.createLayout(name, copyFrom = activeLayoutId)
+                onCreate = { name, orientation ->
+                    val created = layoutStore.createLayout(
+                        name,
+                        copyFrom = activeLayoutId,
+                        orientation = orientation,
+                    )
                     layouts = layoutStore.getLayouts()
-                    selectLayout(created, openEditor = true)
+                    if (orientation.appliesTo(isLandscape)) {
+                        selectLayout(created, openEditor = true)
+                    } else {
+                        layoutsModalOpen = false
+                    }
                 },
                 onDismiss = { layoutsModalOpen = false },
             )
@@ -794,6 +891,7 @@ private fun LayoutEditBar(
     selectionLabel: String?,
     onResize: (Float) -> Unit,
     onDone: () -> Unit,
+    onCancel: () -> Unit,
     onReset: () -> Unit,
     canUndo: Boolean,
     canRedo: Boolean,
@@ -884,6 +982,13 @@ private fun LayoutEditBar(
             }
             TextButton(onClick = onReset) {
                 Text("Reset", color = AmberResin)
+            }
+            // Cancel next to Done, not hidden behind the system back button:
+            // Reset puts every control back at its base position, which is
+            // not the same as abandoning the edit and keeping the layout that
+            // was already saved.
+            TextButton(onClick = onCancel) {
+                Text("Cancel", color = PineGlowMist)
             }
             TextButton(onClick = onDone) {
                 Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
@@ -1603,9 +1708,16 @@ private fun DrawScope.drawDpadArrow(key: Int, held: Set<Int>, controls: ControlP
 /** Three 48dp arms, the same footprint the four separate buttons occupied. */
 private val DPAD_SIZE = 144.dp
 
-/** Arrow geometry, as fractions of one arm's width. */
-private const val DPAD_ARROW_HALF_WIDTH = 0.22f
-private const val DPAD_ARROW_DEPTH = 0.30f
+/**
+ * Arrow geometry, as fractions of one arm's width.
+ *
+ * Width and depth are 15% off the first drawn size: the arrows read as a
+ * moulded mark on the arm, not as the arm's content, and the first pass
+ * crowded the arm. The inset is untouched, so each tip stays where it was and
+ * the arrow shrinks back from it.
+ */
+private const val DPAD_ARROW_HALF_WIDTH = 0.187f
+private const val DPAD_ARROW_DEPTH = 0.255f
 private const val DPAD_ARROW_INSET = 0.24f
 
 /**
@@ -1912,11 +2024,12 @@ private fun SaveStateDialog(
 private fun LayoutsDialog(
     layouts: List<ControlLayout>,
     activeLayoutId: String,
+    landscape: Boolean,
     onSelect: (ControlLayout) -> Unit,
     onEdit: (ControlLayout) -> Unit,
-    onRename: (String, String) -> Unit,
+    onRename: (String, String, LayoutOrientation) -> Unit,
     onDelete: (ControlLayout) -> Unit,
-    onCreate: (String) -> Unit,
+    onCreate: (String, LayoutOrientation) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var renamingLayout by remember { mutableStateOf<ControlLayout?>(null) }
@@ -1927,7 +2040,18 @@ private fun LayoutsDialog(
         containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
-        title = { Text("Control Layouts", fontWeight = FontWeight.Bold) },
+        title = {
+            Column {
+                Text("Control Layouts", fontWeight = FontWeight.Bold)
+                // Says why a layout the player remembers making is not on the
+                // list: it was saved for the other orientation.
+                Text(
+                    text = if (landscape) "Showing landscape layouts" else "Showing portrait layouts",
+                    color = PineGlowMist,
+                    fontSize = 12.sp,
+                )
+            }
+        },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -1943,16 +2067,24 @@ private fun LayoutsDialog(
                                 unselectedColor = AmberResin,
                             ),
                         )
-                        Text(
-                            text = layout.name,
-                            color = PineGlowMist,
-                            fontSize = 14.sp,
+                        Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable { onSelect(layout) },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        ) {
+                            Text(
+                                text = layout.name,
+                                color = PineGlowMist,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = layout.orientation.label,
+                                color = AmberResin,
+                                fontSize = 11.sp,
+                            )
+                        }
                         IconButton(onClick = { onEdit(layout) }) {
                             Icon(Icons.Default.OpenWith, "Edit positions", tint = AmberResin)
                         }
@@ -1982,9 +2114,13 @@ private fun LayoutsDialog(
 
     renamingLayout?.let { layout ->
         LayoutNameDialog(
-            title = "Rename layout",
+            title = "Layout options",
             initialName = layout.name,
-            onConfirm = { name -> onRename(layout.id, name); renamingLayout = null },
+            initialOrientation = layout.orientation,
+            onConfirm = { name, orientation ->
+                onRename(layout.id, name, orientation)
+                renamingLayout = null
+            },
             onDismiss = { renamingLayout = null },
         )
     }
@@ -1993,21 +2129,34 @@ private fun LayoutsDialog(
         LayoutNameDialog(
             title = "New layout",
             initialName = "Layout ${layouts.size + 1}",
-            onConfirm = { name -> onCreate(name); creatingLayout = false },
+            // A layout made while holding the phone this way is for this way,
+            // unless the player says otherwise.
+            initialOrientation = if (landscape) LayoutOrientation.LANDSCAPE
+                else LayoutOrientation.PORTRAIT,
+            onConfirm = { name, orientation ->
+                onCreate(name, orientation)
+                creatingLayout = false
+            },
             onDismiss = { creatingLayout = false },
         )
     }
 }
 
-/** A single text field prompt, shared by renaming a layout and naming a new one. */
+/**
+ * Name and orientation, shared by creating a layout and editing an existing
+ * one. The two belong together: which way round a layout applies is as much
+ * part of what it is as its name.
+ */
 @Composable
 private fun LayoutNameDialog(
     title: String,
     initialName: String,
-    onConfirm: (String) -> Unit,
+    initialOrientation: LayoutOrientation,
+    onConfirm: (String, LayoutOrientation) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf(initialName) }
+    var orientation by remember { mutableStateOf(initialOrientation) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = NightPanel,
@@ -2015,22 +2164,39 @@ private fun LayoutNameDialog(
         textContentColor = PineGlowMist,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = PineGlowMist,
-                    unfocusedTextColor = PineGlowMist,
-                    focusedBorderColor = AmberResin,
-                    unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
-                    cursorColor = AmberResin,
-                ),
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PineGlowMist,
+                        unfocusedTextColor = PineGlowMist,
+                        focusedBorderColor = AmberResin,
+                        unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
+                        cursorColor = AmberResin,
+                    ),
+                )
+                Text("Shows up in", color = PineGlowMist, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LayoutOrientation.entries.forEach { option ->
+                        FilterChip(
+                            selected = orientation == option,
+                            onClick = { orientation = option },
+                            label = { Text(option.label, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                labelColor = PineGlowMist,
+                                selectedContainerColor = AmberResin,
+                                selectedLabelColor = NightVoid,
+                            ),
+                        )
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(name.trim().ifBlank { initialName }) },
+                onClick = { onConfirm(name.trim().ifBlank { initialName }, orientation) },
             ) { Text("Save", color = GoldenSaplight) }
         },
         dismissButton = {
@@ -2049,6 +2215,7 @@ private fun LayoutNameDialog(
 private data class LayoutSnapshot(
     val offsets: Map<ControlButton, Offset>,
     val scales: Map<ControlButton, Float>,
+    val customOffsets: Map<String, Offset>,
     val customScales: Map<String, Float>,
 )
 

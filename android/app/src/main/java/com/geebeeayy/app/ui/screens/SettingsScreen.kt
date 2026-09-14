@@ -377,8 +377,8 @@ fun SettingsScreen(
                 }
                 SettingsSwitch(
                     icon = Icons.Default.Fullscreen,
-                    title = "Fullscreen In Game",
-                    subtitle = "Hide the status and navigation bars",
+                    title = "Hide System Bars",
+                    subtitle = "Status bar and navigation bar, while a game runs",
                     checked = fullscreen,
                     onCheckedChange = { checked ->
                         fullscreen = checked
