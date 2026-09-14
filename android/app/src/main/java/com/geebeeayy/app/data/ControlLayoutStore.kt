@@ -20,11 +20,46 @@ class ControlLayoutStore(context: Context) {
     private val prefs = context.getSharedPreferences("control_layouts", Context.MODE_PRIVATE)
 
     /** Every layout that exists, Default always first. */
-    fun getLayouts(): List<ControlLayout> = layoutIds().map { id -> ControlLayout(id, layoutName(id)) }
+    fun getLayouts(): List<ControlLayout> =
+        layoutIds().map { id -> ControlLayout(id, layoutName(id), getLayoutOrientation(id)) }
 
-    /** Which layout [gameKey] uses - Default unless the player chose another. */
-    fun getLayoutForGame(gameKey: String): String =
-        prefs.getString("$KEY_GAME_LAYOUT_PREFIX$gameKey", null) ?: getDefaultLayoutId()
+    /** Only the layouts that apply the way the phone is being held. */
+    fun getLayouts(landscape: Boolean): List<ControlLayout> =
+        getLayouts().filter { it.orientation.appliesTo(landscape) }
+
+    /**
+     * Which way round a layout applies. [LayoutOrientation.DEFAULT] for
+     * anything saved before this existed, so no layout disappears from the
+     * list on upgrade.
+     */
+    fun getLayoutOrientation(id: String): LayoutOrientation =
+        LayoutOrientation.fromName(prefs.getString("$KEY_ORIENTATION_PREFIX$id", null))
+
+    fun setLayoutOrientation(id: String, orientation: LayoutOrientation) {
+        prefs.edit().putString("$KEY_ORIENTATION_PREFIX$id", orientation.name).apply()
+    }
+
+    /**
+     * Which layout [gameKey] uses while the phone is held this way.
+     *
+     * The choice is per orientation because the layouts are: picking a wide
+     * arrangement in landscape must not throw away the tall one. Falls back to
+     * the default layout, and past that to the first layout that applies at
+     * all - a game must never end up with no controls because its chosen
+     * layout was portrait-only and the phone is sideways.
+     */
+    fun getLayoutForGame(gameKey: String, landscape: Boolean): String {
+        val chosen = prefs.getString(gameLayoutKey(gameKey, landscape), null)
+        if (chosen != null && layoutIds().contains(chosen) &&
+            getLayoutOrientation(chosen).appliesTo(landscape)
+        ) {
+            return chosen
+        }
+        val fallback = getDefaultLayoutId()
+        if (getLayoutOrientation(fallback).appliesTo(landscape)) return fallback
+        return layoutIds().firstOrNull { getLayoutOrientation(it).appliesTo(landscape) }
+            ?: DEFAULT_LAYOUT_ID
+    }
 
     /**
      * The layout a game that has never been given one of its own starts with.
@@ -41,24 +76,35 @@ class ControlLayoutStore(context: Context) {
         prefs.edit().putString(KEY_DEFAULT_LAYOUT, layoutId).apply()
     }
 
-    fun setLayoutForGame(gameKey: String, layoutId: String) {
-        prefs.edit().putString("$KEY_GAME_LAYOUT_PREFIX$gameKey", layoutId).apply()
+    fun setLayoutForGame(gameKey: String, landscape: Boolean, layoutId: String) {
+        prefs.edit().putString(gameLayoutKey(gameKey, landscape), layoutId).apply()
     }
+
+    // Portrait keeps the original key, so a game that already had a layout
+    // chosen keeps it instead of silently reverting to Default.
+    private fun gameLayoutKey(gameKey: String, landscape: Boolean): String =
+        if (landscape) "$KEY_GAME_LAYOUT_LAND_PREFIX$gameKey" else "$KEY_GAME_LAYOUT_PREFIX$gameKey"
+
 
     /** A new layout, starting as a copy of [copyFrom]'s current offsets so a
      *  player nudges an existing arrangement rather than starting from the
      *  unmodified base layout every time. */
-    fun createLayout(name: String, copyFrom: String = DEFAULT_LAYOUT_ID): ControlLayout {
+    fun createLayout(
+        name: String,
+        copyFrom: String = DEFAULT_LAYOUT_ID,
+        orientation: LayoutOrientation = LayoutOrientation.DEFAULT,
+    ): ControlLayout {
         val id = UUID.randomUUID().toString()
         val edit = prefs.edit().putString(KEY_LAYOUT_IDS, (layoutIds() + id).joinToString(","))
         edit.putString("$KEY_NAME_PREFIX$id", name)
+        edit.putString("$KEY_ORIENTATION_PREFIX$id", orientation.name)
         ControlButton.entries.forEach { button ->
             val (x, y) = getControlOffset(copyFrom, button)
             edit.putFloat("$KEY_OFFSET_PREFIX${id}_${button.name}_x", x)
             edit.putFloat("$KEY_OFFSET_PREFIX${id}_${button.name}_y", y)
         }
         edit.apply()
-        return ControlLayout(id, name)
+        return ControlLayout(id, name, orientation)
     }
 
     fun renameLayout(id: String, name: String) {
@@ -70,6 +116,7 @@ class ControlLayoutStore(context: Context) {
         if (id == DEFAULT_LAYOUT_ID) return
         val edit = prefs.edit().putString(KEY_LAYOUT_IDS, (layoutIds() - id).joinToString(","))
         edit.remove("$KEY_NAME_PREFIX$id")
+        edit.remove("$KEY_ORIENTATION_PREFIX$id")
         ControlButton.entries.forEach { button ->
             edit.remove("$KEY_OFFSET_PREFIX${id}_${button.name}_x")
             edit.remove("$KEY_OFFSET_PREFIX${id}_${button.name}_y")
@@ -243,7 +290,9 @@ class ControlLayoutStore(context: Context) {
 
         /** One press of the smaller/bigger buttons in the layout editor. */
         const val CONTROL_SCALE_STEP = 0.1f
+        private const val KEY_ORIENTATION_PREFIX = "layout_orientation_"
         private const val KEY_GAME_LAYOUT_PREFIX = "game_layout_"
+        private const val KEY_GAME_LAYOUT_LAND_PREFIX = "game_layout_land_"
         private const val KEY_CUSTOM_IDS_PREFIX = "custom_ids_"
         private const val KEY_CUSTOM_PREFIX = "custom_"
         private const val KEY_CUSTOM_OFFSET_PREFIX = "custom_offset_"

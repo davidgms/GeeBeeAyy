@@ -55,6 +55,7 @@ import com.geebeeayy.app.data.ControlLayout
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.data.CustomButton
 import com.geebeeayy.app.data.CustomButtonMode
+import com.geebeeayy.app.data.LayoutOrientation
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -115,6 +116,10 @@ fun EmulationScreen(
     // Layout editing. The offsets are held here while dragging and written
     // back only on Done, so an abandoned edit leaves the saved layout alone.
     val context = LocalContext.current
+    // Declared here rather than beside its first drawing use: which layout a
+    // game gets is chosen per orientation, so everything below needs it.
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val layoutStore = remember { ControlLayoutStore(context) }
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var activeLayoutId by remember { mutableStateOf(ControlLayoutStore.DEFAULT_LAYOUT_ID) }
@@ -183,10 +188,12 @@ fun EmulationScreen(
     }
 
     // The ROM loads asynchronously - its key (and so which layout it uses)
-    // is not known on first composition, only once loading finishes.
-    LaunchedEffect(gameKey()) {
+    // is not known on first composition, only once loading finishes. Turning
+    // the phone re-runs this too: a portrait arrangement does not fit
+    // sideways, so each orientation has its own choice of layout.
+    LaunchedEffect(gameKey(), isLandscape) {
         val key = gameKey() ?: return@LaunchedEffect
-        activeLayoutId = layoutStore.getLayoutForGame(key)
+        activeLayoutId = layoutStore.getLayoutForGame(key, isLandscape)
         loadLayout(activeLayoutId)
     }
     // Undo/redo history for the current edit session: a stack of full-layout
@@ -290,7 +297,7 @@ fun EmulationScreen(
     // is not the one loaded.
     fun selectLayout(layout: ControlLayout, openEditor: Boolean) {
         activeLayoutId = layout.id
-        gameKey()?.let { layoutStore.setLayoutForGame(it, layout.id) }
+        gameKey()?.let { layoutStore.setLayoutForGame(it, isLandscape, layout.id) }
         loadLayout(layout.id)
         undoStack.clear()
         redoStack.clear()
@@ -302,9 +309,6 @@ fun EmulationScreen(
         }
     }
     var showSlots by remember { mutableStateOf(false) }
-
-    val isLandscape =
-        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // A game is watched, not touched: without this the display times out
     // mid-play and the emulator keeps running behind a black screen.
@@ -756,13 +760,23 @@ fun EmulationScreen(
 
         if (layoutsModalOpen) {
             LayoutsDialog(
-                layouts = layouts,
+                layouts = layouts.filter { it.orientation.appliesTo(isLandscape) },
                 activeLayoutId = activeLayoutId,
+                landscape = isLandscape,
                 onSelect = { layout -> selectLayout(layout, openEditor = false) },
                 onEdit = { layout -> selectLayout(layout, openEditor = true) },
-                onRename = { id, name ->
+                onRename = { id, name, orientation ->
                     layoutStore.renameLayout(id, name)
+                    layoutStore.setLayoutOrientation(id, orientation)
                     layouts = layoutStore.getLayouts()
+                    // A layout just told to stop applying here cannot stay
+                    // loaded here either.
+                    if (id == activeLayoutId && !orientation.appliesTo(isLandscape)) {
+                        gameKey()?.let { key ->
+                            activeLayoutId = layoutStore.getLayoutForGame(key, isLandscape)
+                            loadLayout(activeLayoutId)
+                        }
+                    }
                 },
                 onDelete = { layout ->
                     layoutStore.deleteLayout(layout.id)
@@ -771,10 +785,18 @@ fun EmulationScreen(
                         selectLayout(layouts.first { it.isDefault }, openEditor = false)
                     }
                 },
-                onCreate = { name ->
-                    val created = layoutStore.createLayout(name, copyFrom = activeLayoutId)
+                onCreate = { name, orientation ->
+                    val created = layoutStore.createLayout(
+                        name,
+                        copyFrom = activeLayoutId,
+                        orientation = orientation,
+                    )
                     layouts = layoutStore.getLayouts()
-                    selectLayout(created, openEditor = true)
+                    if (orientation.appliesTo(isLandscape)) {
+                        selectLayout(created, openEditor = true)
+                    } else {
+                        layoutsModalOpen = false
+                    }
                 },
                 onDismiss = { layoutsModalOpen = false },
             )
@@ -1995,11 +2017,12 @@ private fun SaveStateDialog(
 private fun LayoutsDialog(
     layouts: List<ControlLayout>,
     activeLayoutId: String,
+    landscape: Boolean,
     onSelect: (ControlLayout) -> Unit,
     onEdit: (ControlLayout) -> Unit,
-    onRename: (String, String) -> Unit,
+    onRename: (String, String, LayoutOrientation) -> Unit,
     onDelete: (ControlLayout) -> Unit,
-    onCreate: (String) -> Unit,
+    onCreate: (String, LayoutOrientation) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var renamingLayout by remember { mutableStateOf<ControlLayout?>(null) }
@@ -2010,7 +2033,18 @@ private fun LayoutsDialog(
         containerColor = NightPanel,
         titleContentColor = GoldenSaplight,
         textContentColor = PineGlowMist,
-        title = { Text("Control Layouts", fontWeight = FontWeight.Bold) },
+        title = {
+            Column {
+                Text("Control Layouts", fontWeight = FontWeight.Bold)
+                // Says why a layout the player remembers making is not on the
+                // list: it was saved for the other orientation.
+                Text(
+                    text = if (landscape) "Showing landscape layouts" else "Showing portrait layouts",
+                    color = PineGlowMist,
+                    fontSize = 12.sp,
+                )
+            }
+        },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -2026,16 +2060,24 @@ private fun LayoutsDialog(
                                 unselectedColor = AmberResin,
                             ),
                         )
-                        Text(
-                            text = layout.name,
-                            color = PineGlowMist,
-                            fontSize = 14.sp,
+                        Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable { onSelect(layout) },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        ) {
+                            Text(
+                                text = layout.name,
+                                color = PineGlowMist,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = layout.orientation.label,
+                                color = AmberResin,
+                                fontSize = 11.sp,
+                            )
+                        }
                         IconButton(onClick = { onEdit(layout) }) {
                             Icon(Icons.Default.OpenWith, "Edit positions", tint = AmberResin)
                         }
@@ -2065,9 +2107,13 @@ private fun LayoutsDialog(
 
     renamingLayout?.let { layout ->
         LayoutNameDialog(
-            title = "Rename layout",
+            title = "Layout options",
             initialName = layout.name,
-            onConfirm = { name -> onRename(layout.id, name); renamingLayout = null },
+            initialOrientation = layout.orientation,
+            onConfirm = { name, orientation ->
+                onRename(layout.id, name, orientation)
+                renamingLayout = null
+            },
             onDismiss = { renamingLayout = null },
         )
     }
@@ -2076,21 +2122,34 @@ private fun LayoutsDialog(
         LayoutNameDialog(
             title = "New layout",
             initialName = "Layout ${layouts.size + 1}",
-            onConfirm = { name -> onCreate(name); creatingLayout = false },
+            // A layout made while holding the phone this way is for this way,
+            // unless the player says otherwise.
+            initialOrientation = if (landscape) LayoutOrientation.LANDSCAPE
+                else LayoutOrientation.PORTRAIT,
+            onConfirm = { name, orientation ->
+                onCreate(name, orientation)
+                creatingLayout = false
+            },
             onDismiss = { creatingLayout = false },
         )
     }
 }
 
-/** A single text field prompt, shared by renaming a layout and naming a new one. */
+/**
+ * Name and orientation, shared by creating a layout and editing an existing
+ * one. The two belong together: which way round a layout applies is as much
+ * part of what it is as its name.
+ */
 @Composable
 private fun LayoutNameDialog(
     title: String,
     initialName: String,
-    onConfirm: (String) -> Unit,
+    initialOrientation: LayoutOrientation,
+    onConfirm: (String, LayoutOrientation) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf(initialName) }
+    var orientation by remember { mutableStateOf(initialOrientation) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = NightPanel,
@@ -2098,22 +2157,39 @@ private fun LayoutNameDialog(
         textContentColor = PineGlowMist,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = PineGlowMist,
-                    unfocusedTextColor = PineGlowMist,
-                    focusedBorderColor = AmberResin,
-                    unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
-                    cursorColor = AmberResin,
-                ),
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PineGlowMist,
+                        unfocusedTextColor = PineGlowMist,
+                        focusedBorderColor = AmberResin,
+                        unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
+                        cursorColor = AmberResin,
+                    ),
+                )
+                Text("Shows up in", color = PineGlowMist, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LayoutOrientation.entries.forEach { option ->
+                        FilterChip(
+                            selected = orientation == option,
+                            onClick = { orientation = option },
+                            label = { Text(option.label, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                labelColor = PineGlowMist,
+                                selectedContainerColor = AmberResin,
+                                selectedLabelColor = NightVoid,
+                            ),
+                        )
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(name.trim().ifBlank { initialName }) },
+                onClick = { onConfirm(name.trim().ifBlank { initialName }, orientation) },
             ) { Text("Save", color = GoldenSaplight) }
         },
         dismissButton = {
