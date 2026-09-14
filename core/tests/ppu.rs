@@ -413,46 +413,6 @@ fn a_sprite_wins_a_priority_tie_with_a_background() {
     );
 }
 
-/// Between two overlapping sprites the OAM index decides on its own: a
-/// sprite's priority field is only ever compared against the backgrounds.
-/// GBATEK's "Caution" example under OAM Attributes spells this out, and it was
-/// confirmed on hardware in VisualBoyAdvance bug #130 - so sprite 0 wins even
-/// when sprite 1 carries the better priority.
-#[test]
-fn between_two_sprites_the_oam_index_decides_not_the_priority() {
-    let mut gba = Gba::new();
-    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
-
-    // Two OBJ tiles: tile 0 is colour 1, tile 1 is colour 2.
-    for i in (0..32u32).step_by(2) {
-        gba.bus.write16(0x0601_0000 + i, 0x1111);
-        gba.bus.write16(0x0601_0020 + i, 0x2222);
-    }
-    gba.bus.write16(0x0500_0202, 0x001F); // colour 1: red
-    gba.bus.write16(0x0500_0204, 0x03E0); // colour 2: green
-
-    // Sprite 0 uses tile 0 and the *worse* priority; sprite 1 uses tile 1 and
-    // the better one. They sit on top of each other.
-    gba.bus.write16(0x0700_0000, 0x0000);
-    gba.bus.write16(0x0700_0002, 0x0000);
-    gba.bus.write16(0x0700_0004, (3 << 10) | 0);
-    gba.bus.write16(0x0700_0008, 0x0000);
-    gba.bus.write16(0x0700_000A, 0x0000);
-    gba.bus.write16(0x0700_000C, (0 << 10) | 1);
-    for s in 2..128u32 {
-        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
-    }
-
-    gba.bus.write16(0x0400_0000, 0x1040); // mode 0, OBJ on, 1D mapping
-    gba.run_frame();
-
-    assert_eq!(
-        &gba.frame_buffer()[0..3],
-        [0xF8, 0x00, 0x00],
-        "sprite 0 must win the overlap even though sprite 1 has a better priority"
-    );
-}
-
 /// Affine backgrounds are always 256-colour and their map entry is a single
 /// byte holding the tile number. The renderer used to take the map *index* as
 /// the tile number and multiply it by 8 - never reading the map at all - so
@@ -1001,5 +961,84 @@ fn run_frames_leaves_rendering_on_for_whoever_runs_next() {
         gba.frame_buffer()[0],
         0,
         "the frame after a fast-forward batch was not drawn"
+    );
+}
+
+/// Draw two 8x8 sprites over the same pixel and return the colour that won.
+///
+/// Sprite at OAM 1 is red and sprite at OAM 2 is blue, so the returned colour
+/// names the winner without the test having to know anything else.
+fn two_overlapping_sprites(first_priority: u16, second_priority: u16) -> [u8; 3] {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    // OBJ tile 0 is colour index 1 everywhere, tile 1 is colour index 2.
+    // Byte writes to OBJ VRAM are ignored on hardware, so these go in as
+    // halfwords.
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0601_0000 + i, 0x1111);
+        gba.bus.write16(0x0601_0020 + i, 0x2222);
+    }
+    gba.bus.write16(0x0500_0202, 0x001F); // OBJ palette 0, colour 1: red
+    gba.bus.write16(0x0500_0204, 0x7C00); // colour 2: blue
+
+    // Every sprite off, then two of them over pixel (0, 0).
+    for s in 0..128u32 {
+        gba.bus.write16(0x0700_0000 + s * 8, 0x0200);
+    }
+    for (slot, tile, priority) in [(1u32, 0u16, first_priority), (2, 1, second_priority)] {
+        gba.bus.write16(0x0700_0000 + slot * 8, 0x0000); // y = 0, 8x8, 4bpp
+        gba.bus.write16(0x0700_0002 + slot * 8, 0x0000); // x = 0
+        gba.bus
+            .write16(0x0700_0004 + slot * 8, tile | (priority << 10));
+    }
+
+    gba.bus.write16(0x0400_0000, 0x1040); // mode 0, OBJ on, 1D mapping
+    gba.run_frame();
+
+    let px = &gba.frame_buffer()[0..3];
+    [px[0], px[1], px[2]]
+}
+
+/// Two sprites over the same pixel: priority decides, and the OAM index only
+/// breaks a tie.
+///
+/// This replaces a test that asserted the opposite - that the lower OAM index
+/// always wins and a sprite's priority is only ever compared against the
+/// backgrounds. That test cited GBATEK's "Caution" paragraph under OAM
+/// Attributes ("OBJ0 is always having priority above OBJ1-127") and
+/// VisualBoyAdvance bug #130. Both were re-checked:
+///
+/// - GBATEK really does say it, plainly and without qualification. It is
+///   wrong, and this is one of the few places where its text and every
+///   reference implementation disagree.
+/// - VBA bug #130 does not actually show what it was cited for. Its test put
+///   the *lowest* OAM index on the *worst* priority, so index-wins and
+///   priority-wins predict the same picture; it never isolates the case.
+/// - mGBA (`software-obj.c`: `if ((current & FLAG_ORDER_MASK) > flags)`) and
+///   NanoBoyAdvance (`sprite.cc`: `if (priority < pixel.priority || ...)`)
+///   independently compare the priority value and nothing else, walking OAM
+///   upwards so an equal priority keeps the earlier sprite.
+///
+/// And a real game settles it: Mario Tennis Advance draws its 3-2-1-GO
+/// countdown as priority-0 sprites at OAM 9 and 10 over target panels at OAM
+/// 1 and 2 with priority 2. Under the old rule the panels covered the number
+/// the whole moment is about.
+#[test]
+fn a_sprite_with_a_better_priority_beats_a_lower_oam_index() {
+    // OAM 1 is priority 2 and red; OAM 2 is priority 0 and blue.
+    assert_eq!(
+        two_overlapping_sprites(2, 0),
+        [0x00, 0x00, 0xF8],
+        "OAM 1 kept the pixel even though OAM 2 had the better priority"
+    );
+}
+
+#[test]
+fn between_sprites_of_equal_priority_the_lower_oam_index_wins() {
+    assert_eq!(
+        two_overlapping_sprites(1, 1),
+        [0xF8, 0x00, 0x00],
+        "a later sprite of the same priority overwrote an earlier one"
     );
 }

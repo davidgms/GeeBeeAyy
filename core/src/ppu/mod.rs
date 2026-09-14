@@ -1142,15 +1142,24 @@ impl Ppu {
                     continue;
                 }
                 let screen_x = screen_x as usize;
-                if !is_obj_window && self.obj_pixel[screen_x].is_some() {
-                    // Between two overlapping sprites the OAM index decides,
-                    // on its own - a sprite's priority field is only ever
-                    // compared against the backgrounds, never against another
-                    // sprite. GBATEK's "Caution" example under OAM Attributes
-                    // spells this out, and it was confirmed on hardware in
-                    // VisualBoyAdvance bug #130. TONC's regobj page says the
-                    // opposite in passing; it is the outlier.
-                    continue;
+                // Between two overlapping sprites, priority decides first and
+                // the OAM index only breaks a tie. This loop walks OAM in
+                // order, so an equal priority keeps the pixel already there -
+                // the lower index - and a strictly higher priority (a lower
+                // number) takes it.
+                //
+                // This used to be "the lower OAM index always wins", which is
+                // the rule *within* one priority mistaken for the whole rule.
+                // Mario Tennis Advance draws its 3-2-1-GO countdown as
+                // priority-0 sprites at OAM 9 and 10, over the target panels
+                // at OAM 1 and 2 with priority 2 - so the panels covered the
+                // number that is the whole point of the moment.
+                if !is_obj_window {
+                    if let Some((_, drawn_priority, _)) = self.obj_pixel[screen_x] {
+                        if drawn_priority <= priority {
+                            continue;
+                        }
+                    }
                 }
 
                 let (tex_x, tex_y) = if is_affine {

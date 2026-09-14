@@ -1007,3 +1007,43 @@ hard ceiling, and concluded fast forward could not go above 1.5x - which is
 wrong by a factor of three on the game the user actually plays. Measure at
 least two games, and let the player pick the ratio. Full write-up in
 [`docs/research/fast-forward.md`](../docs/research/fast-forward.md).
+
+### GBATEK is wrong about sprite-over-sprite ordering
+
+**2026-09-10**, found from a Mario Tennis Advance save state: the 3-2-1-GO
+countdown was drawn *behind* the target panels it overlaps.
+
+The countdown digits are sprites at OAM 9 and 10 with **priority 0**. The
+panels are sprites at OAM 1 and 2 with **priority 2**. This PPU implemented
+"between two sprites the lower OAM index always wins, priority is only ever
+compared against the backgrounds", so the panels won and covered the number.
+
+That rule was in the code *and* in a test that cited two sources. Both were
+re-checked and neither holds:
+
+- **GBATEK says it outright** - "OBJ0 is always having priority above
+  OBJ1-127", in the Caution paragraph under *LCD OBJ - OAM Attributes*, with
+  no qualification. It is simply wrong here. This is one of the few places
+  where GBATEK's text and every reference implementation disagree.
+- **VisualBoyAdvance bug #130** exists and its maintainer states the same
+  rule, but its test put the *lowest* OAM index on the *worst* priority. Both
+  rules predict the same picture for that setup, so it never isolates the
+  case it was cited for.
+- **mGBA** (`src/gba/renderers/software-obj.c`,
+  `if ((current & FLAG_ORDER_MASK) > flags)`) and **NanoBoyAdvance**
+  (`src/nba/src/hw/ppu/sprite.cc`, `if (priority < pixel.priority || ...)`)
+  independently compare the priority value and nothing else, walking OAM
+  upwards so an equal priority keeps the earlier sprite.
+
+The rule is: **priority decides, and the OAM index only breaks an exact tie**
+- which falls out for free from walking OAM in order and overwriting only on a
+strictly lower priority. Tests:
+`tests/ppu.rs::a_sprite_with_a_better_priority_beats_a_lower_oam_index` and
+`::between_sprites_of_equal_priority_the_lower_oam_index_wins`.
+
+**Application**: a plain, confident sentence in GBATEK is not the end of the
+argument. When a real game looks wrong and the code cites documentation, check
+what mGBA and NanoBoyAdvance actually *do* before trusting the sentence - and
+when the two disagree, say so in the comment instead of picking one quietly.
+Nothing open-source tests this case, so a purpose-built ROM on real hardware
+is the only way to close it completely.
