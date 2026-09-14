@@ -25,18 +25,19 @@ as unverified.
 
 | Module | Lines | Status |
 |--------|-------|--------|
-| `cpu/` | ~1900 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
-| `ppu/` | ~1130 | Mode 0 tiled output verified against three test ROMs. Windows, mosaic, sprites and the colour effects have regression tests in `core/tests/ppu.rs`; blending outside mode 0 mixes against draw order rather than layer priority. Modes 1, 2, 4 and 5 remain unverified against a reference image. |
-| `apu/` | ~800 | 4 PSG channels + FIFO A/B, full save-state serialisation, and a register map decoded at 16-bit granularity. A channel can be triggered and produces samples. Never driven by a real game. |
-| `memory/` + `io.rs` | ~540 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
-| `dma.rs` | ~300 | 4 channels wired to the bus, immediate/HBlank/VBlank/special, correct address control and repeat semantics. Raises IF bits 8-11. |
-| `timer/` | ~110 | Prescaler and cascade. Raises IF bits 3-6. |
-| `cart/` | ~480 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs, Flash chip ID, and EEPROM as the real serial protocol over DMA. |
+| `cpu/` | ~2100 | ARM + THUMB decoders, full register banking. **Passes gba-suite `arm`, `thumb` and `memory`.** 47 regression tests. |
+| `ppu/` | ~1610 | Mode 0 tiled output verified against three test ROMs. Windows, mosaic, sprites and the colour effects have regression tests in `core/tests/ppu.rs`; blending outside mode 0 mixes against draw order rather than layer priority. Modes 1, 2, 4 and 5 remain unverified against a reference image. Three timing/ordering bugs fixed against real games in September - see *The September accuracy pass* below. Optional interframe blending averages consecutive frames the way the real LCD does. |
+| `apu/` | ~1070 | 4 PSG channels + FIFO A/B, full save-state serialisation, and a register map decoded at 16-bit granularity. A channel can be triggered and produces samples. Never driven by a real game. |
+| `memory/` + `io.rs` | ~730 | Bus with correct region mirroring and 8-bit video write rules. `KEYINPUT` wired. |
+| `dma.rs` | ~370 | 4 channels wired to the bus, immediate/HBlank/VBlank/special, correct address control and repeat semantics. Raises IF bits 8-11. |
+| `timer/` | ~135 | Prescaler and cascade. Raises IF bits 3-6. |
+| `cart/` | ~650 | ROM load, save type detection, SRAM and Flash wired to the bus and passing the gba-suite save ROMs, Flash chip ID, and EEPROM as the real serial protocol over DMA. |
 | `savestate.rs` | ~330 | Format v4: register banks, timers, DMA derived state, the whole `io_regs` file, the APU and the cartridge save. A rejected restore rolls back. Wired to eight UI slots. |
 | `bios.rs` | ~450 | HLE SWIs including `CpuFastSet`, `ArcTan`/`ArcTan2` and the three diff unfilters. `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are still stubs; the sound-driver calls are absent. |
-| `ffi.rs` | ~560 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
-| `android/` | ~2900 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. **Builds, installs and emulates on a device.** |
-| `rewind.rs` | ~80 | Bounded ring of save states; cadence left to the frontend. Not wired to any UI. |
+| `ffi.rs` | ~770 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
+| `android/` | ~7680 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. Per-game layouts with custom buttons, haptics, fast-forward, rewind, screenshots, homebrew downloader. **Builds, installs and emulates on a device.** |
+| tests | ~5000 | `core/tests/` ~4500 lines across twelve files; `android/app/src/test/` ~500 lines of plain JVM JUnit. Both run in CI on every push, plus an x86_64 emulator smoke test that installs the APK. |
+| `rewind.rs` | ~80 | Bounded ring of save states. **Wired end to end**: snapshot every 30 frames, depth 20, hold-to-rewind in the transport row. Verified on a device. |
 
 `ios/` is not tracked here. It is ~750 lines of SwiftUI with no Xcode project
 and has never been compiled; its status lives in
@@ -59,6 +60,15 @@ launches without crashing, and `System.loadLibrary` finds the core. No
 Select and the shoulder buttons, so most games are unreachable.
 
 *(Superseded 2026-08-30: Start, Select, L and R are now on the overlay.)*
+
+**Verified on hardware 2026-09-14**, on the same Mi 10T Pro: haptics fire on a
+button press (`dumpsys vibrator_manager` reports `status: finished`,
+`Usage=TOUCH`); the layout editor's Cancel, the unsaved-changes prompt on the
+system back button, and reverting a dragged control all behave; layouts filter
+by orientation in both directions. The device loop is `cargo ndk` ->
+`gradle assembleDebug` -> the **Windows** `adb.exe` (the WSL one cannot see the
+phone), with `uiautomator dump` for exact widget bounds and `screencap` for the
+picture.
 
 ---
 
@@ -246,18 +256,48 @@ was correct.
 **Exit criterion:** a full game is playable start to finish, with sound, on a
 physical device, without losing progress.
 
-**Status 2026-09-01:** everything in this phase is done except playing a game
+**Status 2026-09-14:** everything in this phase is done except playing a game
 to its end. *Yggdra Union* runs on a device with music, and on the host it
 reaches the battle map through the story sequence, CARD SELECT, the character
 sheet and the objectives screen, all rendering correctly. Save states survive a
-process kill and battery saves reach the disk, both checked on hardware. What
-is left is literally finishing the game, which needs a person playing it.
+process kill and battery saves reach the disk, both checked on hardware - and
+in-game saving works too, since the EEPROM ready-poll fix in *The September
+accuracy pass*; before it, *Yggdra Union* answered "Save failed!" at its own
+save screen. What is left is literally finishing the game, which needs a
+person playing it.
 
 ---
 
+## The September accuracy pass
+
+Not a phase. Four bugs found by playing real games rather than by running a
+test suite, each fixed in `core/` with a test that fails without the fix.
+Details in [`.claude/memory.md`](.claude/memory.md).
+
+- [x] **The scanline was drawn a line too late.** HBlank's IRQ fires at cycle
+      960 of a 1232-cycle line and its handler sets up line N+1. Drawing at the
+      end of the line therefore consumed those writes one line early. Drawing
+      at HBlank *start*, with a `line_rendered` catch-up flag, took *Yggdra
+      Union*'s flickering panels from 11895 changed pixels between frames to
+      3198.
+- [x] **EEPROM never reported ready.** The standard save library polls the
+      EEPROM window with plain CPU loads, waiting for bit 0 to go high. Those
+      reads fell through to ROM and returned `0xFF80`, so saving failed
+      forever. A guard in `read8` returns `1`; *Yggdra Union*'s save went from
+      32 bytes to 879.
+- [x] **Sprite over sprite was ordered by OAM index alone.** GBATEK's own
+      "Caution" paragraph says the index decides; the hardware disagrees.
+      Priority decides first and the index only breaks exact ties, which is
+      what fixed *Mario Tennis*'s 3-2-1-GO countdown. Recorded as *GBATEK is
+      wrong about sprite-over-sprite ordering*.
+- [x] **Interframe blending** - the real LCD ghosts, and several games rely on
+      it to fake transparency. `prev_frame` holds the **unblended** frame and
+      the result goes to a separate `blend_out` buffer; blending in place fed
+      the output back on itself and faded the picture.
+
 ## Phase 2 - Quality
 
-- [~] **Touch overlay: size and opacity** - two sliders in Settings, persisted
+- [x] **Touch overlay: size, opacity, position, layouts** - two sliders in Settings, persisted
       in `DisplaySettings` alongside the scale mode, applied with a single
       `graphicsLayer` on the control block so Compose maps pointer input
       through the same transform and the targets stay in register with the
@@ -293,6 +333,20 @@ is left is literally finishing the game, which needs a person playing it.
       alone never would have: the edit bar pushed **Done** off the right edge,
       so edit mode could not be left at all, and changing a custom button's
       behaviour discarded the keys it already had. Both fixed.
+
+      Finished 2026-09-10 to 2026-09-14, all device-verified: every control
+      can be dragged anywhere over the picture (a child moved outside its
+      parent is not hit-tested there, and the `alpha` layer was clipping the
+      drawing at the same edge - both gone); the custom buttons read raw
+      pointer events, because `detectTapGestures` never fires under a Material
+      `Button` that consumes the press; per-control size in the editor; a
+      three-step font size; D-pad arrows and a slider for the diagonal width;
+      four control tints including a transparent one; haptics with four
+      strengths, one buzz per gesture, tagged `USAGE_TOUCH`; **Cancel** and an
+      unsaved-changes prompt on the system back button, with custom-button
+      positions staged behind Done like everything else; and a layout now says
+      whether it belongs to **portrait, landscape or both**, with the per-game
+      choice kept per orientation.
 - [x] **Screen scaling** - `kotlin-specialist`. `EmulationScreen.kt`'s `GbaScreen`
       now supports Fit (largest size preserving 3:2, letterboxed), Integer
       (largest whole-number multiple, falling back to Fit below 240x160) and
@@ -316,10 +370,10 @@ is left is literally finishing the game, which needs a person playing it.
       the JVM - `android/app/src/test/.../Sai2xTest.kt`, six cases, run with
       `gradle testDebugUnitTest`, which is new test infrastructure this project
       did not have.
-      **Untested on a device**, and 2xSaI is 153,600 pixels of Kotlin per frame
-      inside composition, so its cost is the open question. See
-      `temp/pending-device-tests.md`. CRT beyond scanlines - curvature, mask,
-      bloom - is not done and wants a real shader.
+      **Still untested on a device**, and 2xSaI is 153,600 pixels of Kotlin
+      per frame inside composition, so its cost is the open question. CRT
+      beyond scanlines - curvature, mask, bloom - is not done and wants a real
+      shader.
 - [x] ROM library with cover art (`data/RomArtwork.kt`: `<name>.png|jpg|jpeg|webp`
       beside the ROM, or in a `covers/` subfolder). Metadata beyond what the
       folder scan already reads is still open.
@@ -328,16 +382,14 @@ is left is literally finishing the game, which needs a person playing it.
       catalogue is not, and will not become, an index of commercial games.
 - [x] **Landscape/portrait handling** - `kotlin-specialist`. The manifest no
       longer hard-locks `screenOrientation="portrait"`;  `MainActivity`
-      applies the lock at runtime instead, from a `DisplaySettings.forcePortrait`
-      toggle that defaults to `true` so an existing install's behaviour does
-      not change until the player opts into landscape from Settings. In
-      landscape, `EmulationScreen` flanks the play area with the D-pad on the
-      left and action/transport buttons on the right instead of stacking
-      controls under it. Unverified: not compiled, no device test, and the
-      `Configuration.ORIENTATION_LANDSCAPE` recomposition path in particular
-      depends on `android:configChanges="orientation|..."` actually keeping
-      Compose's `LocalConfiguration` live without recreating the Activity -
-      that is documented Compose behaviour, not something exercised here.
+      applies the lock at runtime instead. The two-state `forcePortrait` flag
+      became a three-way `ScreenOrientation` (Automatic / Portrait /
+      Landscape), migrating the old boolean, and it locks the activity only -
+      never the system. In landscape, `EmulationScreen` flanks the play area
+      with the D-pad on the left and the face buttons on the right instead of
+      stacking controls under it, and both of those now honour the size and
+      opacity settings that used to apply in portrait only.
+      **Verified on a device 2026-09-14**, both ways round.
 - [~] **Audio latency measured and halved** - `AudioTrack.getMinBufferSize`
       reported 3844 frames on a Mi 10T Pro, and `AudioOutput` was clamping up
       to it: 80 ms of buffer, and since audio is the timing master that buffer
@@ -351,6 +403,35 @@ is left is literally finishing the game, which needs a person playing it.
       figure has not been measured, and doing it honestly needs a high-speed
       camera or a hardware loopback rather than more `dumpsys`. Runahead
       remains unconsidered.
+- [x] **Fast-forward, rebuilt on the audio clock** - the first version slept
+      less per frame, which reads as slow motion with dropped frames rather
+      than as speed. `AudioOutput.write` with `WRITE_BLOCKING` **is** the frame
+      clock, so the ratio is made exact by decimating R frames of samples down
+      to one frame's worth. Three steps: 2x, 4x, 8x. Nine emulators were
+      surveyed first - see [`docs/research/fast-forward.md`](docs/research/fast-forward.md),
+      which also records the measurement mistake that made the first numbers
+      wrong: the ROM list reorders by last-played, so each timing run had
+      quietly opened a *different game*. **Never quote one game's speed as the
+      emulator's speed.** With the game held fixed, *Yggdra Union* hits
+      2.00x/3.00x/4.00x exactly.
+- [x] **In-game furniture** - mute from the header, battery and clock along the
+      bottom (a toggle), hide the system bars while a game runs (a toggle), and
+      a Settings shortcut from the in-game menu. The save-slot toast named the
+      wrong slot, off by one; `slotName()` is now a single function with a test
+      (`SlotNameTest`) and slot 0 reads as "Quick save".
+- [x] **ROM browser: refresh, info, downloads** - pull-to-refresh and a rescan
+      button, a long-press info dialog reading the cartridge header
+      (`RomHeader.kt`, covered by `RomHeaderTest`), and the homebrew
+      downloader. The dead **About** button was removed rather than given a
+      screen it never had.
+- [ ] **ROM browser, second pass** - favourites, a long-press context menu,
+      relative dates ("6 days ago"), "file not found" rows for a ROM that moved,
+      and a generated placeholder tile (the game's initials over a colour
+      derived from its name) where no cover art was supplied. The gap analysis
+      against a shipped GBA emulator, and the order to do it in, is
+      [`docs/competitive-review.md`](docs/competitive-review.md).
+- [ ] **ZIP ROM support**, auto-load-state on open, and "reset and start".
+- [ ] **FPS and audio-underrun counter**, then an audio volume control.
 ---
 
 ## Phase 3 - Advanced
@@ -510,6 +591,7 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 | Build, release, device testing, platform parity | `mobile-app-developer` |
 | GBA hardware questions, GBATEK, reference emulators | `search-specialist` |
 | Touch targets, contrast, screen readers | `accessibility-tester` |
+| Unit tests in `core/tests/` and `app/src/test/`, macro tests through `run_frame`, gba-suite harnesses | `test-automator` |
 | Icons, theme art, store assets | `visual-asset-generator` |
 | Multi-lane decomposition and cross-specialist consultation | `agent-organizer` (second in command; its plans are reviewed before they run) |
 
