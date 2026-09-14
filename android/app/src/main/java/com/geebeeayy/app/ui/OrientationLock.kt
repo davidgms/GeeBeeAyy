@@ -4,27 +4,28 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import com.geebeeayy.app.data.ScreenOrientation
 
 /**
- * The orientation this activity asks for, given the Force Portrait setting.
+ * The orientation this activity asks for.
  *
  * `requestedOrientation` only ever governs this activity's own window, so the
  * lock has always been app-only - it cannot and does not change the phone's
  * system rotation setting.
  *
- * What it did get wrong is the *off* case. `SCREEN_ORIENTATION_UNSPECIFIED`
- * hands the decision back to the system, and the system honours the phone's
- * auto-rotate lock: with auto-rotate off - which is how most phones sit - the
- * app stayed portrait and turning the setting off appeared to do nothing.
- * [ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR] rotates on the sensor alone,
- * so the app follows the phone in the hand whatever the system lock says.
+ * [ScreenOrientation.AUTO] is `SCREEN_ORIENTATION_FULL_SENSOR` and not
+ * `UNSPECIFIED`. Unspecified hands the decision to the system, and the system
+ * honours the phone's auto-rotate lock: with auto-rotate off - which is how
+ * most phones sit - the app stayed upright and "automatic" appeared to do
+ * nothing at all.
  */
-fun orientationFor(forcePortrait: Boolean): Int =
-    if (forcePortrait) {
-        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-    } else {
-        ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-    }
+fun orientationFor(orientation: ScreenOrientation): Int = when (orientation) {
+    ScreenOrientation.AUTO -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+    ScreenOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    // Sensor landscape, not plain landscape: a phone turned the other way
+    // round should still end up the right way up.
+    ScreenOrientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+}
 
 /**
  * The [Activity] behind a Compose `LocalContext`.
