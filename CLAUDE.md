@@ -147,23 +147,33 @@ proposes, specialists advise before they build. Only what is specific to this
 repository is below.
 
 **`.claude/agents/*.md` is the single source of truth for every persona.** The
-file holds the frontmatter, the repository context, the working rules and the
-body ending in `## Discoveries`.
+file holds the frontmatter, the repository context and the working rules. It no
+longer holds the agent's memory.
 
 - **The roster and its lanes are in [`ROADMAP.md`](ROADMAP.md#who-owns-what).**
   The boundary that matters most: emulation behaviour is `rust-engineer`'s and
   lives in `core/`; a frontend agent never receives a "the game looks wrong"
   task.
-- **Agent memory is enforced, not just requested.** Agents write to the
-  `## Discoveries` section of their own `.claude/agents/<name>.md`, and the
-  `SubagentStop` hook (`.claude/hooks/agent-memory.py`) checks that the file
-  changed before letting the agent finish. The convention and the enforcement
-  name the same path on purpose.
-- **Durable project knowledge goes to `docs/` or
-  [`.claude/memory.md`](.claude/memory.md)** instead, with a one-line pointer
-  left in `## Discoveries`. `memory.md` already records the decoder bugs that
-  shipped while the roadmap called the decoders complete - which is why an
-  unverified checkbox in this repository is treated as unverified.
+- **Agent memory is Claude Code's own, declared as `memory: project` in the
+  frontmatter.** Each agent writes to `.claude/agent-memory/<name>/`, whose
+  `MEMORY.md` Claude Code loads into that agent's prompt before it starts. The
+  directory is created on the first thing worth saving and not before, so an
+  agent with nothing learned has no folder. `MEMORY.md` is an index - one line
+  per discovery, pointing at a `YYYY-MM-DD-short-title.md` beside it - because
+  only its first 200 lines are loaded.
+- **This replaced a `SubagentStop` hook** (`.claude/hooks/agent-memory.py`)
+  that blocked an agent from finishing until it had edited its own definition
+  file. The hook worked, but it was enforcing a convention the tool now
+  implements: memory that is loaded automatically rather than read by an agent
+  remembering to scroll to the bottom of itself, and that does not grow the
+  persona by a hundred lines per month.
+- **An agent's memory is private to that agent.** No other agent can read it,
+  which is the documented design and the known cost. **Durable project
+  knowledge therefore goes to `docs/` or [`.claude/memory.md`](.claude/memory.md)**,
+  with a one-line pointer left in the agent's `MEMORY.md`. `memory.md` already
+  records the decoder bugs that shipped while the roadmap called the decoders
+  complete - which is why an unverified checkbox in this repository is treated
+  as unverified.
 - **Nothing is parked right now.** [`.claude/agents-inactive/`](.claude/agents-inactive/README.md)
   exists and explains itself; `mobile-developer` used to sit there as a React
   Native persona and was rewritten for the native stack instead.
