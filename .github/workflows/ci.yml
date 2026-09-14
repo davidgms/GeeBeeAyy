@@ -1,7 +1,13 @@
 name: CI
 
+# `push` is limited to master on purpose. A bare `push:` alongside
+# `pull_request:` fires both triggers for the same commit on any branch that
+# has a PR open, so every check ran twice - two full Android builds and two
+# emulator boots per push, for one commit. Branch work is covered by the
+# pull_request trigger; master gets its own run after each merge.
 on:
   push:
+    branches: [master]
   pull_request:
 
 # Superseding pushes on the same branch cancel the in-flight run instead of
