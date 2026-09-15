@@ -4,8 +4,9 @@
 
 Project context, discoveries and learnings that are durable and shared. Agents
 read this at the start of a task and correct it when it goes stale. Knowledge
-that belongs to one agent's craft goes in that agent's own `## Discoveries`
-section instead; knowledge about the project goes here or in `docs/`.
+that belongs to one agent's craft goes in that agent's own memory instead
+(`.claude/agent-memory/<name>/`, which only that agent can read); knowledge
+about the project goes here or in `docs/`, where everyone gets it.
 
 Outdated or incorrect entries should be removed, not annotated. A wrong line
 here costs more than a missing one.
@@ -156,9 +157,11 @@ not bits 0-23 - bits 0-3 are the unit size and 4-7 the type.
 ### 2026-08-27 - An agent whose `tools:` list omits Edit cannot satisfy the Memory Protocol
 
 `search-specialist` and `accessibility-tester` shipped with read-only tool
-lists (`Read, Grep, Glob, ...`), so the `SubagentStop` hook nudged them on
+lists (`Read, Grep, Glob, ...`), so the memory check nudged them on
 every run for a write they were structurally incapable of making. Both now
-carry `Edit`. When registering an agent that has a `## Discoveries` section,
+carry `Edit`. (Superseded 2026-09-14: `memory: project` enables Read, Write and
+Edit for that agent automatically, so this no longer bites.) When registering an
+agent expected to keep memory,
 check that its frontmatter grants `Edit` or `Write` - the hook and the tool
 list have to agree or the agent loops.
 
@@ -644,7 +647,8 @@ returned three that are each easy to get backwards:
    #130 was closed after a hardware test confirmed it. **TONC's regobj page
    says the opposite** ("for sprites of the same priority, the higher
    OBJ_ATTRs are drawn first") and is the outlier - the agent recorded that in
-   its own `## Discoveries`, verified in the diff.
+   its own memory, verified in the diff. (Superseded 2026-09-10: this whole
+   paragraph is wrong, see the entry below.)
 
 Still not implemented, with the rules now written down in that agent's report:
 semi-transparent sprites (OBJ mode 1) are always a 1st target and always alpha
