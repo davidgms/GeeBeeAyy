@@ -139,3 +139,14 @@ val LocalControlFontScale = staticCompositionLocalOf { 1f }
  * [com.geebeeayy.app.data.DisplaySettings.getDpadCardinalHalfDegrees].
  */
 val LocalDpadCardinalHalf = staticCompositionLocalOf { 30f }
+
+/**
+ * The global control size multiplier from Settings.
+ *
+ * Read by the per-control size in the layout editor, which is a second
+ * multiplier on top of it: the two used to have independent minimums that
+ * multiplied, so 0.7 x 0.6 drew a 48.dp button at 20.dp - well under the
+ * 48.dp that a thumb needs. Knowing the global one lets the per-control one
+ * stop short of that.
+ */
+val LocalGlobalControlScale = staticCompositionLocalOf { 1f }

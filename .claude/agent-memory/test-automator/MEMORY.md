@@ -1,0 +1,2 @@
+- [core/tests/ppu.rs already covers sprite priority, blend, render_enabled](2026-09-17-core-ppu-tests-already-thorough-check-before-adding.md) — grep before adding; the real gap was the blend+fast-forward interaction.
+- [Extracting pure functions to test Context-backed Android classes](2026-09-17-android-context-classes-pure-function-extraction-pattern.md) — pattern for SharedPreferences/Vibrator classes without Robolectric.
