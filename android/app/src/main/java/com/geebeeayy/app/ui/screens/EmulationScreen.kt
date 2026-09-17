@@ -1143,7 +1143,13 @@ private fun <T> Modifier.movableControl(
     scales: Map<T, Float> = emptyMap(),
 ): Modifier {
     val offset = offsets[button] ?: Offset.Zero
-    val scale = scales[button] ?: 1f
+    // The global size multiplier is a second layer above this one, so the two
+    // multiply. Floored against it here rather than clamped in the stepper,
+    // because the global slider can move after a control was sized.
+    val globalScale = LocalGlobalControlScale.current
+    val scale = (scales[button] ?: 1f)
+        .coerceAtLeast(MIN_EFFECTIVE_CONTROL_SCALE / globalScale)
+        .coerceAtMost(ControlLayoutStore.MAX_CONTROL_SCALE)
     return this
         .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
         // A layer, not a size change. Compose maps pointer input back through
@@ -1704,6 +1710,16 @@ private fun DrawScope.drawDpadArrow(key: Int, held: Set<Int>, controls: ControlP
     }
     drawPath(path, if (key in held) controls.labelPressed else controls.label)
 }
+
+/**
+ * How small a control may end up once both size multipliers are applied.
+ *
+ * Settings' slider bottoms out at 0.7 and the layout editor's stepper at 0.6,
+ * and they are separate `graphicsLayer`s, so unfloored they multiplied to
+ * 0.42 - a 48.dp button drawn at 20.dp. 0.7 keeps the worst case at the
+ * smaller of the two rather than the product of both.
+ */
+private const val MIN_EFFECTIVE_CONTROL_SCALE = 0.7f
 
 /** Three 48dp arms, the same footprint the four separate buttons occupied. */
 private val DPAD_SIZE = 144.dp
