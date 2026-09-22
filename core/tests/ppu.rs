@@ -922,6 +922,60 @@ fn spinning_gba() -> Gba {
 }
 
 #[test]
+fn interframe_blending_ignores_frames_skipped_by_fast_forward() {
+    // blend_with_previous_frame (core/src/ppu/mod.rs) runs once per frame
+    // and is guarded on `render_enabled`. Fast forward (`run_frames`) turns
+    // rendering off for every frame but the last of a batch; a skipped
+    // frame leaves the frame buffer exactly as the last real frame drew it,
+    // so blending it in would average that unchanged buffer with itself and
+    // flatten `blend_out` back to the flat, unblended picture until the
+    // batch's real frame re-blends it - the smear the guard's own comment
+    // warns about.
+    let mut gba = spinning_gba();
+    gba.set_interframe_blend(true);
+
+    gba.bus.write16(0x0500_0000, 0x7FFF); // white
+    tick_one_frame(&mut gba);
+    gba.bus.write16(0x0500_0000, 0x0000); // black
+    tick_one_frame(&mut gba);
+    let blended = gba.frame_buffer()[0];
+    assert_ne!(
+        blended, 0,
+        "sanity: white-then-black must still be blending"
+    );
+    // 248, not 255: the PPU expands a 5-bit channel with `<< 3`, so a white
+    // backdrop is 0x1F << 3. Asserting against 255 asserted nothing.
+    assert_ne!(
+        blended, 248,
+        "sanity: white-then-black must still be blending"
+    );
+
+    // A fast-forward batch of 3: rendering off, off, then on, backdrop held
+    // black throughout. A skipped frame must leave `blend_out` alone.
+    gba.ppu.set_render_enabled(false);
+    tick_one_frame(&mut gba);
+    let mid = gba.frame_buffer()[0];
+    tick_one_frame(&mut gba);
+    assert_eq!(
+        mid,
+        gba.frame_buffer()[0],
+        "a skipped frame changed the blended output"
+    );
+    assert_eq!(
+        blended, mid,
+        "a skipped frame must not re-blend the picture against itself"
+    );
+
+    gba.ppu.set_render_enabled(true);
+    tick_one_frame(&mut gba);
+    assert_eq!(
+        gba.frame_buffer()[0],
+        0,
+        "the real frame after the skipped batch must blend black-on-black to black"
+    );
+}
+
+#[test]
 fn a_frame_the_frontend_will_not_show_is_not_drawn() {
     // Fast forward runs several emulated frames per frame it shows. Drawing
     // the ones it throws away costs as much as drawing the one it keeps, and

@@ -50,15 +50,13 @@ class ControlLayoutStore(context: Context) {
      */
     fun getLayoutForGame(gameKey: String, landscape: Boolean): String {
         val chosen = prefs.getString(gameLayoutKey(gameKey, landscape), null)
-        if (chosen != null && layoutIds().contains(chosen) &&
-            getLayoutOrientation(chosen).appliesTo(landscape)
-        ) {
-            return chosen
-        }
-        val fallback = getDefaultLayoutId()
-        if (getLayoutOrientation(fallback).appliesTo(landscape)) return fallback
-        return layoutIds().firstOrNull { getLayoutOrientation(it).appliesTo(landscape) }
-            ?: DEFAULT_LAYOUT_ID
+        return resolveLayoutForGame(
+            chosen = chosen,
+            layoutIds = layoutIds(),
+            defaultLayoutId = getDefaultLayoutId(),
+            landscape = landscape,
+            orientationOf = ::getLayoutOrientation,
+        )
     }
 
     /**
@@ -120,6 +118,10 @@ class ControlLayoutStore(context: Context) {
         ControlButton.entries.forEach { button ->
             edit.remove("$KEY_OFFSET_PREFIX${id}_${button.name}_x")
             edit.remove("$KEY_OFFSET_PREFIX${id}_${button.name}_y")
+            // Sizes are part of a layout too. Left behind, they stayed in the
+            // preferences file for the life of the install, keyed by a UUID
+            // nothing would ever look up again.
+            edit.remove("$KEY_SCALE_PREFIX${id}_${button.name}")
         }
         customButtonIds(id).forEach { buttonId -> removeCustomButton(edit, id, buttonId) }
         edit.remove("$KEY_CUSTOM_IDS_PREFIX$id")
@@ -199,6 +201,7 @@ class ControlLayoutStore(context: Context) {
         edit.remove("$KEY_CUSTOM_PREFIX${layoutId}_${buttonId}_keys")
         edit.remove("$KEY_CUSTOM_OFFSET_PREFIX${layoutId}_${buttonId}_x")
         edit.remove("$KEY_CUSTOM_OFFSET_PREFIX${layoutId}_${buttonId}_y")
+        edit.remove("$KEY_CUSTOM_SCALE_PREFIX${layoutId}_$buttonId")
     }
 
     fun getControlOffset(layoutId: String, button: ControlButton): Pair<Float, Float> = Pair(
@@ -277,6 +280,30 @@ class ControlLayoutStore(context: Context) {
 
     companion object {
         const val DEFAULT_LAYOUT_ID = "default"
+
+        /**
+         * The fallback chain behind [getLayoutForGame], pulled out as a pure
+         * function so it can be tested without an Android [Context]: a
+         * previously chosen layout that still exists and still applies this
+         * way round; failing that the default layout if it applies; failing
+         * that the first layout that applies at all; failing that (no
+         * layout applies - should not happen, Default always applies) the
+         * built-in id, so a game is never left with no controls.
+         */
+        fun resolveLayoutForGame(
+            chosen: String?,
+            layoutIds: List<String>,
+            defaultLayoutId: String,
+            landscape: Boolean,
+            orientationOf: (String) -> LayoutOrientation,
+        ): String {
+            if (chosen != null && chosen in layoutIds && orientationOf(chosen).appliesTo(landscape)) {
+                return chosen
+            }
+            if (orientationOf(defaultLayoutId).appliesTo(landscape)) return defaultLayoutId
+            return layoutIds.firstOrNull { orientationOf(it).appliesTo(landscape) }
+                ?: DEFAULT_LAYOUT_ID
+        }
         private const val KEY_LAYOUT_IDS = "layout_ids"
         private const val KEY_DEFAULT_LAYOUT = "default_layout"
         private const val KEY_NAME_PREFIX = "layout_name_"

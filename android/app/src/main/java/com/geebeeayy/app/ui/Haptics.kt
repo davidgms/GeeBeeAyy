@@ -59,7 +59,7 @@ class Haptics(context: Context) {
         // rate. Each `vibrate` cancels the effect still running, so that is
         // heard as one continuous buzz, not as separate taps.
         val now = SystemClock.uptimeMillis()
-        if (now - lastBuzzMs < MIN_INTERVAL_MS) return
+        if (!shouldBuzz(now, lastBuzzMs)) return
         lastBuzzMs = now
         runCatching {
             val effect = VibrationEffect.createOneShot(strength.millis, strength.amplitude)
@@ -71,12 +71,18 @@ class Haptics(context: Context) {
         }
     }
 
-    private companion object {
+    companion object {
         /**
          * Shortest gap between two buzzes. Long enough to swallow the extra
          * keys of one gesture, short enough that deliberate mashing still
          * answers every press.
          */
         const val MIN_INTERVAL_MS = 40L
+
+        /**
+         * The debounce decision on its own, pulled out so it can be tested
+         * without a [SystemClock] or a real device to vibrate.
+         */
+        fun shouldBuzz(nowMs: Long, lastBuzzMs: Long): Boolean = nowMs - lastBuzzMs >= MIN_INTERVAL_MS
     }
 }
