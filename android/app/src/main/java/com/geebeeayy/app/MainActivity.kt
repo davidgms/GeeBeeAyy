@@ -27,7 +27,6 @@ import com.geebeeayy.app.ui.Haptics
 import com.geebeeayy.app.ui.theme.LocalControlFontScale
 import com.geebeeayy.app.ui.theme.LocalControlPalette
 import com.geebeeayy.app.ui.theme.LocalDpadCardinalHalf
-import com.geebeeayy.app.ui.theme.LocalGlobalControlScale
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
@@ -240,7 +239,6 @@ fun GeeBeeAyyNavHost() {
                 LocalControlPalette provides controlTint.palette,
                 LocalControlFontScale provides controlFont.scale,
                 LocalDpadCardinalHalf provides dpadCardinal,
-                LocalGlobalControlScale provides controlScale,
             ) {
             EmulationScreen(
                 frameBuffer = frameBuffer,

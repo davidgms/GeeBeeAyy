@@ -943,8 +943,10 @@ fn interframe_blending_ignores_frames_skipped_by_fast_forward() {
         blended, 0,
         "sanity: white-then-black must still be blending"
     );
+    // 248, not 255: the PPU expands a 5-bit channel with `<< 3`, so a white
+    // backdrop is 0x1F << 3. Asserting against 255 asserted nothing.
     assert_ne!(
-        blended, 255,
+        blended, 248,
         "sanity: white-then-black must still be blending"
     );
 

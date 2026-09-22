@@ -233,12 +233,17 @@ fun EmulationScreen(
         pushUndoSnapshot()
         val customId = selectedCustomId
         val button = selectedButton
+        // The same floor `movableControl` draws with. Without it the stepper
+        // kept accepting presses below what the screen would show: the value
+        // was stored, the undo stack grew, Cancel started asking about
+        // unsaved changes, and nothing moved.
+        val min = smallestUsefulControlScale(controlScale)
         if (customId != null) {
             customScales[customId] = ((customScales[customId] ?: 1f) + delta)
-                .coerceIn(ControlLayoutStore.MIN_CONTROL_SCALE, ControlLayoutStore.MAX_CONTROL_SCALE)
+                .coerceIn(min, ControlLayoutStore.MAX_CONTROL_SCALE)
         } else if (button != null) {
             scales[button] = ((scales[button] ?: 1f) + delta)
-                .coerceIn(ControlLayoutStore.MIN_CONTROL_SCALE, ControlLayoutStore.MAX_CONTROL_SCALE)
+                .coerceIn(min, ControlLayoutStore.MAX_CONTROL_SCALE)
         }
     }
     val handleDragStart: (ControlButton) -> Unit = { button ->
@@ -495,6 +500,7 @@ fun EmulationScreen(
                     scaleY = controlScale,
                     alpha = controlOpacity,
                 )
+                CompositionLocalProvider(LocalGlobalControlScale provides controlScale) {
                 // Controls flank the screen rather than sitting under it, so
                 // nothing overlaps the play area on a wide/short display.
                 Row(
@@ -546,6 +552,7 @@ fun EmulationScreen(
                             onDragEnd = handleDragEnd,
                         )
                     }
+                }
                 }
             } else {
                 // The controls float over the picture rather than sitting
@@ -602,6 +609,7 @@ fun EmulationScreen(
         // The custom buttons used to sit outside this layer and so ignored
         // both the size and the opacity settings - a player-made button
         // stayed fully opaque over a game the fixed buttons let through.
+        CompositionLocalProvider(LocalGlobalControlScale provides controlScale) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -666,6 +674,7 @@ fun EmulationScreen(
                     )
                 }
             }
+        }
         }
 
         if (editingLayout) {
@@ -1144,12 +1153,10 @@ private fun <T> Modifier.movableControl(
 ): Modifier {
     val offset = offsets[button] ?: Offset.Zero
     // The global size multiplier is a second layer above this one, so the two
-    // multiply. Floored against it here rather than clamped in the stepper,
-    // because the global slider can move after a control was sized.
-    val globalScale = LocalGlobalControlScale.current
+    // multiply. Floored here as well as in the stepper, because the global
+    // slider can move after a control was already sized.
     val scale = (scales[button] ?: 1f)
-        .coerceAtLeast(MIN_EFFECTIVE_CONTROL_SCALE / globalScale)
-        .coerceAtMost(ControlLayoutStore.MAX_CONTROL_SCALE)
+        .coerceAtLeast(smallestUsefulControlScale(LocalGlobalControlScale.current))
     return this
         .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
         // A layer, not a size change. Compose maps pointer input back through
@@ -1720,6 +1727,18 @@ private fun DrawScope.drawDpadArrow(key: Int, held: Set<Int>, controls: ControlP
  * smaller of the two rather than the product of both.
  */
 private const val MIN_EFFECTIVE_CONTROL_SCALE = 0.7f
+
+/**
+ * The smallest per-control multiplier worth allowing, given [globalScale].
+ *
+ * One function so the layout editor's stepper and the drawing agree: a
+ * stepper that keeps going below what the screen will show stores a value
+ * nothing renders, and asks about unsaved changes for an edit that never
+ * happened.
+ */
+private fun smallestUsefulControlScale(globalScale: Float): Float =
+    (MIN_EFFECTIVE_CONTROL_SCALE / globalScale)
+        .coerceIn(ControlLayoutStore.MIN_CONTROL_SCALE, ControlLayoutStore.MAX_CONTROL_SCALE)
 
 /** Three 48dp arms, the same footprint the four separate buttons occupied. */
 private val DPAD_SIZE = 144.dp

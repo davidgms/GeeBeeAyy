@@ -70,11 +70,14 @@ class ControlLayoutStoreTest {
 
     @Test
     fun `nothing applying at all still returns the built-in id rather than nothing`() {
-        val allWrong = mapOf("default" to LayoutOrientation.LANDSCAPE)
+        // The chosen default is deliberately *not* the built-in id, so this
+        // pins the last-resort branch on its own. With them equal the test
+        // passed even if that branch were deleted.
+        val allWrong = mapOf("wide" to LayoutOrientation.LANDSCAPE)
         val result = resolveLayoutForGame(
             chosen = null,
             layoutIds = allWrong.keys.toList(),
-            defaultLayoutId = "default",
+            defaultLayoutId = "wide",
             landscape = false,
             orientationOf = { allWrong.getValue(it) },
         )
