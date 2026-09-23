@@ -32,6 +32,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import com.geebeeayy.app.data.RomArtwork
+import com.geebeeayy.app.data.CoverArt
+import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.Favorites
 import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.RelativeTime
@@ -81,6 +83,9 @@ fun RomBrowserScreen(
 ) {
     val context = LocalContext.current
     val favorites = remember { Favorites(context) }
+    // Read once for the whole list. Built per row it was a SharedPreferences
+    // object allocated for every card that scrolled into view.
+    val downloadCovers = remember { DisplaySettings(context).getDownloadCoverArt() }
     var query by remember { mutableStateOf("") }
     var infoRom by remember { mutableStateOf<RomEntry?>(null) }
     var menuRom by remember { mutableStateOf<RomEntry?>(null) }
@@ -250,6 +255,7 @@ fun RomBrowserScreen(
                             items(favorites) { rom ->
                                 RomCard(
                                     rom = rom,
+                                    downloadCovers = downloadCovers,
                                     onClick = { onRomClick(rom) },
                                     onLongClick = { menuRom = rom },
                                 )
@@ -277,6 +283,7 @@ fun RomBrowserScreen(
                         items(rest) { rom ->
                             RomCard(
                                 rom = rom,
+                                downloadCovers = downloadCovers,
                                 onClick = { onRomClick(rom) },
                                 onLongClick = { menuRom = rom },
                             )
@@ -471,7 +478,12 @@ private fun formatLastPlayed(millis: Long): String =
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
+fun RomCard(
+    rom: RomEntry,
+    downloadCovers: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -500,9 +512,20 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
             // doing that synchronously meant every row scrolling into view did
             // disk I/O and a decode on the UI thread. The placeholder shows
             // until it arrives.
+            val context = LocalContext.current
             var artwork by remember(rom.filePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
             LaunchedEffect(rom.filePath) {
-                artwork = withContext(Dispatchers.IO) { RomArtwork.load(rom.filePath) }
+                artwork = withContext(Dispatchers.IO) {
+                    // What is already on disk first, so a row draws without
+                    // waiting for the network even when the fetch is on.
+                    RomArtwork.load(context, rom.filePath)
+                        ?: if (rom.exists && downloadCovers) {
+                            CoverArt.fetch(context, rom.filePath)
+                            RomArtwork.load(context, rom.filePath)
+                        } else {
+                            null
+                        }
+                }
             }
             val art = artwork
             Box(
