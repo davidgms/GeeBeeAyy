@@ -255,11 +255,26 @@ fun RomBrowserScreen(
                                 )
                             }
                         }
+                        val rest = visibleRoms.filterNot { it.isFavorite }
+                        // The second heading only exists because the first
+                        // one does. Without it the favourites ran straight
+                        // into the rest of the list, and the first unstarred
+                        // game read as though it were starred too.
+                        if (favorites.isNotEmpty() && rest.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "All games",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AmberResin,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                )
+                            }
+                        }
                         // The rest, not all of them: `favorites` is a subset of
                         // `visibleRoms`, so listing the whole list here drew
-                        // every favourite a second time. Latent only because
-                        // nothing sets `isFavorite` yet.
-                        items(visibleRoms.filterNot { it.isFavorite }) { rom ->
+                        // every favourite a second time.
+                        items(rest) { rom ->
                             RomCard(
                                 rom = rom,
                                 onClick = { onRomClick(rom) },
