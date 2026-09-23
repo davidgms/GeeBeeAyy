@@ -10,6 +10,13 @@ class LastPlayed(context: Context) {
         prefs.edit().putLong(filePath, System.currentTimeMillis()).apply()
     }
 
+    /** Every path ever launched, including ones whose file has since gone. */
+    fun paths(): Set<String> = prefs.all.keys
+
+    fun forget(filePath: String) {
+        prefs.edit().remove(filePath).apply()
+    }
+
     fun get(filePath: String): Long? {
         val value = prefs.getLong(filePath, -1L)
         return if (value < 0) null else value

@@ -10,6 +10,7 @@ class RomFolderManager(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("rom_folders", Context.MODE_PRIVATE)
     private val lastPlayed = LastPlayed(context)
+    private val favorites = Favorites(context)
 
     /**
      * The configured folders, sorted.
@@ -45,8 +46,37 @@ class RomFolderManager(private val context: Context) {
                 scanDirectory(folder, roms)
             }
         }
+        roms += missingEntries(roms.map { it.filePath }.toSet())
         return roms.sortedBy { it.name.lowercase() }
     }
+
+    /**
+     * Rows for games the player has played whose file the scan did not find.
+     *
+     * Only played ones: a path is remembered because a game was launched from
+     * it, so this cannot invent a row for a file that was merely glanced at.
+     * The alternative - dropping them - makes a game disappear silently, which
+     * reads as the app having lost it rather than as a card being out.
+     */
+    private fun missingEntries(found: Set<String>): List<RomEntry> =
+        lastPlayed.paths()
+            .filterNot { it in found }
+            .filterNot { File(it).isFile }
+            .map { path ->
+                val file = File(path)
+                RomEntry(
+                    name = displayName(file.name),
+                    fileName = file.name,
+                    size = "-",
+                    filePath = path,
+                    lastPlayedMillis = lastPlayed.get(path),
+                    isFavorite = favorites.isFavorite(path),
+                    exists = false,
+                )
+            }
+
+    private fun displayName(fileName: String): String =
+        fileName.substringBeforeLast(".").replace("_", " ").replace("-", " ")
 
     private fun scanDirectory(dir: File, roms: MutableList<RomEntry>) {
         val files = dir.listFiles() ?: return
@@ -59,19 +89,16 @@ class RomFolderManager(private val context: Context) {
                     name.endsWith(".agb", ignoreCase = true) ||
                     name.endsWith(".bin", ignoreCase = true)
                 ) {
-                    val sizeStr = formatSize(file.length())
-                    val displayName = name.substringBeforeLast(".")
-                        .replace("_", " ")
-                        .replace("-", " ")
                     roms.add(
                         RomEntry(
-                            name = displayName,
+                            name = displayName(name),
                             fileName = name,
-                            size = sizeStr,
+                            size = formatSize(file.length()),
                             sizeBytes = file.length(),
                             dateModifiedMillis = file.lastModified(),
                             filePath = file.absolutePath,
                             lastPlayedMillis = lastPlayed.get(file.absolutePath),
+                            isFavorite = favorites.isFavorite(file.absolutePath),
                         )
                     )
                 }

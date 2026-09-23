@@ -1,6 +1,7 @@
 package com.geebeeayy.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.clipToBounds
@@ -31,7 +32,15 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import com.geebeeayy.app.data.RomArtwork
+import com.geebeeayy.app.data.Favorites
+import com.geebeeayy.app.data.LastPlayed
+import com.geebeeayy.app.data.RelativeTime
 import com.geebeeayy.app.data.RomEntry
+import com.geebeeayy.app.data.RomFiles
+import com.geebeeayy.app.data.RomPlaceholder
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import com.geebeeayy.app.ui.theme.*
 
 /** A sort order for the ROM list, plus the comparator that applies it. */
@@ -70,8 +79,14 @@ fun RomBrowserScreen(
     onDownloadClick: () -> Unit,
     onRefresh: () -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val favorites = remember { Favorites(context) }
     var query by remember { mutableStateOf("") }
     var infoRom by remember { mutableStateOf<RomEntry?>(null) }
+    var menuRom by remember { mutableStateOf<RomEntry?>(null) }
+    var confirmDeleteSaves by remember { mutableStateOf<RomEntry?>(null) }
+    var confirmDeleteRom by remember { mutableStateOf<RomEntry?>(null) }
+    var favoritesOnly by remember { mutableStateOf(false) }
     // The scan is a coroutine on an IO dispatcher and gives no completion
     // signal back, so the spinner is held for a beat rather than until the
     // list changes: a rescan that finds nothing new changes nothing, and a
@@ -80,12 +95,13 @@ fun RomBrowserScreen(
     var sortOrder by remember { mutableStateOf(RomSortOrder.LAST_PLAYED_DESC) }
     var sortMenuOpen by remember { mutableStateOf(false) }
 
-    val visibleRoms = remember(roms, query, sortOrder) {
-        val filtered = if (query.isBlank()) {
+    val visibleRoms = remember(roms, query, sortOrder, favoritesOnly) {
+        var filtered = if (query.isBlank()) {
             roms
         } else {
             roms.filter { it.name.contains(query, ignoreCase = true) }
         }
+        if (favoritesOnly) filtered = filtered.filter { it.isFavorite }
         sortOrder.sort(filtered)
     }
     Scaffold(
@@ -108,6 +124,16 @@ fun RomBrowserScreen(
                     titleContentColor = PineGlowMist,
                 ),
                 actions = {
+                    // A filter, not a sort: the Favorites section at the top
+                    // of the list already answers "what did I star"; this
+                    // answers "show me only those" on a long list.
+                    IconButton(onClick = { favoritesOnly = !favoritesOnly }) {
+                        Icon(
+                            if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = if (favoritesOnly) "Show all games" else "Show favourites only",
+                            tint = if (favoritesOnly) GoldenSaplight else AmberResin,
+                        )
+                    }
                     Box {
                         IconButton(onClick = { sortMenuOpen = true }) {
                             Icon(
@@ -188,7 +214,11 @@ fun RomBrowserScreen(
 
                 if (visibleRoms.isEmpty()) {
                     Text(
-                        text = "No games match \"$query\"",
+                        text = if (favoritesOnly && query.isBlank()) {
+                            "No favourites yet. Long press a game to star it."
+                        } else {
+                            "No games match \"$query\""
+                        },
                         color = PineGlowMist.copy(alpha = 0.7f),
                         modifier = Modifier.padding(16.dp),
                     )
@@ -221,19 +251,34 @@ fun RomBrowserScreen(
                                 RomCard(
                                     rom = rom,
                                     onClick = { onRomClick(rom) },
-                                    onLongClick = { infoRom = rom },
+                                    onLongClick = { menuRom = rom },
+                                )
+                            }
+                        }
+                        val rest = visibleRoms.filterNot { it.isFavorite }
+                        // The second heading only exists because the first
+                        // one does. Without it the favourites ran straight
+                        // into the rest of the list, and the first unstarred
+                        // game read as though it were starred too.
+                        if (favorites.isNotEmpty() && rest.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "All games",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AmberResin,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
                                 )
                             }
                         }
                         // The rest, not all of them: `favorites` is a subset of
                         // `visibleRoms`, so listing the whole list here drew
-                        // every favourite a second time. Latent only because
-                        // nothing sets `isFavorite` yet.
-                        items(visibleRoms.filterNot { it.isFavorite }) { rom ->
+                        // every favourite a second time.
+                        items(rest) { rom ->
                             RomCard(
                                 rom = rom,
                                 onClick = { onRomClick(rom) },
-                                onLongClick = { infoRom = rom },
+                                onLongClick = { menuRom = rom },
                             )
                         }
                     }
@@ -257,9 +302,168 @@ fun RomBrowserScreen(
         }
     }
 
+    menuRom?.let { rom ->
+        RomActionsSheet(
+            rom = rom,
+            onDismiss = { menuRom = null },
+            onPlay = { menuRom = null; if (rom.exists) onRomClick(rom) },
+            onToggleFavorite = {
+                favorites.toggle(rom.filePath)
+                menuRom = null
+                onRefresh()
+            },
+            onInfo = { menuRom = null; infoRom = rom },
+            onDeleteSaves = { menuRom = null; confirmDeleteSaves = rom },
+            onDeleteRom = { menuRom = null; confirmDeleteRom = rom },
+        )
+    }
+
+    confirmDeleteSaves?.let { rom ->
+        val files = remember(rom.filePath) { RomFiles.saveData(context, rom.filePath) }
+        ConfirmDialog(
+            title = "Delete save data?",
+            // Named, not counted: "3 files" is not something anyone can agree
+            // to, and the battery save is the one that cannot be got back.
+            body = if (files.isEmpty()) {
+                "${rom.name} has no save data on this phone."
+            } else {
+                "This removes the battery save and every save state for " +
+                    "${rom.name}, and cannot be undone:\n\n" +
+                    files.joinToString("\n") { it.name }
+            },
+            confirmLabel = if (files.isEmpty()) "OK" else "Delete",
+            destructive = files.isNotEmpty(),
+            onConfirm = {
+                if (files.isNotEmpty()) RomFiles.deleteSaveData(context, rom.filePath)
+                confirmDeleteSaves = null
+                onRefresh()
+            },
+            onDismiss = { confirmDeleteSaves = null },
+        )
+    }
+
+    confirmDeleteRom?.let { rom ->
+        ConfirmDialog(
+            title = if (rom.exists) "Delete game?" else "Remove from list?",
+            body = if (rom.exists) {
+                "This deletes ${rom.fileName} from this phone, along with its " +
+                    "save data and any cover art. It cannot be undone."
+            } else {
+                "${rom.name} is already gone from storage. This only forgets " +
+                    "the row, so it stops appearing here."
+            },
+            confirmLabel = if (rom.exists) "Delete" else "Remove",
+            destructive = rom.exists,
+            onConfirm = {
+                if (rom.exists) RomFiles.deleteRom(context, rom.filePath)
+                LastPlayed(context).forget(rom.filePath)
+                favorites.forget(rom.filePath)
+                confirmDeleteRom = null
+                onRefresh()
+            },
+            onDismiss = { confirmDeleteRom = null },
+        )
+    }
+
     infoRom?.let { rom ->
         RomInfoDialog(rom = rom, onDismiss = { infoRom = null })
     }
+}
+
+/**
+ * What a long press on a row offers.
+ *
+ * A bottom sheet rather than a dropdown: the list is scrolled with a thumb at
+ * the bottom of a tall phone, and a menu anchored to the row lands under the
+ * finger that opened it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RomActionsSheet(
+    rom: RomEntry,
+    onDismiss: () -> Unit,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onInfo: () -> Unit,
+    onDeleteSaves: () -> Unit,
+    onDeleteRom: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = NightPanel) {
+        Text(
+            text = rom.name,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = GoldenSaplight,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        )
+        if (rom.exists) {
+            SheetItem(Icons.Default.PlayArrow, "Play", onPlay)
+        }
+        SheetItem(
+            if (rom.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            if (rom.isFavorite) "Remove from favourites" else "Add to favourites",
+            onToggleFavorite,
+        )
+        SheetItem(Icons.Default.Info, "Show information", onInfo)
+        SheetItem(Icons.Default.DeleteSweep, "Delete save data", onDeleteSaves)
+        SheetItem(
+            Icons.Default.Delete,
+            if (rom.exists) "Delete game" else "Remove from list",
+            onDeleteRom,
+            tint = Error,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun SheetItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: Color = AmberResin,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint)
+        Spacer(modifier = Modifier.width(20.dp))
+        Text(label, color = PineGlowMist, fontSize = 15.sp)
+    }
+}
+
+/** One prompt shape for both deletions, so they cannot drift apart. */
+@Composable
+private fun ConfirmDialog(
+    title: String,
+    body: String,
+    confirmLabel: String,
+    destructive: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = { Text(body, fontSize = 13.sp) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmLabel, color = if (destructive) Error else GoldenSaplight)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = PineGlowMist) }
+        },
+    )
 }
 
 private fun formatLastPlayed(millis: Long): String =
@@ -272,7 +476,12 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                // A missing file has nothing to open; the long press still
+                // works, which is where "Remove from list" lives.
+                onClick = { if (rom.exists) onClick() },
+                onLongClick = onLongClick,
+            ),
         colors = CardDefaults.cardColors(
             containerColor = NightPanel,
         ),
@@ -295,27 +504,44 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
             LaunchedEffect(rom.filePath) {
                 artwork = withContext(Dispatchers.IO) { RomArtwork.load(rom.filePath) }
             }
+            val art = artwork
             Box(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(AmberResin.copy(alpha = 0.3f)),
+                    .background(
+                        // The game's own colour when there is no cover art.
+                        // Almost nobody has a picture next to their ROMs, so
+                        // the old shared placeholder drew the same grey
+                        // cartridge down the whole list and gave a thumb
+                        // nothing to aim at.
+                        if (art != null || !rom.exists) {
+                            AmberResin.copy(alpha = 0.3f)
+                        } else {
+                            Color.hsv(RomPlaceholder.hue(rom.name).toFloat(), 0.55f, 0.42f)
+                        }
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                val art = artwork
-                if (art != null) {
-                    Image(
+                when {
+                    !rom.exists -> Icon(
+                        Icons.Default.SearchOff,
+                        contentDescription = null,
+                        tint = PineGlowMist.copy(alpha = 0.4f),
+                        modifier = Modifier.size(28.dp),
+                    )
+                    art != null -> Image(
                         bitmap = art.asImageBitmap(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else {
-                    Icon(
-                        Icons.Default.VideogameAsset,
-                        contentDescription = null,
-                        tint = GoldenSaplight,
-                        modifier = Modifier.size(32.dp)
+                    else -> Text(
+                        text = RomPlaceholder.initials(rom.name),
+                        color = BeeWing,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -332,21 +558,28 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${rom.fileName} • ${rom.size}",
+                    text = if (rom.exists) "${rom.fileName} • ${rom.size}" else "File not found",
                     fontSize = 12.sp,
-                    color = AmberResin,
+                    color = if (rom.exists) AmberResin else Error,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (rom.lastPlayedMillis != null) {
                     Text(
-                        text = "Last played: ${formatLastPlayed(rom.lastPlayedMillis)}",
+                        // An age, not a date. "6 days ago" is read at a
+                        // glance; "3 Sep, 21:41" is read by doing arithmetic
+                        // against today. The exact time is still in the info
+                        // dialog, one long press away.
+                        text = "Last played ${RelativeTime.ago(rom.lastPlayedMillis)}",
                         fontSize = 11.sp,
                         color = PineGlowMist.copy(alpha = 0.6f),
                     )
                 }
             }
 
+            // The whole row opens the game, so a play arrow beside the
+            // heart said the same thing twice and took width off the title,
+            // which is the part a thumb is actually aiming at.
             if (rom.isFavorite) {
                 Icon(
                     Icons.Default.Favorite,
@@ -355,13 +588,6 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
                     modifier = Modifier.size(20.dp)
                 )
             }
-
-            Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = "Play",
-                tint = AmberResin,
-                modifier = Modifier.size(24.dp)
-            )
         }
     }
 }
