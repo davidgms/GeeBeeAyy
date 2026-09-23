@@ -3,8 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.geebeeayy.app">
 
-    <!-- Downloading freely distributable homebrew from the built-in catalogue.
-         Nothing else in the app makes a network request. -->
+    <!-- Two things, and only two. Downloading freely distributable homebrew
+         from the built-in catalogue, and - only once the player switches it
+         on - fetching box art for the ROM list. Neither happens on its own,
+         and no game or artwork is ever shipped inside this APK. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Feedback under a finger on the on-screen buttons. A normal

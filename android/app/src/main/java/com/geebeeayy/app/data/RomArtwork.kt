@@ -1,5 +1,6 @@
 package com.geebeeayy.app.data
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.File
@@ -42,14 +43,27 @@ object RomArtwork {
     }
 
     /**
+     * The same search, plus [CoverArt]'s download cache as a last resort.
+     *
+     * The player's own file wins over a downloaded one on purpose: they put it
+     * there, and a fetched cover should never quietly replace it.
+     */
+    fun findFile(context: Context, romPath: String): File? =
+        findFile(romPath) ?: CoverArt.cachedFile(context, romPath).takeIf { it.isFile }
+
+    /**
      * Decode the artwork for [romPath], downsampled to roughly [MAX_EDGE].
      *
      * Returns null when there is no artwork or the file is not a decodable
      * image - a corrupt or misnamed file falls back to the placeholder icon
      * rather than taking the list down.
      */
-    fun load(romPath: String): Bitmap? {
-        val file = findFile(romPath) ?: return null
+    fun load(romPath: String): Bitmap? = load(findFile(romPath))
+
+    fun load(context: Context, romPath: String): Bitmap? = load(findFile(context, romPath))
+
+    private fun load(file: File?): Bitmap? {
+        if (file == null) return null
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.absolutePath, bounds)

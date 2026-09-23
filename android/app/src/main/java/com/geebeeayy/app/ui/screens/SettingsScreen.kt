@@ -31,6 +31,7 @@ import com.geebeeayy.app.data.ControlFontSize
 import com.geebeeayy.app.data.HapticStrength
 import com.geebeeayy.app.data.ControlTint
 import com.geebeeayy.app.data.ControlLayoutStore
+import com.geebeeayy.app.data.CoverArt
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.data.ScreenOrientation
@@ -84,6 +85,8 @@ fun SettingsScreen(
     var showOrientationMenu by remember { mutableStateOf(false) }
     var fullscreen by remember { mutableStateOf(displaySettings.getFullscreenInGame()) }
     var showStatusStrip by remember { mutableStateOf(displaySettings.getShowStatusStrip()) }
+    var coverArt by remember { mutableStateOf(displaySettings.getDownloadCoverArt()) }
+    var coverCacheBytes by remember { mutableLongStateOf(CoverArt.cacheBytes(context)) }
     val layoutStore = remember { ControlLayoutStore(context) }
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
     var defaultLayoutId by remember { mutableStateOf(layoutStore.getDefaultLayoutId()) }
@@ -395,6 +398,37 @@ fun SettingsScreen(
                         displaySettings.setShowStatusStrip(checked)
                     }
                 )
+                SettingsSwitch(
+                    icon = Icons.Default.Image,
+                    title = "Download cover art",
+                    // Says where it goes and who owns what arrives, because
+                    // this is the only thing in the app that reaches the
+                    // network on its own once it is on.
+                    subtitle = "From thumbnails.libretro.com, for games with " +
+                        "no picture beside them. The art belongs to each " +
+                        "game's publisher.",
+                    checked = coverArt,
+                    onCheckedChange = { checked ->
+                        coverArt = checked
+                        displaySettings.setDownloadCoverArt(checked)
+                    }
+                )
+                if (coverArt || coverCacheBytes > 0) {
+                    SettingsItem(
+                        icon = Icons.Default.DeleteSweep,
+                        title = "Clear downloaded covers",
+                        subtitle = if (coverCacheBytes > 0) {
+                            "%.1f MB cached. Also retries games that had none."
+                                .format(coverCacheBytes / 1024.0 / 1024.0)
+                        } else {
+                            "Nothing cached yet"
+                        },
+                        onClick = {
+                            CoverArt.clearCache(context)
+                            coverCacheBytes = CoverArt.cacheBytes(context)
+                        },
+                    )
+                }
             }
 
             SettingsSection(title = "Emulation") {
