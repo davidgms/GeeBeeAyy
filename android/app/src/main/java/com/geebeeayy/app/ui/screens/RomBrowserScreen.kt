@@ -577,21 +577,15 @@ fun RomCard(rom: RomEntry, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
                 }
             }
 
+            // The whole row opens the game, so a play arrow beside the
+            // heart said the same thing twice and took width off the title,
+            // which is the part a thumb is actually aiming at.
             if (rom.isFavorite) {
                 Icon(
                     Icons.Default.Favorite,
                     contentDescription = "Favorite",
                     tint = GoldenSaplight,
                     modifier = Modifier.size(20.dp)
-                )
-            }
-
-            if (rom.exists) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Play",
-                    tint = AmberResin,
-                    modifier = Modifier.size(24.dp)
                 )
             }
         }
