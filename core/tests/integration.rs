@@ -98,3 +98,75 @@ fn a_register_written_during_hblank_takes_effect_on_the_next_line() {
         "line 1 should be blue, got {line1:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Peeking memory for achievements
+// ---------------------------------------------------------------------------
+
+/// The three regions an achievement runtime asks a GBA for, and nothing else.
+#[test]
+fn peek_sees_work_ram_and_nothing_it_should_not() {
+    let mut gba = Gba::new();
+    gba.bus.write8(0x0200_0100, 0xAB); // EWRAM
+    gba.bus.write8(0x0300_0040, 0xCD); // IWRAM
+    gba.bus.write8(0x0500_0000, 0xEF); // palette - deliberately not readable
+
+    let mut out = [0u8; 1];
+    gba.peek_memory(0x0200_0100, &mut out);
+    assert_eq!(out[0], 0xAB, "external work RAM must be readable");
+    gba.peek_memory(0x0300_0040, &mut out);
+    assert_eq!(out[0], 0xCD, "internal work RAM must be readable");
+
+    for address in [
+        0x0000_0000u32,
+        0x0400_0000,
+        0x0500_0000,
+        0x0600_0000,
+        0x0800_0000,
+    ] {
+        gba.peek_memory(address, &mut out);
+        assert_eq!(
+            out[0], 0,
+            "0x{address:08X} must not be visible to an achievement"
+        );
+    }
+}
+
+#[test]
+fn peek_copies_a_run_of_bytes() {
+    let mut gba = Gba::new();
+    for i in 0..8u32 {
+        gba.bus.write8(0x0200_0200 + i, (i as u8) + 1);
+    }
+    let mut out = [0u8; 8];
+    assert_eq!(gba.peek_memory(0x0200_0200, &mut out), 8);
+    assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8]);
+}
+
+/// The reason `peek` exists at all rather than reusing `read8`.
+///
+/// A bus read of the EEPROM window answers "chip ready" so that a game polling
+/// after a write can finish saving - the fix that turned *Yggdra Union*'s
+/// "Save failed!" into a real save. An observer walking memory once a frame
+/// must never be able to send that answer, so the whole window reads 0 here
+/// whatever cart is in.
+#[test]
+fn peek_never_speaks_for_the_eeprom_chip() {
+    let mut gba = Gba::new();
+    let mut out = [0u8; 1];
+    for address in [0x0DFF_FF00u32, 0x0DFF_FFFF, 0x0D00_0000] {
+        gba.peek_memory(address, &mut out);
+        assert_eq!(out[0], 0, "0x{address:08X} must read 0 to an observer");
+    }
+}
+
+/// Running off the end of a region reads 0 rather than wrapping into another.
+#[test]
+fn peek_past_the_end_of_a_region_reads_zero() {
+    let mut gba = Gba::new();
+    gba.bus.write8(0x0300_7FFF, 0x5A); // last byte of internal work RAM
+    let mut out = [0u8; 2];
+    gba.peek_memory(0x0300_7FFF, &mut out);
+    assert_eq!(out[0], 0x5A);
+    assert_eq!(out[1], 0, "past the end of the region must read 0");
+}
