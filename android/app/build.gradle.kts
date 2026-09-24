@@ -23,6 +23,38 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+
+        // rcheevos, the RetroAchievements library, built from the submodule
+        // at src/main/cpp/rcheevos. It is C, which is why it lives here and
+        // not in core/ - that crate has two Rust dependencies and no C, and
+        // deciding what an achievement means is not emulation.
+        externalNativeBuild {
+            cmake {
+                // Matches the C99 the library is written in, and keeps the
+                // Windows-only RAIntegration path out.
+                arguments += "-DANDROID_STL=none"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // The submodule is not checked out in a plain `git clone`, and a build
+    // that fails a thousand lines into CMake is a bad way to find that out.
+    tasks.register("checkRcheevosSubmodule") {
+        doFirst {
+            val marker = file("src/main/cpp/rcheevos/include/rc_hash.h")
+            if (!marker.exists()) {
+                throw GradleException(
+                    "rcheevos is missing. Run: git submodule update --init --recursive"
+                )
+            }
+        }
     }
 
     buildTypes {

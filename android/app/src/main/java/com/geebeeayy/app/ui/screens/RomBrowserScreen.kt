@@ -8,6 +8,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import java.io.File
 import com.geebeeayy.app.data.RomHeader
+import com.geebeeayy.app.engine.RaEngine
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -660,8 +661,15 @@ fun EmptyState(modifier: Modifier = Modifier) {
 @Composable
 fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
     var header by remember(rom.filePath) { mutableStateOf<RomHeader?>(null) }
+    // The identity RetroAchievements keys on, for a cart that has one. Read
+    // here rather than at scan time: it hashes the whole ROM, which is up to
+    // 32 MB, and nothing needs it until somebody asks for this dialog.
+    var raHash by remember(rom.filePath) { mutableStateOf<String?>(null) }
     LaunchedEffect(rom.filePath) {
         header = withContext(Dispatchers.IO) { RomHeader.read(File(rom.filePath)) }
+        raHash = withContext(Dispatchers.IO) {
+            runCatching { RaEngine.hashRom(File(rom.filePath).readBytes()) }.getOrNull()
+        }
     }
 
     AlertDialog(
@@ -682,6 +690,9 @@ fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
                     "Last played",
                     rom.lastPlayedMillis?.let { formatLastPlayed(it) } ?: "Never",
                 )
+                if (rom.exists) {
+                    InfoRow("Achievements hash", raHash ?: "Reading...")
+                }
             }
         },
         confirmButton = {

@@ -1,0 +1,4 @@
+[submodule "android/app/src/main/cpp/rcheevos"]
+	path = android/app/src/main/cpp/rcheevos
+	url = https://github.com/RetroAchievements/rcheevos.git
+	branch = develop
