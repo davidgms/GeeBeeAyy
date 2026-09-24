@@ -135,6 +135,26 @@ class GbaEngine {
     }
 
     /**
+     * Copy emulated memory into [out], without disturbing the machine.
+     *
+     * For achievement evaluation, which walks a handful of addresses once a
+     * frame. Only three regions are visible - external work RAM at
+     * `0x02000000`, internal work RAM at `0x03000000` and save memory at
+     * `0x0E000000`. Everything else reads 0, deliberately: an achievement has
+     * no business in VRAM or the I/O registers.
+     *
+     * This is a peek, not a bus read. It cannot change what the game sees,
+     * which is why it exists rather than reusing the CPU's own read - see
+     * `docs/achievements.md`.
+     *
+     * @return the number of bytes written.
+     */
+    fun peekMemory(address: Int, out: ByteArray): Int {
+        ensureHandle()
+        return nativePeekMemory(handle, address, out, out.size)
+    }
+
+    /**
      * Has the cartridge's battery save changed since the last call?
      *
      * Clears the dirty flag as a side effect. Callers must call this
@@ -243,6 +263,7 @@ class GbaEngine {
     private external fun nativeRunFrames(handle: Long, count: Int)
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int
+    private external fun nativePeekMemory(handle: Long, address: Int, out: ByteArray, len: Int): Int
     private external fun nativeSetKeys(handle: Long, keys: Int)
     private external fun nativeSetInterframeBlend(handle: Long, on: Int)
     private external fun nativeSaveTakeDirty(handle: Long): Int

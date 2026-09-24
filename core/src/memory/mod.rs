@@ -121,6 +121,31 @@ impl MemoryBus {
         }
     }
 
+    /// Read a byte for an observer, never for the emulated CPU.
+    ///
+    /// Achievement evaluation walks memory once a frame, and it must not be
+    /// able to change what the game sees. [`read8`](Self::read8) cannot be
+    /// used for that: its first act is to answer the EEPROM window with a
+    /// "chip ready" 1, which is right for a game polling after a write and
+    /// wrong for anything that is only looking.
+    ///
+    /// Only the three regions an achievement runtime asks a GBA for are
+    /// visible - work RAM, internal work RAM and save memory. Everything else
+    /// reads 0, because an achievement has no business in VRAM, the I/O
+    /// registers or the cartridge ROM, and a peek that could reach them is a
+    /// bigger hole than the feature is worth.
+    pub fn peek(&self, address: u32) -> u8 {
+        match address {
+            0x0200_0000..=0x0203_FFFF => self.ewram[(address & 0x3_FFFF) as usize],
+            0x0300_0000..=0x0300_7FFF => self.iwram[(address & 0x7FFF) as usize],
+            // `save_read` takes `&self` and changes nothing, which is what
+            // makes it safe here. Flash in ID mode answers with its identity
+            // rather than data, exactly as the CPU would see it.
+            0x0E00_0000..=0x0E00_FFFF => self.cart.save_read(address),
+            _ => 0,
+        }
+    }
+
     pub fn read8(&self, address: u32) -> u8 {
         // A serial EEPROM cannot be read by the CPU - GBATEK requires DMA to
         // clock data out - but the standard save library still polls this
