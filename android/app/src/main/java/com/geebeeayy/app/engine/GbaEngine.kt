@@ -48,6 +48,12 @@ class GbaEngine {
 
     val isLoaded: Boolean get() = handle != 0L
 
+    /**
+     * The native handle, for another native library that has to read this
+     * emulator's memory. Only [RaEngine] uses it, and only to peek.
+     */
+    val nativeHandle: Long get() = handle
+
     /** Create a new emulator instance. */
     fun create() {
         handle = nativeCreate()

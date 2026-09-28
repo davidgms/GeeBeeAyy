@@ -12,6 +12,7 @@ import com.geebeeayy.app.data.RomHeader
 import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
+import com.geebeeayy.app.engine.RaEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
@@ -452,6 +453,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private fun resolveSavePaths(romFile: File, romData: ByteArray) {
         romStateKey = computeRomStateKey(romData)
+        // Ask RetroAchievements what this cart is. The hash is the identity
+        // the server keys on - an MD5 of the whole file, so a renamed ROM
+        // still matches and a trimmed one does not. Answers arrive on the
+        // flows in RaEngine; a game with no achievement set simply has none,
+        // which is about two thirds of the GBA library.
+        if (RaEngine.start(getApplication())) {
+            RaEngine.attachEmulator(engine.nativeHandle)
+            RaEngine.hashRom(romData)?.let { RaEngine.loadGame(it) }
+        }
         val primaryDir = romFile.parentFile
         val baseName = romFile.nameWithoutExtension
         saveFilePath = if (primaryDir != null) File(primaryDir, "$baseName.sav").absolutePath else null
@@ -594,6 +604,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             } else {
                                 engine.runFrame()
                             }
+                            // Achievements are evaluated here, on the
+                            // emulation thread, right after the frame that
+                            // produced the memory they read. Cheap when no
+                            // game is loaded: rcheevos returns immediately.
+                            RaEngine.doFrame()
                             _frameBuffer.value = engine.getFrameBuffer().copyOf()
 
                             // Snapshot on a cadence, not every frame: a state
@@ -734,6 +749,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         emulationJob?.cancel()
         emulationJob = null
         audio.stop()
+        // The achievement session belongs to the game that just ended. Left
+        // loaded, the next ROM would be evaluated against the old set.
+        RaEngine.unloadGame()
         _isRunning.value = false
         viewModelScope.launch(Dispatchers.IO) { flushSaveNow() }
     }
