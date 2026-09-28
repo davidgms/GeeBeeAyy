@@ -436,6 +436,10 @@ fun SettingsScreen(
             }
 
             SettingsSection(title = "RetroAchievements") {
+                // Started here as well as when a game opens: signing in
+                // happens with no ROM loaded, and without this the client did
+                // not exist yet and the first attempt went nowhere at all.
+                LaunchedEffect(Unit) { RaEngine.start(context) }
                 val raUser by RaEngine.user.collectAsState()
                 if (!RaEngine.isAvailable()) {
                     SettingsInfo(

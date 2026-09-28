@@ -73,6 +73,12 @@ static uint32_t RC_CCONV ra_read_memory(uint32_t address, uint8_t* buffer,
   uint32_t i;
   (void)client;
 
+  /* Resolved on first use, not at init: the core's library is loaded when a
+   * game is opened, and the client exists before that - signing in does not
+   * need an emulator. */
+  if (g_peek == NULL) {
+    g_peek = (peek_fn)dlsym(RTLD_DEFAULT, "geebeeayy_peek_memory");
+  }
   if (g_peek == NULL || g_gba == NULL) {
     return 0;
   }
@@ -305,9 +311,6 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
     return JNI_FALSE;
   }
 
-  /* RTLD_DEFAULT: the core was loaded by GbaEngine before anything here runs. */
-  g_peek = (peek_fn)dlsym(RTLD_DEFAULT, "geebeeayy_peek_memory");
-
   memset(g_pending, 0, sizeof(g_pending));
   g_client = rc_client_create(ra_read_memory, ra_server_call);
   if (g_client == NULL) {
@@ -319,7 +322,10 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
    * all of which this app has. See docs/achievements.md. */
   rc_client_set_hardcore_enabled(g_client, 0);
   (void)clazz;
-  return (g_peek != NULL) ? JNI_TRUE : JNI_FALSE;
+  /* True once the client exists. It does **not** wait for an emulator: a
+   * player signs in from Settings with no game open, and tying this to the
+   * core being loaded is what silently swallowed the first sign-in attempt. */
+  return JNI_TRUE;
 }
 
 JNIEXPORT void JNICALL
