@@ -89,6 +89,9 @@ android {
     }
 
     buildFeatures {
+        // For the version string in the RetroAchievements User-Agent, which
+        // the server uses to recognise the client.
+        buildConfig = true
         compose = true
     }
 

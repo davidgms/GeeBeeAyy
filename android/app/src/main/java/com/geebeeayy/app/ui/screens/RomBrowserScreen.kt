@@ -691,7 +691,7 @@ fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
                     rom.lastPlayedMillis?.let { formatLastPlayed(it) } ?: "Never",
                 )
                 if (rom.exists) {
-                    InfoRow("Achievements hash", raHash ?: "Reading...")
+                    InfoRow("RetroAchievements ID", raHash ?: "Reading...")
                 }
             }
         },
