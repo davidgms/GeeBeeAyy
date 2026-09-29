@@ -212,6 +212,17 @@ static void RC_CCONV ra_event_handler(const rc_client_event_t* event, rc_client_
     title = (*env)->NewStringUTF(env, event->achievement->title ? event->achievement->title : "");
     description = (*env)->NewStringUTF(
         env, event->achievement->description ? event->achievement->description : "");
+  } else if (event->leaderboard_tracker != NULL) {
+    /* The live readout of an attempt in progress - a lap timer, a running
+     * score. `display` is already formatted for showing, which is the whole
+     * reason the tracker exists as its own event rather than a raw value. */
+    id = (jint)event->leaderboard_tracker->id;
+    title = (*env)->NewStringUTF(env, event->leaderboard_tracker->display);
+  } else if (event->leaderboard != NULL) {
+    id = (jint)event->leaderboard->id;
+    title = (*env)->NewStringUTF(env, event->leaderboard->title ? event->leaderboard->title : "");
+    description = (*env)->NewStringUTF(
+        env, event->leaderboard->description ? event->leaderboard->description : "");
   }
   (*env)->CallStaticVoidMethod(env, g_engine, g_on_event, (jint)event->type, id, title,
                                description, points);
@@ -452,6 +463,53 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
   if (g_client != NULL) {
     rc_client_idle(g_client);
   }
+}
+
+/* One string per leaderboard: id, title, description, state, current value. */
+JNIEXPORT jobjectArray JNICALL
+Java_com_geebeeayy_app_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass clazz) {
+  rc_client_leaderboard_list_t* list;
+  jobjectArray out;
+  jclass string_class;
+  uint32_t total = 0;
+  uint32_t b;
+  uint32_t i;
+  jsize index = 0;
+  (void)clazz;
+
+  if (g_client == NULL) {
+    return NULL;
+  }
+  list = rc_client_create_leaderboard_list(g_client,
+                                           RC_CLIENT_LEADERBOARD_LIST_GROUPING_NONE);
+  if (list == NULL) {
+    return NULL;
+  }
+  for (b = 0; b < list->num_buckets; b++) {
+    total += list->buckets[b].num_leaderboards;
+  }
+
+  string_class = (*env)->FindClass(env, "java/lang/String");
+  out = (*env)->NewObjectArray(env, (jsize)total, string_class, NULL);
+  if (out == NULL) {
+    rc_client_destroy_leaderboard_list(list);
+    return NULL;
+  }
+  for (b = 0; b < list->num_buckets; b++) {
+    for (i = 0; i < list->buckets[b].num_leaderboards; i++) {
+      const rc_client_leaderboard_t* l = list->buckets[b].leaderboards[i];
+      char line[768];
+      jstring value;
+      snprintf(line, sizeof(line), "%u\t%s\t%s\t%u\t%s", l->id,
+               l->title ? l->title : "", l->description ? l->description : "",
+               (unsigned)l->state, l->tracker_value ? l->tracker_value : "");
+      value = (*env)->NewStringUTF(env, line);
+      (*env)->SetObjectArrayElement(env, out, index++, value);
+      (*env)->DeleteLocalRef(env, value);
+    }
+  }
+  rc_client_destroy_leaderboard_list(list);
+  return out;
 }
 
 /* ------------------------------------------------- save states
