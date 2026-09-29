@@ -1051,3 +1051,50 @@ what mGBA and NanoBoyAdvance actually *do* before trusting the sentence - and
 when the two disagree, say so in the comment instead of picking one quietly.
 Nothing open-source tests this case, so a purpose-built ROM on real hardware
 is the only way to close it completely.
+
+### 2026-09-29 - Achievements: what the integration actually needs, and the two traps
+
+**Context**: adding RetroAchievements (softcore) end to end, PRs #30-#32.
+
+**Finding**:
+
+1. **`rcheevos` belongs on the Android side, never in `core/`.** It is C, and
+   `core/` is a Rust crate whose whole rule is `log` and `thiserror`. Deciding
+   what an achievement means is not emulation. The core gained exactly one
+   thing: `geebeeayy_peek_memory`.
+
+2. **The peek must not reuse `read8`.** `read8`'s first act is to answer the
+   EEPROM window with "chip ready", which is right for a game polling after a
+   write and catastrophic for an observer walking memory once a frame. `peek`
+   reads 0 across that window whatever cart is in, and is `&self` throughout.
+
+3. **rcheevos addresses memory as a flat block, and the translation fails
+   silently.** GBA is three regions:
+   `flat 0x000000-0x007FFF -> 0x03000000` (IWRAM),
+   `flat 0x008000-0x047FFF -> 0x02000000` (EWRAM),
+   `flat 0x048000-0x057FFF -> 0x0E000000` (save memory).
+   Get it wrong and nothing errors - every achievement reads the wrong bytes
+   and never fires.
+
+4. **A GBA ROM is identified by an MD5 of the whole file.** So a renamed ROM
+   matches and a **trimmed or patched one does not**. This is the opposite
+   trade-off from cover art, where the cart's own game code survives both.
+
+5. **An achievement is a transition, not a flag.** Nothing can scan a save and
+   award what was already done, by design. The corollary is that the
+   achievement runtime's own state must travel **with** save states -
+   `rc_client_serialize_progress` - or loading a state puts the game in one
+   moment and the achievement logic in another.
+
+6. **Hardcore is not a code decision.** It needs approval plus six months of
+   public availability, and forbids save states, rewind and frame advance.
+   The server says so itself in the achievement list: "Warning: Unknown
+   Emulator".
+
+**Application**: `docs/achievements.md` carries the full reasoning, the counts
+and the sources. Two bugs here were only findable by using the app, not by
+building it: the client was gated on the emulator's library being loaded (but
+nobody signs in with a game open), and `stopEmulation` unloaded the session
+while the ROM reload guard meant it never came back. Anything that looks like
+"session lifecycle" in this app should be checked against that guard.
+
