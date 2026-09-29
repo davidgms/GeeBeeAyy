@@ -129,6 +129,20 @@ object RaEngine {
         if (available && started) runCatching { nativeIdle() }
     }
 
+    /**
+     * The achievement runtime's own state, to store beside a save state.
+     *
+     * An achievement is a **transition** - a condition that was false becoming
+     * true while the runtime watches. That memory lives in rcheevos, not in
+     * the emulator, so a save state that does not carry it restores the game
+     * to one moment and leaves the achievement logic in another.
+     */
+    fun serializeProgress(): ByteArray? =
+        if (available && started) runCatching { nativeSerializeProgress() }.getOrNull() else null
+
+    fun restoreProgress(data: ByteArray): Boolean =
+        available && started && runCatching { nativeDeserializeProgress(data) }.getOrDefault(false)
+
     fun hashRom(romData: ByteArray): String? =
         if (available) runCatching { nativeHashRom(romData) }.getOrNull() else null
 
@@ -277,6 +291,8 @@ object RaEngine {
     @JvmStatic private external fun nativeDoFrame()
     @JvmStatic private external fun nativeIdle()
     @JvmStatic private external fun nativeServerResponse(slot: Int, status: Int, body: ByteArray)
+    @JvmStatic private external fun nativeSerializeProgress(): ByteArray?
+    @JvmStatic private external fun nativeDeserializeProgress(data: ByteArray): Boolean
     @JvmStatic private external fun nativeAchievements(): Array<String>?
     @JvmStatic private external fun nativeHashRom(data: ByteArray): String?
     @JvmStatic private external fun nativeVersion(): String?

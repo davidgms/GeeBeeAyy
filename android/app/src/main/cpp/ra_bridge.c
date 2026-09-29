@@ -454,6 +454,62 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
   }
 }
 
+/* ------------------------------------------------- save states
+ *
+ * An achievement is a **transition**: a condition that was false becoming
+ * true while the runtime is watching. That state lives inside rcheevos, not
+ * in the emulator, so a save state that does not carry it restores the game
+ * to one moment and leaves the achievement runtime in another. What follows
+ * is rcheevos' own answer to that, stored beside our state file.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_geebeeayy_app_engine_RaEngine_nativeSerializeProgress(JNIEnv* env, jclass clazz) {
+  int size;
+  jbyteArray out;
+  jbyte* bytes;
+  (void)clazz;
+
+  if (g_client == NULL) {
+    return NULL;
+  }
+  size = rc_client_progress_size(g_client);
+  if (size <= 0) {
+    return NULL;
+  }
+  out = (*env)->NewByteArray(env, (jsize)size);
+  if (out == NULL) {
+    return NULL;
+  }
+  bytes = (*env)->GetByteArrayElements(env, out, NULL);
+  if (rc_client_serialize_progress_sized(g_client, (uint8_t*)bytes, (size_t)size) != RC_OK) {
+    (*env)->ReleaseByteArrayElements(env, out, bytes, JNI_ABORT);
+    return NULL;
+  }
+  (*env)->ReleaseByteArrayElements(env, out, bytes, 0);
+  return out;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_geebeeayy_app_engine_RaEngine_nativeDeserializeProgress(JNIEnv* env, jclass clazz,
+                                                                 jbyteArray data) {
+  jbyte* bytes;
+  jsize size;
+  int result;
+  (void)clazz;
+
+  if (g_client == NULL || data == NULL) {
+    return JNI_FALSE;
+  }
+  size = (*env)->GetArrayLength(env, data);
+  bytes = (*env)->GetByteArrayElements(env, data, NULL);
+  if (bytes == NULL) {
+    return JNI_FALSE;
+  }
+  result = rc_client_deserialize_progress_sized(g_client, (const uint8_t*)bytes, (size_t)size);
+  (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
+  return result == RC_OK ? JNI_TRUE : JNI_FALSE;
+}
+
 /* ----------------------------------------------------------- the list
  *
  * One string per achievement, tab separated: id, title, description, points,

@@ -798,6 +798,16 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun stateFile(slot: Int): File = File(statesDir, "${romStateKey}_slot$slot.state")
 
+    /**
+     * The achievement runtime's state for a slot, beside the state file.
+     *
+     * Separate rather than appended so a state written before achievements
+     * existed still loads, and so a state stays readable by anything that only
+     * knows the core's format.
+     */
+    private fun achievementSidecar(slot: Int): File =
+        File(statesDir, "${romStateKey}_slot$slot.ra")
+
 
     /**
      * What each save-state slot holds, for the slot list.
@@ -883,6 +893,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** Runs on the engine thread (loop or the one-shot fallback above). */
     private fun performSaveState(slot: Int) {
+        // Written beside the state, not inside it: the state file's format is
+        // the core's, and the achievement runtime is not the core's business.
+        // A slot saved before achievements existed simply has no sidecar.
+        RaEngine.serializeProgress()?.let { progress ->
+            runCatching { achievementSidecar(slot).writeBytes(progress) }
+        }
         val bytes = engine.readState()
         if (bytes.isEmpty()) {
             _stateMessage.value = "Failed to capture save state"
@@ -916,6 +932,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 Log.e(TAG, "Failed reading save state slot $slot", e)
                 _stateMessage.value = "Could not read ${slotName(slot)}"
                 return@launch
+            }
+            // Before the state lands, so the runtime is already at the right
+            // moment when the next frame is evaluated against it.
+            runCatching {
+                val sidecar = achievementSidecar(slot)
+                if (sidecar.isFile) RaEngine.restoreProgress(sidecar.readBytes())
             }
             if (_isRunning.value) {
                 pendingStateCommand = StateCommand.LoadBytes(bytes)
