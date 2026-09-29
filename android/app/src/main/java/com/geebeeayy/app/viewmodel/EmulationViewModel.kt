@@ -444,6 +444,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     _isLoading.value = false
                     startEmulation()
+                    // After the loop is running, not before: loadState routes
+                    // through the same command mailbox the loop drains, and a
+                    // load queued against a stopped loop would sit there until
+                    // the player pressed something.
+                    if (DisplaySettings(getApplication()).getAutoLoadQuickSave() &&
+                        stateFile(0).exists()
+                    ) {
+                        loadState(0)
+                    }
                 } else {
                     _errorMessage.value = "Bad ROM header"
                     _isLoading.value = false
