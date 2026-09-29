@@ -85,10 +85,11 @@ class RomFolderManager(private val context: Context) {
                 scanDirectory(file, roms)
             } else if (file.isFile) {
                 val name = file.name
-                if (name.endsWith(".gba", ignoreCase = true) ||
-                    name.endsWith(".agb", ignoreCase = true) ||
-                    name.endsWith(".bin", ignoreCase = true)
-                ) {
+                // Zips too: a downloaded ROM arrives in one, and the cart is
+                // pulled out when the game is opened rather than on the scan,
+                // which would read every archive in the folder to list it.
+                val extensions = RomBytes.ROM_EXTENSIONS + RomBytes.ZIP_EXTENSION
+                if (extensions.any { name.endsWith(".$it", ignoreCase = true) }) {
                     roms.add(
                         RomEntry(
                             name = displayName(name),
