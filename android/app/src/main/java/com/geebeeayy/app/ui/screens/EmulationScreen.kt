@@ -653,7 +653,6 @@ fun EmulationScreen(
                 achievements = raGame?.let { loaded ->
                     "$raEarned/${loaded.achievementCount}"
                 },
-                onAchievementsClick = { showAchievements = true },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -2578,7 +2577,6 @@ private data class LayoutSnapshot(
 private fun StatusStrip(
     modifier: Modifier = Modifier,
     achievements: String? = null,
-    onAchievementsClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var battery by remember { mutableIntStateOf(-1) }
@@ -2610,10 +2608,10 @@ private fun StatusStrip(
             fontSize = 11.sp,
         )
         if (achievements != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable(onClick = onAchievementsClick),
-            ) {
+            // A readout, not a button. The way in is the in-game menu, where
+            // every other action already lives; a second tap target down here
+            // sits a few pixels from Start and Select.
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.EmojiEvents,
                     contentDescription = "Achievements",
