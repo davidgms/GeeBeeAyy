@@ -10,6 +10,7 @@ import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.RomHeader
 import com.geebeeayy.app.data.StateSlot
+import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.engine.RaEngine
@@ -406,7 +407,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     _isLoading.value = false
                     return@launch
                 }
-                val data = file.readBytes()
+                val data = RomBytes.read(filePath)
+                if (data == null) {
+                    _errorMessage.value = "No .gba, .agb or .bin inside that zip"
+                    _isLoading.value = false
+                    return@launch
+                }
                 if (data.size < 0xC0) {
                     _errorMessage.value = "File too small (${data.size} bytes)"
                     _isLoading.value = false
