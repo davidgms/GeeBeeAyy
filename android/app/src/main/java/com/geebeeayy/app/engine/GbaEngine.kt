@@ -135,6 +135,18 @@ class GbaEngine {
      *
      * @return the number of samples written.
      */
+    /**
+     * Restart the loaded game, as the console's own reset would.
+     *
+     * The cart stays in the slot and **keeps its battery save**: a real GBA
+     * does not wipe SRAM on reset, and a player resetting past a crash must
+     * not lose their game doing it.
+     */
+    fun reset() {
+        ensureHandle()
+        nativeReset(handle)
+    }
+
     fun readAudio(out: FloatArray): Int {
         ensureHandle()
         return nativeAudioCopy(handle, out, out.size)
@@ -266,6 +278,7 @@ class GbaEngine {
     // parameter the native side never sees is a trap for the next reader.
     private external fun nativeLoadRom(handle: Long, data: ByteArray): Int
     private external fun nativeRunFrame(handle: Long)
+    private external fun nativeReset(handle: Long)
     private external fun nativeRunFrames(handle: Long, count: Int)
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int

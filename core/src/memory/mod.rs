@@ -52,6 +52,30 @@ impl MemoryBus {
         bus
     }
 
+    /// Put the machine back to power-on, keeping the cartridge in the slot.
+    ///
+    /// Everything volatile is cleared: both work RAMs, VRAM, palette, OAM and
+    /// the I/O registers. **The cartridge's save memory is not**, because a
+    /// real GBA keeps it across a reset - that is the whole point of a battery
+    /// save, and wiping it here would lose a player's game.
+    ///
+    /// The ROM stays too: a reset is not an eject.
+    pub fn reset(&mut self) {
+        self.ewram.fill(0);
+        self.iwram.fill(0);
+        self.io_regs.fill(0);
+        self.palette.fill(0);
+        self.vram.fill(0);
+        self.oam.fill(0);
+        self.waitcnt = 0;
+        self.sound_writes.clear();
+        self.dma_writes.clear();
+        self.timer_writes.clear();
+        self.io = super::io::IoHandler::new();
+        self.init_bios();
+        self.set_keys(0);
+    }
+
     /// Update KEYINPUT from a frontend key bitmask.
     ///
     /// `keys` uses the GBATEK bit order (0=A, 1=B, 2=Select, 3=Start, 4=Right,
