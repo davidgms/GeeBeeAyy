@@ -105,6 +105,7 @@ fun EmulationScreen(
     stateSlots: () -> List<StateSlot> = { emptyList() },
     onScreenshot: () -> Unit = {},
     onSettings: () -> Unit = {},
+    onReset: () -> Unit = {},
     fullscreen: Boolean = true,
     showStatusStrip: Boolean = true,
     soundEnabled: Boolean = true,
@@ -317,6 +318,7 @@ fun EmulationScreen(
     }
     var showSlots by remember { mutableStateOf(false) }
     var showAchievements by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf(false) }
     // What RetroAchievements said about this cart, and anything earned since.
     // Null while it is still asking, and null for the two thirds of the GBA
     // library that have no set at all.
@@ -494,6 +496,13 @@ fun EmulationScreen(
                                 layoutsModalOpen = true
                             },
                             leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Reset game") },
+                            onClick = { showMenu = false; confirmReset = true },
+                            leadingIcon = {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null)
+                            },
                         )
                         DropdownMenuItem(
                             text = { Text("Achievements") },
@@ -865,6 +874,37 @@ fun EmulationScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = 56.dp),
         )
+
+        if (confirmReset) {
+            AlertDialog(
+                onDismissRequest = { confirmReset = false },
+                containerColor = NightPanel,
+                titleContentColor = GoldenSaplight,
+                textContentColor = PineGlowMist,
+                title = { Text("Reset game?", fontWeight = FontWeight.Bold) },
+                // Says what survives as well as what is lost: the battery save
+                // is the thing a player is afraid of losing, and it is the
+                // thing a reset keeps.
+                text = {
+                    Text(
+                        "The game restarts from the title screen. Anything " +
+                            "since your last in-game save is lost; the save " +
+                            "itself is kept, and so are your save states.",
+                        fontSize = 13.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { confirmReset = false; onReset() }) {
+                        Text("Reset", color = Error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmReset = false }) {
+                        Text("Cancel", color = PineGlowMist)
+                    }
+                },
+            )
+        }
 
         if (showAchievements) {
             AchievementsDialog(

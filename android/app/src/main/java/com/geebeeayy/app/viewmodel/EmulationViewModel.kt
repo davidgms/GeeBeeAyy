@@ -444,6 +444,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     _isLoading.value = false
                     startEmulation()
+                    // After the loop is running, not before: loadState routes
+                    // through the same command mailbox the loop drains, and a
+                    // load queued against a stopped loop would sit there until
+                    // the player pressed something.
+                    if (DisplaySettings(getApplication()).getAutoLoadQuickSave() &&
+                        stateFile(0).exists()
+                    ) {
+                        loadState(0)
+                    }
                 } else {
                     _errorMessage.value = "Bad ROM header"
                     _isLoading.value = false
@@ -882,6 +891,22 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * pointer and only one thread may touch it at a time; called directly
      * when nothing else is running.
      */
+    /**
+     * Restart the game from power-on.
+     *
+     * Goes through the same lock as a save-state load, for the same reason: a
+     * running loop is inside the engine, and resetting under it is two threads
+     * in one machine. The battery save survives, so this is a restart and not
+     * a wipe.
+     */
+    fun reset() {
+        if (!romLoaded) return
+        viewModelScope.launch(Dispatchers.Default) {
+            engineLock.withLock { engine.reset() }
+            _stateMessage.value = "Game reset"
+        }
+    }
+
     fun saveState(slot: Int) {
         if (!romLoaded || slot !in 0 until SLOT_COUNT) return
         if (_isRunning.value) {

@@ -165,6 +165,23 @@ pub unsafe extern "C" fn geebeeayy_frame_buffer_copy(ptr: *mut c_void, out: *mut
     }
 }
 
+/// Restart the loaded game, as the console's own reset would.
+///
+/// The cart stays in the slot and keeps its battery save: a real GBA does not
+/// wipe SRAM on reset, and a player resetting past a crash must not lose their
+/// game doing it.
+///
+/// # Safety
+/// `ptr` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_reset(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    handle.inner.reset();
+}
+
 /// Copy emulated memory into `out`, without disturbing the machine.
 ///
 /// Returns the number of bytes written, which is `len` unless an argument was
@@ -596,6 +613,18 @@ pub mod android {
         }
         let signed: Vec<i8> = buf.iter().map(|&b| b as i8).collect();
         let _ = env.set_byte_array_region(&out, 0, &signed);
+    }
+
+    /// Restart the loaded game. See [`geebeeayy_reset`].
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeReset(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+    ) {
+        if handle != 0 {
+            unsafe { geebeeayy_reset(handle as *mut c_void) };
+        }
     }
 
     /// Copy emulated memory into a Java byte array. See

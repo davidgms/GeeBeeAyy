@@ -270,6 +270,7 @@ fun GeeBeeAyyNavHost() {
                 showStatusStrip = showStatusStrip,
                 soundEnabled = soundEnabled,
                 onToggleSound = { viewModel.toggleSound() },
+                onReset = { viewModel.reset() },
                 onSettings = {
                     // Pausing first is what makes coming back work: the loop
                     // would otherwise keep running behind Settings, and

@@ -89,6 +89,7 @@ fun SettingsScreen(
     var fullscreen by remember { mutableStateOf(displaySettings.getFullscreenInGame()) }
     var showStatusStrip by remember { mutableStateOf(displaySettings.getShowStatusStrip()) }
     var coverArt by remember { mutableStateOf(displaySettings.getDownloadCoverArt()) }
+    var autoLoad by remember { mutableStateOf(displaySettings.getAutoLoadQuickSave()) }
     var showRaLogin by remember { mutableStateOf(false) }
     var coverCacheBytes by remember { mutableLongStateOf(CoverArt.cacheBytes(context)) }
     val layoutStore = remember { ControlLayoutStore(context) }
@@ -400,6 +401,17 @@ fun SettingsScreen(
                     onCheckedChange = { checked ->
                         showStatusStrip = checked
                         displaySettings.setShowStatusStrip(checked)
+                    }
+                )
+                SettingsSwitch(
+                    icon = Icons.Default.RestartAlt,
+                    title = "Resume from quick save",
+                    subtitle = "Opening a game jumps back into slot 0 instead " +
+                        "of the title screen",
+                    checked = autoLoad,
+                    onCheckedChange = { checked ->
+                        autoLoad = checked
+                        displaySettings.setAutoLoadQuickSave(checked)
                     }
                 )
                 SettingsSwitch(

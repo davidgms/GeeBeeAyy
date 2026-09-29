@@ -55,6 +55,24 @@ impl Gba {
         Ok(())
     }
 
+    /// Restart the loaded game, as the console's own reset would.
+    ///
+    /// The cart stays in the slot **and keeps its battery save** - a real GBA
+    /// does not wipe SRAM on reset, and a player who resets to get past a
+    /// crash must not lose their game doing it. Everything volatile goes back
+    /// to power-on.
+    pub fn reset(&mut self) {
+        self.bus.reset();
+        self.cpu = Cpu::new();
+        self.cpu.boot();
+        self.ppu = Ppu::new();
+        self.apu = Apu::new();
+        self.timer = Timer::new();
+        self.dma = Dma::new();
+        self.cycles = 0;
+        self.run_frame_counter = 0;
+    }
+
     /// Advance the whole machine by one CPU instruction.
     ///
     /// Ticks the timers, PPU, APU and DMA with the cycles that instruction

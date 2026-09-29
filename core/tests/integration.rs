@@ -170,3 +170,69 @@ fn peek_past_the_end_of_a_region_reads_zero() {
     assert_eq!(out[0], 0x5A);
     assert_eq!(out[1], 0, "past the end of the region must read 0");
 }
+
+// ---------------------------------------------------------------------------
+// Reset
+// ---------------------------------------------------------------------------
+
+/// A reset is not an eject. The cart stays, and so does its battery save -
+/// a real GBA keeps SRAM across a reset, and a player resetting past a crash
+/// must not lose their game doing it.
+#[test]
+fn reset_clears_work_ram_but_keeps_the_save() {
+    let mut gba = Gba::new();
+    // A cart the save-type detector recognises. Without one the save is
+    // `SaveType::None` and every write goes nowhere, which would make this
+    // test pass for the wrong reason.
+    let mut rom = vec![0u8; 0x400];
+    rom[0x100..0x100 + 9].copy_from_slice(b"SRAM_V100");
+    gba.load_rom(&rom).expect("ROM should load");
+
+    gba.bus.write8(0x0200_0100, 0xAB); // external work RAM
+    gba.bus.write8(0x0300_0040, 0xCD); // internal work RAM
+    gba.bus.write8(0x0500_0000, 0xEF); // palette
+    gba.bus.cart.save_write(0x0E00_0000, 0x42);
+
+    gba.reset();
+
+    assert_eq!(gba.bus.read8(0x0200_0100), 0, "work RAM must be cleared");
+    assert_eq!(
+        gba.bus.read8(0x0300_0040),
+        0,
+        "internal work RAM must be cleared"
+    );
+    assert_eq!(gba.bus.read8(0x0500_0000), 0, "palette must be cleared");
+    assert_eq!(
+        gba.bus.cart.save_read(0x0E00_0000),
+        0x42,
+        "the battery save must survive a reset"
+    );
+    assert_eq!(
+        gba.bus.read8(0x0800_0100),
+        b'S',
+        "a reset is not an eject - the ROM stays in the slot"
+    );
+}
+
+/// KEYINPUT is active low, so a zeroed register reads as every button held.
+/// `MemoryBus::new` knows that; reset has to know it too.
+#[test]
+fn reset_leaves_every_button_released() {
+    let mut gba = Gba::new();
+    gba.bus.set_keys(0x03FF); // all ten held
+    gba.reset();
+    assert_eq!(
+        gba.bus.read16(0x0400_0130),
+        0x03FF,
+        "after a reset no button may read as held"
+    );
+}
+
+#[test]
+fn reset_puts_the_clock_back_to_zero() {
+    let mut gba = Gba::new();
+    gba.run_frame();
+    assert!(gba.cycles > 0, "sanity: a frame costs cycles");
+    gba.reset();
+    assert_eq!(gba.cycles, 0);
+}

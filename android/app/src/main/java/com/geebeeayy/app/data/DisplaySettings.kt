@@ -263,6 +263,19 @@ class DisplaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_COVER_ART, enabled).apply()
     }
 
+    /**
+     * Whether opening a game jumps straight back into the quick save.
+     *
+     * Off by default: a player who opens a game expecting the title screen and
+     * lands mid-battle has lost their bearings, and the one who wants this
+     * knows they want it. The quick save is slot 0 - see `slotName`.
+     */
+    fun getAutoLoadQuickSave(): Boolean = prefs.getBoolean(KEY_AUTO_LOAD, false)
+
+    fun setAutoLoadQuickSave(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_LOAD, enabled).apply()
+    }
+
     companion object {
         /** 0.7 puts a 48.dp button at 34.dp, which is about as small as it
          *  can get and still be hit reliably. */
@@ -284,6 +297,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_SCREEN_FILTER = "screen_filter"
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
         private const val KEY_COVER_ART = "download_cover_art"
+        private const val KEY_AUTO_LOAD = "auto_load_quick_save"
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
         private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
         private const val KEY_CONTROL_TINT = "control_tint"
