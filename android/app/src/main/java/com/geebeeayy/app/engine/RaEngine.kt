@@ -37,6 +37,12 @@ object RaEngine {
 
     /** `rc_client` event ids, from `rc_client.h`. Only the ones acted on. */
     private const val EVENT_ACHIEVEMENT_TRIGGERED = 1
+    private const val EVENT_LEADERBOARD_STARTED = 2
+    private const val EVENT_LEADERBOARD_FAILED = 3
+    private const val EVENT_LEADERBOARD_SUBMITTED = 4
+    private const val EVENT_LEADERBOARD_TRACKER_SHOW = 10
+    private const val EVENT_LEADERBOARD_TRACKER_HIDE = 11
+    private const val EVENT_LEADERBOARD_TRACKER_UPDATE = 12
     private const val EVENT_GAME_COMPLETED = 15
 
     private val available: Boolean = runCatching {
@@ -59,6 +65,21 @@ object RaEngine {
     private val _unlocks = MutableSharedFlow<RaUnlock>(extraBufferCapacity = 8)
     /** Achievements earned during this session, as they happen. */
     val unlocks = _unlocks.asSharedFlow()
+
+    private val _trackers = MutableStateFlow<Map<Int, String>>(emptyMap())
+    /**
+     * Leaderboard attempts in progress, id to the value to show.
+     *
+     * A tracker is the live readout of a run - a lap timer, a running score.
+     * rcheevos formats the string itself, which is why this is text and not a
+     * number: only it knows whether a leaderboard counts in seconds, frames
+     * or points.
+     */
+    val trackers: StateFlow<Map<Int, String>> = _trackers.asStateFlow()
+
+    private val _leaderboardNotice = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    /** "Attempt started", "score submitted" - worth a word, not a screen. */
+    val leaderboardNotice = _leaderboardNotice.asSharedFlow()
 
     private val _loginError = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val loginError = _loginError.asSharedFlow()
@@ -173,6 +194,23 @@ object RaEngine {
         }
     }
 
+    /** Every leaderboard in the loaded game. Empty when there are none. */
+    fun leaderboards(): List<RaLeaderboard> {
+        if (!available || !started) return emptyList()
+        val lines = runCatching { nativeLeaderboards() }.getOrNull() ?: return emptyList()
+        return lines.mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size < 5) return@mapNotNull null
+            RaLeaderboard(
+                id = parts[0].toIntOrNull() ?: return@mapNotNull null,
+                title = parts[1],
+                description = parts[2],
+                active = parts[3] == "2",
+                value = parts[4],
+            )
+        }
+    }
+
     fun version(): String? =
         if (available) runCatching { nativeVersion() }.getOrNull() else null
 
@@ -236,6 +274,18 @@ object RaEngine {
         when (type) {
             EVENT_ACHIEVEMENT_TRIGGERED ->
                 _unlocks.tryEmit(RaUnlock(id, title.orEmpty(), description.orEmpty(), points))
+            EVENT_LEADERBOARD_TRACKER_SHOW,
+            EVENT_LEADERBOARD_TRACKER_UPDATE ->
+                _trackers.value = _trackers.value + (id to title.orEmpty())
+            EVENT_LEADERBOARD_TRACKER_HIDE ->
+                _trackers.value = _trackers.value - id
+            EVENT_LEADERBOARD_STARTED ->
+                _leaderboardNotice.tryEmit("Leaderboard attempt started: ${title.orEmpty()}")
+            EVENT_LEADERBOARD_SUBMITTED ->
+                _leaderboardNotice.tryEmit("Leaderboard score submitted: ${title.orEmpty()}")
+            // Deliberately quiet: a failed attempt is the normal end of most
+            // runs, and saying so every time would be nagging.
+            EVENT_LEADERBOARD_FAILED -> Log.i(TAG, "leaderboard attempt failed")
             EVENT_GAME_COMPLETED -> Log.i(TAG, "game completed")
         }
     }
@@ -297,6 +347,7 @@ object RaEngine {
     @JvmStatic private external fun nativeSerializeProgress(): ByteArray?
     @JvmStatic private external fun nativeDeserializeProgress(data: ByteArray): Boolean
     @JvmStatic private external fun nativeAchievements(): Array<String>?
+    @JvmStatic private external fun nativeLeaderboards(): Array<String>?
     @JvmStatic private external fun nativeHashRom(data: ByteArray): String?
     @JvmStatic private external fun nativeVersion(): String?
 }
@@ -321,4 +372,15 @@ data class RaAchievement(
      * full colour once earned. Empty when rcheevos could not build a URL.
      */
     val badgeUrl: String = "",
+)
+
+/** One leaderboard in the loaded game's set. */
+data class RaLeaderboard(
+    val id: Int,
+    val title: String,
+    val description: String,
+    /** True while an attempt is being tracked right now. */
+    val active: Boolean,
+    /** The current or last value, already formatted by rcheevos. */
+    val value: String,
 )

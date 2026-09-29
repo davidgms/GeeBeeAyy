@@ -337,6 +337,10 @@ fun EmulationScreen(
         raEarned = RaEngine.achievements().count { it.unlocked }
         raNotice = "${loaded.title} - ${loaded.achievementCount} achievements"
     }
+    val raTrackers by RaEngine.trackers.collectAsState()
+    LaunchedEffect(Unit) {
+        RaEngine.leaderboardNotice.collect { raNotice = it }
+    }
     LaunchedEffect(Unit) {
         RaEngine.unlocks.collect { unlock ->
             raEarned = RaEngine.achievements().count { it.unlocked }
@@ -880,6 +884,22 @@ fun EmulationScreen(
                     .align(Alignment.BottomStart)
                     .padding(start = 12.dp, bottom = 30.dp),
             )
+        }
+
+        // Bottom right, opposite the FPS readout. A tracker is the live value
+        // of a run in progress - a lap timer, a running score - so it has to
+        // be visible *while playing*, which rules out a dialog.
+        if (raTrackers.isNotEmpty()) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 30.dp),
+            ) {
+                raTrackers.values.forEach { value ->
+                    Text(value, color = GoldenSaplight, fontSize = 12.sp)
+                }
+            }
         }
 
         StateToast(
@@ -2147,6 +2167,38 @@ private fun AchievementsDialog(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    // Leaderboards first and only when there are any: most
+                    // games have none, and a permanent empty heading is noise.
+                    val boards = remember(game) { RaEngine.leaderboards() }
+                    if (boards.isNotEmpty()) {
+                        Text(
+                            "Leaderboards",
+                            color = AmberResin,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        boards.forEach { board ->
+                            Column {
+                                Text(
+                                    board.title +
+                                        if (board.value.isNotBlank()) "  ${board.value}" else "",
+                                    color = if (board.active) GoldenSaplight else PineGlowMist,
+                                    fontSize = 13.sp,
+                                )
+                                Text(
+                                    board.description,
+                                    color = PineGlowMist.copy(alpha = 0.7f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
+                        Text(
+                            "Achievements",
+                            color = AmberResin,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                     items.sortedByDescending { it.unlocked }.forEach { achievement ->
                         Row(verticalAlignment = Alignment.Top) {
                             AchievementBadge(achievement)
