@@ -166,6 +166,9 @@ object RaEngine {
                 points = parts[3].toIntOrNull() ?: 0,
                 unlocked = parts[4] != "0",
                 progress = parts[5],
+                // Absent on a build of the bridge that predates badges, so
+                // read defensively rather than by index.
+                badgeUrl = parts.getOrNull(6).orEmpty(),
             )
         }
     }
@@ -313,4 +316,9 @@ data class RaAchievement(
     val unlocked: Boolean,
     /** How far along, for the ones that track it. Empty when they do not. */
     val progress: String,
+    /**
+     * The badge for the state this achievement is in - greyed while locked,
+     * full colour once earned. Empty when rcheevos could not build a URL.
+     */
+    val badgeUrl: String = "",
 )

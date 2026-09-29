@@ -41,6 +41,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.Image
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -52,7 +55,9 @@ import com.geebeeayy.app.ui.findActivity
 import com.geebeeayy.app.data.ControlButton
 import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
+import com.geebeeayy.app.data.BadgeCache
 import com.geebeeayy.app.data.ControlLayoutStore
+import com.geebeeayy.app.engine.RaAchievement
 import com.geebeeayy.app.engine.RaEngine
 import com.geebeeayy.app.viewmodel.PerfStats
 import com.geebeeayy.app.engine.RaGame
@@ -2051,6 +2056,48 @@ fun ActionButton(
  * a game the database does not know, and a game it knows with no set - and
  * a player cannot act on the difference without being told.
  */
+/**
+ * The badge RetroAchievements drew for one achievement.
+ *
+ * Falls back to a trophy or a padlock while the image is still coming, and
+ * for good if it never does: a row with no picture still has to say whether
+ * it is earned, and that is what the icon was already for.
+ */
+@Composable
+private fun AchievementBadge(achievement: RaAchievement) {
+    val context = LocalContext.current
+    var badge by remember(achievement.badgeUrl) {
+        mutableStateOf<android.graphics.Bitmap?>(null)
+    }
+    LaunchedEffect(achievement.badgeUrl) {
+        badge = withContext(Dispatchers.IO) {
+            BadgeCache.load(context, achievement.badgeUrl)
+        }
+    }
+
+    val image = badge
+    if (image != null) {
+        Image(
+            bitmap = image.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(6.dp)),
+        )
+    } else {
+        Icon(
+            if (achievement.unlocked) Icons.Default.EmojiEvents else Icons.Default.Lock,
+            contentDescription = null,
+            tint = if (achievement.unlocked) {
+                GoldenSaplight
+            } else {
+                PineGlowMist.copy(alpha = 0.35f)
+            },
+            modifier = Modifier.size(40.dp).padding(10.dp),
+        )
+    }
+}
+
 @Composable
 private fun AchievementsDialog(
     game: RaGame?,
@@ -2102,20 +2149,7 @@ private fun AchievementsDialog(
                 ) {
                     items.sortedByDescending { it.unlocked }.forEach { achievement ->
                         Row(verticalAlignment = Alignment.Top) {
-                            Icon(
-                                if (achievement.unlocked) {
-                                    Icons.Default.EmojiEvents
-                                } else {
-                                    Icons.Default.Lock
-                                },
-                                contentDescription = null,
-                                tint = if (achievement.unlocked) {
-                                    GoldenSaplight
-                                } else {
-                                    PineGlowMist.copy(alpha = 0.35f)
-                                },
-                                modifier = Modifier.size(20.dp),
-                            )
+                            AchievementBadge(achievement)
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
