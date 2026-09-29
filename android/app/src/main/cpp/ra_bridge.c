@@ -551,11 +551,19 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass cl
   for (b = 0; b < list->num_buckets; b++) {
     for (i = 0; i < list->buckets[b].num_achievements; i++) {
       const rc_client_achievement_t* a = list->buckets[b].achievements[i];
-      char line[768];
+      char line[1024];
+      char badge[256];
       jstring value;
-      snprintf(line, sizeof(line), "%u\t%s\t%s\t%u\t%u\t%s", a->id,
+      /* The badge for the state it is actually in: a locked achievement gets
+       * the greyed art, an earned one the full-colour one. Asking for the
+       * wrong state would show every row as earned. */
+      if (rc_client_achievement_get_image_url(
+              a, a->state, badge, sizeof(badge)) != RC_OK) {
+        badge[0] = '\0';
+      }
+      snprintf(line, sizeof(line), "%u\t%s\t%s\t%u\t%u\t%s\t%s", a->id,
                a->title ? a->title : "", a->description ? a->description : "",
-               a->points, (unsigned)a->unlocked, a->measured_progress);
+               a->points, (unsigned)a->unlocked, a->measured_progress, badge);
       value = (*env)->NewStringUTF(env, line);
       (*env)->SetObjectArrayElement(env, out, index++, value);
       (*env)->DeleteLocalRef(env, value);
