@@ -90,6 +90,8 @@ fun SettingsScreen(
     var showStatusStrip by remember { mutableStateOf(displaySettings.getShowStatusStrip()) }
     var coverArt by remember { mutableStateOf(displaySettings.getDownloadCoverArt()) }
     var autoLoad by remember { mutableStateOf(displaySettings.getAutoLoadQuickSave()) }
+    var showPerf by remember { mutableStateOf(displaySettings.getShowPerformance()) }
+    var volume by remember { mutableFloatStateOf(displaySettings.getVolume()) }
     var showRaLogin by remember { mutableStateOf(false) }
     var coverCacheBytes by remember { mutableLongStateOf(CoverArt.cacheBytes(context)) }
     val layoutStore = remember { ControlLayoutStore(context) }
@@ -404,6 +406,16 @@ fun SettingsScreen(
                     }
                 )
                 SettingsSwitch(
+                    icon = Icons.Default.Speed,
+                    title = "Show FPS and audio underruns",
+                    subtitle = "A diagnostic, over the black above the picture",
+                    checked = showPerf,
+                    onCheckedChange = { checked ->
+                        showPerf = checked
+                        displaySettings.setShowPerformance(checked)
+                    }
+                )
+                SettingsSwitch(
                     icon = Icons.Default.RestartAlt,
                     title = "Resume from quick save",
                     subtitle = "Opening a game jumps back into slot 0 instead " +
@@ -523,6 +535,18 @@ fun SettingsScreen(
             }
 
             SettingsSection(title = "Audio") {
+                SettingsSlider(
+                    icon = Icons.Default.VolumeDown,
+                    title = "Volume",
+                    // Separate from the system volume on purpose: an emulator
+                    // is often played alongside something else, and turning
+                    // the whole phone down is the wrong tool.
+                    subtitle = "${(volume * 100).toInt()}% - takes effect on the next game",
+                    value = volume,
+                    range = 0f..1f,
+                    onValueChange = { volume = it },
+                    onValueChangeFinished = { displaySettings.setVolume(volume) },
+                )
                 SettingsSwitch(
                     icon = Icons.Default.VolumeUp,
                     title = "Sound",

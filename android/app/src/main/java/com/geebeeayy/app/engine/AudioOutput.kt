@@ -122,6 +122,11 @@ class AudioOutput {
      */
     fun write(samples: FloatArray, count: Int): Boolean {
         val active = track ?: return false
+        // Counted before the write, not after: `getUnderrunCount` is
+        // cumulative for the life of the track, so the interesting number is
+        // how much it grew. An underrun means the device drained the buffer
+        // before the emulator refilled it, which is the sound of a crackle.
+        underruns = active.underrunCount
         // No samples means nothing to block on, so the caller has to pace
         // itself this frame. Returning true here let the emulation loop
         // free-run at whatever speed the CPU allowed.
@@ -132,6 +137,28 @@ class AudioOutput {
             return false
         }
         return true
+    }
+
+    /**
+     * How many times the device ran out of samples, for the life of the track.
+     *
+     * The honest measure of whether the emulator is keeping up: frames per
+     * second can look fine while the audio starves. Audio is the frame clock
+     * here, so this is the number that matters.
+     */
+    @Volatile
+    var underruns: Int = 0
+        private set
+
+    /**
+     * Output level, 0.0 to 1.0.
+     *
+     * Applied to the track rather than to the samples: the hardware does it
+     * for free, and scaling 800 floats a frame in Kotlin to do the same thing
+     * would be work for nothing.
+     */
+    fun setVolume(volume: Float) {
+        track?.setVolume(volume.coerceIn(0f, 1f))
     }
 
     fun stop() {
