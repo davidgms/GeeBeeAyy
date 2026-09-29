@@ -165,6 +165,39 @@ pub unsafe extern "C" fn geebeeayy_frame_buffer_copy(ptr: *mut c_void, out: *mut
     }
 }
 
+/// Copy emulated memory into `out`, without disturbing the machine.
+///
+/// Returns the number of bytes written, which is `len` unless an argument was
+/// null. Only three regions are readable, the three an achievement runtime
+/// asks a GBA for:
+///
+/// | region | address | size |
+/// |---|---|---|
+/// | External Work RAM | `0x02000000` | 256 KB |
+/// | Internal Work RAM | `0x03000000` | 32 KB |
+/// | Game Pak save memory | `0x0E000000` | 64 KB |
+///
+/// Anything else reads 0. This is a peek, not a bus read: it cannot change
+/// what the game sees, which is the whole point - achievement evaluation runs
+/// once a frame over a live machine. See `docs/achievements.md`.
+///
+/// # Safety
+/// `ptr` must be a valid handle. `out` must be writable for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_peek_memory(
+    ptr: *mut c_void,
+    address: u32,
+    out: *mut u8,
+    len: usize,
+) -> usize {
+    if ptr.is_null() || out.is_null() || len == 0 {
+        return 0;
+    }
+    let handle = unsafe { &*(ptr as *mut GbaHandle) };
+    let slice = unsafe { std::slice::from_raw_parts_mut(out, len) };
+    handle.inner.peek_memory(address, slice)
+}
+
 /// Get a pointer to the internal frame buffer (240x160 RGB888, 115200 bytes).
 ///
 /// The pointer is valid until the next call to `geebeeayy_run_frame`.
@@ -563,6 +596,36 @@ pub mod android {
         }
         let signed: Vec<i8> = buf.iter().map(|&b| b as i8).collect();
         let _ = env.set_byte_array_region(&out, 0, &signed);
+    }
+
+    /// Copy emulated memory into a Java byte array. See
+    /// [`geebeeayy_peek_memory`] for which regions are readable.
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativePeekMemory(
+        env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        address: jint,
+        out: JByteArray,
+        len: jint,
+    ) -> jint {
+        if handle == 0 || len <= 0 {
+            return 0;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let count = unsafe {
+            geebeeayy_peek_memory(
+                handle as *mut c_void,
+                address as u32,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        };
+        // i8, not u8: JNI byte arrays are signed, and the two have the same
+        // representation.
+        let signed: &[i8] = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const i8, count) };
+        let _ = env.set_byte_array_region(&out, 0, signed);
+        count as jint
     }
 
     #[no_mangle]

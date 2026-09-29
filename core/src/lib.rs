@@ -331,6 +331,23 @@ impl Gba {
     /// timers, interrupts, audio - runs exactly as it would frame by frame,
     /// so nothing about the emulation changes, only what reaches the frame
     /// buffer.
+    /// Copy emulated memory into `out`, for an observer that must not disturb
+    /// the machine.
+    ///
+    /// Returns how many bytes were readable. Written for achievement
+    /// evaluation, which walks a handful of addresses once a frame; see
+    /// `docs/achievements.md`. Only work RAM, internal work RAM and save
+    /// memory are visible, and nothing here can write.
+    pub fn peek_memory(&self, address: u32, out: &mut [u8]) -> usize {
+        for (i, byte) in out.iter_mut().enumerate() {
+            // Wrapping, not saturating: an address that runs off the end of a
+            // region lands outside every readable range and reads 0, which is
+            // what a caller asking for too much should get.
+            *byte = self.bus.peek(address.wrapping_add(i as u32));
+        }
+        out.len()
+    }
+
     pub fn run_frames(&mut self, count: u32) {
         for frame in 0..count {
             self.ppu.set_render_enabled(frame + 1 == count);
