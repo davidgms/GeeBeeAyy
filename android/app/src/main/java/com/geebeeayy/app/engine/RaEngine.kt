@@ -110,6 +110,7 @@ object RaEngine {
 
     /** Ask the server what this ROM is, and start a session for it. */
     fun loadGame(hash: String) {
+        Log.i(TAG, "load game $hash (started=$started)")
         if (available && started) runCatching { nativeLoadGame(hash) }
     }
 
@@ -130,6 +131,30 @@ object RaEngine {
 
     fun hashRom(romData: ByteArray): String? =
         if (available) runCatching { nativeHashRom(romData) }.getOrNull() else null
+
+    /**
+     * Every achievement in the loaded game, locked ones included.
+     *
+     * Empty when no game is loaded or nobody is signed in. Packed as
+     * tab-separated lines on the C side because a set runs to hundreds and
+     * building objects across JNI costs a call each.
+     */
+    fun achievements(): List<RaAchievement> {
+        if (!available || !started) return emptyList()
+        val lines = runCatching { nativeAchievements() }.getOrNull() ?: return emptyList()
+        return lines.mapNotNull { line ->
+            val parts = line.split('\t')
+            if (parts.size < 6) return@mapNotNull null
+            RaAchievement(
+                id = parts[0].toIntOrNull() ?: return@mapNotNull null,
+                title = parts[1],
+                description = parts[2],
+                points = parts[3].toIntOrNull() ?: 0,
+                unlocked = parts[4] != "0",
+                progress = parts[5],
+            )
+        }
+    }
 
     fun version(): String? =
         if (available) runCatching { nativeVersion() }.getOrNull() else null
@@ -201,6 +226,7 @@ object RaEngine {
     @JvmStatic
     private fun onLogin(result: Int, errorMessage: String?) {
         if (result == RESULT_OK) {
+            Log.i(TAG, "signed in")
             val name = runCatching { nativeUsername() }.getOrNull()
             val token = runCatching { nativeToken() }.getOrNull()
             _user.value = name
@@ -217,6 +243,7 @@ object RaEngine {
     @JvmStatic
     private fun onGameLoaded(result: Int, errorMessage: String?, title: String?, achievements: Int) {
         _game.value = if (result == RESULT_OK && title != null) {
+            Log.i(TAG, "session: $title, $achievements achievements")
             RaGame(title, achievements)
         } else {
             // Not an error worth showing: about two thirds of GBA games have
@@ -250,6 +277,7 @@ object RaEngine {
     @JvmStatic private external fun nativeDoFrame()
     @JvmStatic private external fun nativeIdle()
     @JvmStatic private external fun nativeServerResponse(slot: Int, status: Int, body: ByteArray)
+    @JvmStatic private external fun nativeAchievements(): Array<String>?
     @JvmStatic private external fun nativeHashRom(data: ByteArray): String?
     @JvmStatic private external fun nativeVersion(): String?
 }
@@ -259,3 +287,14 @@ data class RaGame(val title: String, val achievementCount: Int)
 
 /** An achievement earned while playing. */
 data class RaUnlock(val id: Int, val title: String, val description: String, val points: Int)
+
+/** One achievement in the loaded game's set. */
+data class RaAchievement(
+    val id: Int,
+    val title: String,
+    val description: String,
+    val points: Int,
+    val unlocked: Boolean,
+    /** How far along, for the ones that track it. Empty when they do not. */
+    val progress: String,
+)

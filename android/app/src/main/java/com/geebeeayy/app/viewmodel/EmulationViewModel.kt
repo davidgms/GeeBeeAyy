@@ -390,6 +390,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             onAppForegrounded()
             return
         }
+        // A different cart: the achievement session belongs to the one being
+        // left. Dropped here rather than in stopEmulation, which also runs on
+        // the way to the ROM list and back - unloading there lost the session
+        // for a game the player simply stepped out of.
+        RaEngine.unloadGame()
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             _errorMessage.value = null
@@ -749,9 +754,6 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         emulationJob?.cancel()
         emulationJob = null
         audio.stop()
-        // The achievement session belongs to the game that just ended. Left
-        // loaded, the next ROM would be evaluated against the old set.
-        RaEngine.unloadGame()
         _isRunning.value = false
         viewModelScope.launch(Dispatchers.IO) { flushSaveNow() }
     }

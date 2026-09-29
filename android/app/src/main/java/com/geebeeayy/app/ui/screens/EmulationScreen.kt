@@ -53,6 +53,8 @@ import com.geebeeayy.app.data.ControlButton
 import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
 import com.geebeeayy.app.data.ControlLayoutStore
+import com.geebeeayy.app.engine.RaEngine
+import com.geebeeayy.app.engine.RaGame
 import com.geebeeayy.app.data.CustomButton
 import com.geebeeayy.app.data.CustomButtonMode
 import com.geebeeayy.app.data.LayoutOrientation
@@ -314,6 +316,24 @@ fun EmulationScreen(
         }
     }
     var showSlots by remember { mutableStateOf(false) }
+    var showAchievements by remember { mutableStateOf(false) }
+    // What RetroAchievements said about this cart, and anything earned since.
+    // Null while it is still asking, and null for the two thirds of the GBA
+    // library that have no set at all.
+    val raGame by RaEngine.game.collectAsState()
+    var raNotice by remember { mutableStateOf<String?>(null) }
+    var raEarned by remember { mutableIntStateOf(0) }
+    LaunchedEffect(raGame) {
+        val loaded = raGame ?: return@LaunchedEffect
+        raEarned = RaEngine.achievements().count { it.unlocked }
+        raNotice = "${loaded.title} - ${loaded.achievementCount} achievements"
+    }
+    LaunchedEffect(Unit) {
+        RaEngine.unlocks.collect { unlock ->
+            raEarned = RaEngine.achievements().count { it.unlocked }
+            raNotice = "Achievement unlocked: ${unlock.title} (${unlock.points})"
+        }
+    }
 
     // A game is watched, not touched: without this the display times out
     // mid-play and the emulator keeps running behind a black screen.
@@ -476,6 +496,13 @@ fun EmulationScreen(
                             leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
                         )
                         DropdownMenuItem(
+                            text = { Text("Achievements") },
+                            onClick = { showMenu = false; showAchievements = true },
+                            leadingIcon = {
+                                Icon(Icons.Default.EmojiEvents, contentDescription = null)
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Screenshot") },
                             onClick = { showMenu = false; onScreenshot() },
                             leadingIcon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
@@ -596,7 +623,19 @@ fun EmulationScreen(
         // the corners on purpose: Start and Select sit centred at the bottom,
         // so this is the one strip of screen no control wants.
         if (showStatusStrip && !editingLayout) {
-            StatusStrip(modifier = Modifier.align(Alignment.BottomCenter))
+            StatusStrip(
+                // Persistent, not a toast. "Am I earning achievements right
+                // now" is a question asked at any moment, and a pill that
+                // faded four seconds after the game opened cannot answer it.
+                // The strip's middle was empty, and it is already the row
+                // about state at a glance. The top bar was not an option:
+                // its eight icons already span the full width.
+                achievements = raGame?.let { loaded ->
+                    "$raEarned/${loaded.achievementCount}"
+                },
+                onAchievementsClick = { showAchievements = true },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
 
         // Every control in one layer, the fixed buttons and the player's own
@@ -816,6 +855,24 @@ fun EmulationScreen(
             onDismiss = onDismissStateMessage,
             modifier = Modifier.align(Alignment.TopCenter),
         )
+
+        // The same pill, one row lower, so a save message and an achievement
+        // arriving together do not sit on top of each other.
+        StateToast(
+            message = raNotice,
+            onDismiss = { raNotice = null },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 56.dp),
+        )
+
+        if (showAchievements) {
+            AchievementsDialog(
+                game = raGame,
+                signedIn = RaEngine.user.collectAsState().value != null,
+                onDismiss = { showAchievements = false },
+            )
+        }
 
         if (showSlots) {
             SaveStateDialog(
@@ -1928,6 +1985,115 @@ fun ActionButton(
  * the screen down every time it appeared, and stayed until someone tapped an
  * X. This one floats, fades, and clears itself.
  */
+/**
+ * Every achievement in the loaded game, earned ones first.
+ *
+ * Deliberately says *why* there is nothing to show when there is nothing:
+ * "no achievements" covers three different situations - nobody signed in,
+ * a game the database does not know, and a game it knows with no set - and
+ * a player cannot act on the difference without being told.
+ */
+@Composable
+private fun AchievementsDialog(
+    game: RaGame?,
+    signedIn: Boolean,
+    onDismiss: () -> Unit,
+) {
+    // Read once per opening rather than held in state: the list only changes
+    // when something unlocks, and reopening is how a player refreshes it.
+    val items = remember(game, signedIn) { RaEngine.achievements() }
+    val earned = items.count { it.unlocked }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = {
+            Column {
+                Text("Achievements", fontWeight = FontWeight.Bold)
+                if (game != null && items.isNotEmpty()) {
+                    Text(
+                        "$earned of ${items.size} earned - ${game.title}",
+                        color = PineGlowMist,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        },
+        text = {
+            when {
+                !RaEngine.isAvailable() -> Text(
+                    "This build has no achievements support.",
+                    fontSize = 13.sp,
+                )
+                !signedIn -> Text(
+                    "Sign in to your retroachievements.org account in " +
+                        "Settings to track achievements.",
+                    fontSize = 13.sp,
+                )
+                items.isEmpty() -> Text(
+                    "RetroAchievements has no achievement set for this game. " +
+                        "About two thirds of the Game Boy Advance library has " +
+                        "none.",
+                    fontSize = 13.sp,
+                )
+                else -> Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items.sortedByDescending { it.unlocked }.forEach { achievement ->
+                        Row(verticalAlignment = Alignment.Top) {
+                            Icon(
+                                if (achievement.unlocked) {
+                                    Icons.Default.EmojiEvents
+                                } else {
+                                    Icons.Default.Lock
+                                },
+                                contentDescription = null,
+                                tint = if (achievement.unlocked) {
+                                    GoldenSaplight
+                                } else {
+                                    PineGlowMist.copy(alpha = 0.35f)
+                                },
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "${achievement.title} (${achievement.points})",
+                                    color = if (achievement.unlocked) {
+                                        GoldenSaplight
+                                    } else {
+                                        PineGlowMist
+                                    },
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    achievement.description,
+                                    color = PineGlowMist.copy(alpha = 0.75f),
+                                    fontSize = 12.sp,
+                                )
+                                if (achievement.progress.isNotBlank()) {
+                                    Text(
+                                        achievement.progress,
+                                        color = AmberResin,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = GoldenSaplight) }
+        },
+    )
+}
+
 @Composable
 private fun StateToast(
     message: String?,
@@ -2265,7 +2431,11 @@ private data class LayoutSnapshot(
  * that moved in under a minute would be a bigger problem than the readout.
  */
 @Composable
-private fun StatusStrip(modifier: Modifier = Modifier) {
+private fun StatusStrip(
+    modifier: Modifier = Modifier,
+    achievements: String? = null,
+    onAchievementsClick: () -> Unit = {},
+) {
     val context = LocalContext.current
     var battery by remember { mutableIntStateOf(-1) }
     var clock by remember { mutableStateOf("") }
@@ -2295,6 +2465,24 @@ private fun StatusStrip(modifier: Modifier = Modifier) {
             color = PineGlowMist.copy(alpha = 0.45f),
             fontSize = 11.sp,
         )
+        if (achievements != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable(onClick = onAchievementsClick),
+            ) {
+                Icon(
+                    Icons.Default.EmojiEvents,
+                    contentDescription = "Achievements",
+                    tint = GoldenSaplight.copy(alpha = 0.75f),
+                    modifier = Modifier.size(12.dp),
+                )
+                Text(
+                    text = " $achievements",
+                    color = GoldenSaplight.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                )
+            }
+        }
         Text(
             text = clock,
             color = PineGlowMist.copy(alpha = 0.45f),

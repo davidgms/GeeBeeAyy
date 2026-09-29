@@ -14,6 +14,7 @@
 
 #include <dlfcn.h>
 #include <jni.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -451,6 +452,61 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
   if (g_client != NULL) {
     rc_client_idle(g_client);
   }
+}
+
+/* ----------------------------------------------------------- the list
+ *
+ * One string per achievement, tab separated: id, title, description, points,
+ * unlocked, progress. Packed rather than built as objects because the
+ * alternative is a dozen JNI calls per achievement, and a set runs to
+ * hundreds.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass clazz) {
+  rc_client_achievement_list_t* list;
+  jobjectArray out;
+  jclass string_class;
+  uint32_t total = 0;
+  uint32_t b;
+  uint32_t i;
+  jsize index = 0;
+  (void)clazz;
+
+  if (g_client == NULL) {
+    return NULL;
+  }
+  list = rc_client_create_achievement_list(
+      g_client, RC_CLIENT_ACHIEVEMENT_CATEGORY_PROMOTED_AND_UNPROMOTED,
+      RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE);
+  if (list == NULL) {
+    return NULL;
+  }
+  for (b = 0; b < list->num_buckets; b++) {
+    total += list->buckets[b].num_achievements;
+  }
+
+  string_class = (*env)->FindClass(env, "java/lang/String");
+  out = (*env)->NewObjectArray(env, (jsize)total, string_class, NULL);
+  if (out == NULL) {
+    rc_client_destroy_achievement_list(list);
+    return NULL;
+  }
+
+  for (b = 0; b < list->num_buckets; b++) {
+    for (i = 0; i < list->buckets[b].num_achievements; i++) {
+      const rc_client_achievement_t* a = list->buckets[b].achievements[i];
+      char line[768];
+      jstring value;
+      snprintf(line, sizeof(line), "%u\t%s\t%s\t%u\t%u\t%s", a->id,
+               a->title ? a->title : "", a->description ? a->description : "",
+               a->points, (unsigned)a->unlocked, a->measured_progress);
+      value = (*env)->NewStringUTF(env, line);
+      (*env)->SetObjectArrayElement(env, out, index++, value);
+      (*env)->DeleteLocalRef(env, value);
+    }
+  }
+  rc_client_destroy_achievement_list(list);
+  return out;
 }
 
 /* -------------------------------------------------------- identification */
