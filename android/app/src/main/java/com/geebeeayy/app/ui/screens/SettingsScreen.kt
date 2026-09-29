@@ -31,6 +31,9 @@ import com.geebeeayy.app.data.ControlFontSize
 import com.geebeeayy.app.data.HapticStrength
 import com.geebeeayy.app.data.ControlTint
 import com.geebeeayy.app.data.ControlLayoutStore
+import com.geebeeayy.app.engine.RaEngine
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.runtime.collectAsState
 import com.geebeeayy.app.data.CoverArt
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomFolderManager
@@ -86,6 +89,7 @@ fun SettingsScreen(
     var fullscreen by remember { mutableStateOf(displaySettings.getFullscreenInGame()) }
     var showStatusStrip by remember { mutableStateOf(displaySettings.getShowStatusStrip()) }
     var coverArt by remember { mutableStateOf(displaySettings.getDownloadCoverArt()) }
+    var showRaLogin by remember { mutableStateOf(false) }
     var coverCacheBytes by remember { mutableLongStateOf(CoverArt.cacheBytes(context)) }
     val layoutStore = remember { ControlLayoutStore(context) }
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
@@ -431,6 +435,44 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsSection(title = "RetroAchievements") {
+                // Started here as well as when a game opens: signing in
+                // happens with no ROM loaded, and without this the client did
+                // not exist yet and the first attempt went nowhere at all.
+                LaunchedEffect(Unit) { RaEngine.start(context) }
+                val raUser by RaEngine.user.collectAsState()
+                if (!RaEngine.isAvailable()) {
+                    SettingsInfo(
+                        icon = Icons.Default.EmojiEvents,
+                        title = "Not available in this build",
+                        subtitle = "The achievements library was not compiled in",
+                    )
+                } else if (raUser == null) {
+                    SettingsItem(
+                        icon = Icons.Default.EmojiEvents,
+                        title = "Sign in",
+                        // Says whose account it is and what is kept, because
+                        // asking for a password deserves both.
+                        subtitle = "Your own retroachievements.org account. " +
+                            "The password is used once and never stored.",
+                        onClick = { showRaLogin = true },
+                    )
+                } else {
+                    SettingsInfo(
+                        icon = Icons.Default.EmojiEvents,
+                        title = "Signed in as $raUser",
+                        subtitle = "Achievements unlock while you play. " +
+                            "Hardcore is off - see docs/achievements.md.",
+                    )
+                    SettingsItem(
+                        icon = Icons.Default.ExitToApp,
+                        title = "Sign out",
+                        subtitle = "Forgets the stored login token",
+                        onClick = { RaEngine.logout() },
+                    )
+                }
+            }
+
             SettingsSection(title = "Emulation") {
                 Box {
                     SettingsItem(
@@ -641,6 +683,64 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+
+    if (showRaLogin) {
+        RaLoginDialog(onDismiss = { showRaLogin = false })
+    }
+}
+
+@Composable
+private fun RaLoginDialog(onDismiss: () -> Unit) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val user by RaEngine.user.collectAsState()
+
+    // Closes itself when the sign-in lands, rather than making the player
+    // dismiss a dialog that has already done its job.
+    LaunchedEffect(user) { if (user != null) onDismiss() }
+    LaunchedEffect(Unit) { RaEngine.loginError.collect { error = it } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text("RetroAchievements", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Sign in with your own account from retroachievements.org. " +
+                        "The password is sent once to get a login token; only " +
+                        "the token is kept on this phone.",
+                    fontSize = 12.sp,
+                )
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it; error = null },
+                    label = { Text("Username") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it; error = null },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                error?.let { Text(it, color = Error, fontSize = 12.sp) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { RaEngine.login(username.trim(), password) },
+                enabled = username.isNotBlank() && password.isNotBlank(),
+            ) { Text("Sign in", color = GoldenSaplight) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = PineGlowMist) }
+        },
+    )
 }
 
 @Composable
