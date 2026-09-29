@@ -62,6 +62,15 @@ Select and the shoulder buttons, so most games are unreachable.
 
 *(Superseded 2026-08-30: Start, Select, L and R are now on the overlay.)*
 
+**Verified on hardware 2026-09-29, second pass**: a zipped Mario Tennis opens
+and plays, and the achievement session attaches to it - so the unpacking is
+byte-exact and not merely "it booted". Reset shows a **black screen at the
+instant it fires** and leaves the `.sav` and all three save states in place.
+"Resume from quick save" reopens the game inside its intro rather than at
+"Press any button to continue". The counter reads a steady **60 fps**. All 51
+achievement badges download and cache, named `..._lock.png` - the suffix
+proving the **locked** art was asked for.
+
 **Verified on hardware 2026-09-29**: signed in to a real RetroAchievements
 account and loaded *Mario Tennis: Power Tour* - the server returned its set of
 51 achievements, 1 already earned, and the list shows real titles and
@@ -452,8 +461,37 @@ Details in [`.claude/memory.md`](.claude/memory.md).
       one of them. Reasoning, licensing and the alternatives are in
       [`docs/cover-art.md`](docs/cover-art.md). No artwork is ever bundled in
       the APK - that line is the whole licensing posture.
-- [ ] **ZIP ROM support**, auto-load-state on open, and "reset and start".
-- [ ] **FPS and audio-underrun counter**, then an audio volume control.
+- [x] **ZIP ROM support** - downloaded ROMs arrive zipped, and telling a player
+      to unzip on a PC is the friction that makes an app feel unfinished.
+      `RomBytes` is the one place that answers "give me the cart's bytes".
+      Entries are **sorted before picking**, because a zip holding two carts
+      must choose the same one every launch - save states are keyed on the
+      cart, so an arbitrary order would key them to a different game between
+      runs. The name comes from the archive, not the entry, since the `.zip`
+      is what a player renames and moves. 7z and rar are deliberately out:
+      different formats, no decoder on the platform. Eight tests against real
+      `java.util.zip`.
+- [x] **Reset, auto-load-state and "reset and start"** - there was **no reset
+      at all**, and reloading the ROM is not the same thing: it swaps the cart
+      and boots the CPU while leaving both work RAMs, VRAM, the palette, OAM
+      and the I/O registers holding the last session's rubbish. `Gba::reset()`
+      clears everything volatile and **keeps the battery save** - a real GBA
+      does not wipe SRAM on reset, and a player resetting past a freeze must
+      not lose their game doing it. Three core tests, including one worth
+      naming: **no button may read as held afterwards**, because KEYINPUT is
+      active low and a zeroed register means all ten pressed.
+      "Resume from quick save" is a setting, off by default: opening a game
+      expecting the title screen and landing mid-battle loses a player's
+      bearings. "Reset and start" is served by the menu entry rather than a
+      flag threaded through the navigation route.
+- [x] **FPS and audio-underrun counter, and an audio volume control** - both
+      off the beaten path by default. **Underruns matter more than the frame
+      rate**: audio is this emulator's frame clock, so a device can hold 60 fps
+      while starving the buffer, and that is what a crackle is. The count is
+      cumulative, so the signal is whether it keeps climbing. Measured on a
+      Mi 10T Pro: a steady 60 fps, and four underruns at startup that then
+      stop. Volume is applied to the `AudioTrack` rather than to the samples -
+      the hardware scales for free.
 ---
 
 ## Phase 3 - Advanced
@@ -499,10 +537,24 @@ Details in [`.claude/memory.md`](.claude/memory.md).
       this emulator."
       Full write-up, including what it cannot do, in
       [`docs/achievements.md`](docs/achievements.md).
-- [ ] **Achievements, second pass** - badge images in the list, leaderboards
-      (rcheevos supports them; the events are currently ignored), and hardcore,
-      which cannot even be applied for until six months after a public
-      release.
+- [x] **Achievements, second pass** - each row shows the badge
+      RetroAchievements drew for it, **in the state it is in**: grey while
+      locked, colour once earned. Asking for a fixed state would show the whole
+      list as earned, which is the kind of mistake that throws no error.
+      Cached in `filesDir/badges` after the first fetch, same posture as cover
+      art and never bundled. Leaderboards are read too: the **live tracker** of
+      an attempt draws on screen while playing, because its value only means
+      anything while the run is happening, and the list grows a Leaderboards
+      section **only when the game has any**.
+- [ ] **Hardcore achievements** - blocked by a calendar rather than by work.
+      RetroAchievements requires approval and **six months of public
+      availability**, and forbids save states, rewind and frame advance. The
+      server already says so in the achievement list: "Warning: Unknown
+      Emulator". Nothing to do here until well after a release.
+- [ ] **A leaderboard actually exercised** - the tracker path is written but
+      unproven: *Mario Tennis* has no leaderboards, so what is verified is that
+      the section stays hidden and the native call returns empty without
+      crashing. It needs a game that has one and an attempt started in it.
 
 ---
 
