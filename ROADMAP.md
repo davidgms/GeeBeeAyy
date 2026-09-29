@@ -36,6 +36,7 @@ as unverified.
 | `bios.rs` | ~450 | HLE SWIs including `CpuFastSet`, `ArcTan`/`ArcTan2` and the three diff unfilters. `BgAffineSet`/`ObjAffineSet`/`BitUnPack` are still stubs; the sound-driver calls are absent. |
 | `ffi.rs` | ~770 | C ABI + JNI: input, frame buffer, audio, battery saves with a dirty flag, and save states as bytes. 13 JNI symbols, all present in the built `.so`. |
 | `android/` | ~7680 | Compose UI, JNI bridge, `AudioTrack` output, touch overlay wired to the core, battery saves and save-state slots on disk, integer scaling with nearest-neighbour filtering. Per-game layouts with custom buttons, haptics, fast-forward, rewind, screenshots, homebrew downloader. **Builds, installs and emulates on a device.** |
+| `android/.../cpp/` | ~330 | The bridge between Kotlin and `rcheevos`, plus a CMake build for the pinned submodule. The only C in the project, and it is on the frontend side on purpose. |
 | tests | ~5000 | `core/tests/` ~4500 lines across twelve files; `android/app/src/test/` ~500 lines of plain JVM JUnit. Both run in CI on every push, plus an x86_64 emulator smoke test that installs the APK. |
 | `rewind.rs` | ~80 | Bounded ring of save states. **Wired end to end**: snapshot every 30 frames, depth 20, hold-to-rewind in the transport row. Verified on a device. |
 
@@ -60,6 +61,15 @@ launches without crashing, and `System.loadLibrary` finds the core. No
 Select and the shoulder buttons, so most games are unreachable.
 
 *(Superseded 2026-08-30: Start, Select, L and R are now on the overlay.)*
+
+**Verified on hardware 2026-09-29**: signed in to a real RetroAchievements
+account and loaded *Mario Tennis: Power Tour* - the server returned its set of
+51 achievements, 1 already earned, and the list shows real titles and
+descriptions. Two bugs that only use could find: signing in did nothing at all
+because the client was not created until the emulator's library had loaded
+(and nobody signs in with a game open), and stepping out to the ROM list killed
+the session because the achievement unload sat in `stopEmulation` while the
+reload guard meant the same ROM never reloaded.
 
 **Verified on hardware 2026-09-14**, on the same Mi 10T Pro: haptics fire on a
 button press (`dumpsys vibrator_manager` reports `status: finished`,
@@ -424,12 +434,24 @@ Details in [`.claude/memory.md`](.claude/memory.md).
       (`RomHeader.kt`, covered by `RomHeaderTest`), and the homebrew
       downloader. The dead **About** button was removed rather than given a
       screen it never had.
-- [ ] **ROM browser, second pass** - favourites, a long-press context menu,
-      relative dates ("6 days ago"), "file not found" rows for a ROM that moved,
-      and a generated placeholder tile (the game's initials over a colour
-      derived from its name) where no cover art was supplied. The gap analysis
-      against a shipped GBA emulator, and the order to do it in, is
+- [x] **ROM browser, second pass** - favourites (the flag had existed since the
+      first version and **nothing ever set it**), a long-press sheet with
+      Play / favourite / information / delete save data / delete game, relative
+      dates ("6 days ago"), "file not found" rows for a game that moved rather
+      than dropping it silently, and a generated placeholder tile: the game's
+      initials over a colour from its name, because almost nobody has cover art
+      beside their ROMs and the list was the same grey cartridge repeated.
+      The gap analysis this came from is
       [`docs/competitive-review.md`](docs/competitive-review.md).
+      Device-verified against real ROMs, which is where the missing "All games"
+      heading turned up: the first unstarred game read as a favourite.
+- [x] **Cover art, downloaded** - off by default, from libretro's thumbnail
+      server, matched **first by the cart's game code and then by the exact
+      file name**. Both are needed: 474 of the 3692 No-Intro entries carry no
+      game code, 289 of those are ordinary retail games, and *Yggdra Union* is
+      one of them. Reasoning, licensing and the alternatives are in
+      [`docs/cover-art.md`](docs/cover-art.md). No artwork is ever bundled in
+      the APK - that line is the whole licensing posture.
 - [ ] **ZIP ROM support**, auto-load-state on open, and "reset and start".
 - [ ] **FPS and audio-underrun counter**, then an audio volume control.
 ---
@@ -457,7 +479,30 @@ Details in [`.claude/memory.md`](.claude/memory.md).
       produced, and the scaling is a display choice the viewer can make again.
       Verified on a device. Screen *recording* is still undone.
 - [ ] Debug tools: breakpoints, memory viewer, register inspector.
-- [ ] RetroAchievements.
+- [x] **RetroAchievements** - softcore, working end to end against a real
+      account. `rcheevos` (MIT, C) is a pinned submodule under
+      `android/app/src/main/cpp/`, built with the NDK. **It is deliberately not
+      in `core/`**: that crate has two Rust dependencies and no C, and deciding
+      what an achievement means is not emulation. The core gained exactly one
+      capability for it - `geebeeayy_peek_memory`, a side-effect-free read of
+      the three regions an achievement runtime asks a GBA for (352 KB: both
+      work RAMs and save memory). Everything else reads 0.
+      Three things cross the JNI boundary: memory (C to Rust, via `dlsym`
+      rather than a link, since the core's `.so` is built outside Gradle),
+      the network (rcheevos does none - it hands over a URL and a C callback,
+      which parks in a slot while the slot id makes the round trip through
+      Kotlin), and events.
+      **Hardcore is off in code.** It needs RetroAchievements' approval and six
+      months of public availability, and it forbids save states, rewind and
+      frame advance - all of which this app has. The server says so itself:
+      "Warning: Unknown Emulator - Hardcore unlocks cannot be earned using
+      this emulator."
+      Full write-up, including what it cannot do, in
+      [`docs/achievements.md`](docs/achievements.md).
+- [ ] **Achievements, second pass** - badge images in the list, leaderboards
+      (rcheevos supports them; the events are currently ignored), and hardcore,
+      which cannot even be applied for until six months after a public
+      release.
 
 ---
 
