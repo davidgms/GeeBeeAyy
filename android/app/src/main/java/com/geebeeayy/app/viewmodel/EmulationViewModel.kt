@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.yield
@@ -163,6 +164,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private val audio = AudioOutput()
 
     /**
+     * Frames actually shown per second, and how often the audio starved.
+     *
+     * Null when the counter is switched off, so the overlay costs nothing to
+     * anyone who has not asked for it. Underruns matter more than the frame
+     * rate here: audio is the frame clock, so a device that keeps up visually
+     * while starving the buffer is the one that crackles.
+     */
+    private val _performance = MutableStateFlow<PerfStats?>(null)
+    val performance: StateFlow<PerfStats?> = _performance.asStateFlow()
+
+    /**
      * Reused across frames. Sized from the real per-frame sample count and
      * the highest fast-forward ratio, plus room to spare: a whole batch has
      * to fit, or `geebeeayy_audio_copy` truncates its tail and the sound
@@ -292,6 +304,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** True if backgrounding paused a session the player had not paused themselves. */
     private var pausedByBackground = false
+
+    /** Read once per ROM launch, like the other display settings. */
+    private var showPerformance = false
+    private var framesThisSecond = 0
+    private var perfWindowStart = 0L
 
     /**
      * Aggregate button bitmask, written from the input thread and read by the
@@ -439,6 +456,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         val settings = DisplaySettings(getApplication())
                         engine.setInterframeBlend(settings.getInterframeBlend())
                         _soundEnabled.value = settings.getSoundEnabled()
+                        showPerformance = settings.getShowPerformance()
+                        _performance.value = null
+                        audio.setVolume(settings.getVolume())
                         resolveSavePaths(file, data)
                         loadExistingSave()
                     }
@@ -659,6 +679,19 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // this guard the loop would write audio to an AudioTrack
                     // that stopEmulation() just stopped.
                     if (!isActive) continue
+
+                    // Once a second, not every frame: the flow drives a
+                    // recomposition, and a number that changes 60 times a
+                    // second is unreadable as well as wasteful.
+                    if (showPerformance) {
+                        framesThisSecond++
+                        val now = System.nanoTime()
+                        if (now - perfWindowStart >= 1_000_000_000L) {
+                            _performance.value = PerfStats(framesThisSecond, audio.underruns)
+                            framesThisSecond = 0
+                            perfWindowStart = now
+                        }
+                    }
 
                     // Unlimited fast forward has no clock: it neither writes
                     // the samples - a blocking audio write would hold it to

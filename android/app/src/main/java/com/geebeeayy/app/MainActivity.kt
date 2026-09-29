@@ -192,6 +192,7 @@ fun GeeBeeAyyNavHost() {
             val isRewinding by viewModel.isRewinding.collectAsState()
             val fastForward by viewModel.fastForward.collectAsState()
             val soundEnabled by viewModel.soundEnabled.collectAsState()
+            val performance by viewModel.performance.collectAsState()
             // Re-read per ROM launch, the same as the scale mode above, so a
             // change in Settings takes effect the next time a game is opened.
             val controlScale = remember(filePath) { DisplaySettings(context).getControlScale() }
@@ -269,6 +270,7 @@ fun GeeBeeAyyNavHost() {
                 fullscreen = fullscreen,
                 showStatusStrip = showStatusStrip,
                 soundEnabled = soundEnabled,
+                performance = performance,
                 onToggleSound = { viewModel.toggleSound() },
                 onReset = { viewModel.reset() },
                 onSettings = {

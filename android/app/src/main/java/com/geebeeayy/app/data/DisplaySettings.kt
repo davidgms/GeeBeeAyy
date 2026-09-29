@@ -276,6 +276,31 @@ class DisplaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_AUTO_LOAD, enabled).apply()
     }
 
+    /**
+     * Whether to draw the frames-per-second and audio-underrun counter.
+     *
+     * Off by default: it is a diagnostic, and a number over the picture is
+     * clutter to everyone who is not chasing a stutter.
+     */
+    fun getShowPerformance(): Boolean = prefs.getBoolean(KEY_PERFORMANCE, false)
+
+    fun setShowPerformance(show: Boolean) {
+        prefs.edit().putBoolean(KEY_PERFORMANCE, show).apply()
+    }
+
+    /**
+     * Output level, 0.0 to 1.0.
+     *
+     * Separate from the system volume because an emulator is often played
+     * alongside something else, and turning the whole phone down is the wrong
+     * tool. Applied to the AudioTrack, so the hardware does the scaling.
+     */
+    fun getVolume(): Float = prefs.getFloat(KEY_VOLUME, 1.0f).coerceIn(0f, 1f)
+
+    fun setVolume(volume: Float) {
+        prefs.edit().putFloat(KEY_VOLUME, volume.coerceIn(0f, 1f)).apply()
+    }
+
     companion object {
         /** 0.7 puts a 48.dp button at 34.dp, which is about as small as it
          *  can get and still be hit reliably. */
@@ -298,6 +323,8 @@ class DisplaySettings(context: Context) {
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
         private const val KEY_COVER_ART = "download_cover_art"
         private const val KEY_AUTO_LOAD = "auto_load_quick_save"
+        private const val KEY_PERFORMANCE = "show_performance"
+        private const val KEY_VOLUME = "volume"
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
         private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
         private const val KEY_CONTROL_TINT = "control_tint"

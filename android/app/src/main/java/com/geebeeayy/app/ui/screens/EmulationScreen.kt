@@ -54,6 +54,7 @@ import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
 import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.engine.RaEngine
+import com.geebeeayy.app.viewmodel.PerfStats
 import com.geebeeayy.app.engine.RaGame
 import com.geebeeayy.app.data.CustomButton
 import com.geebeeayy.app.data.CustomButtonMode
@@ -109,6 +110,7 @@ fun EmulationScreen(
     fullscreen: Boolean = true,
     showStatusStrip: Boolean = true,
     soundEnabled: Boolean = true,
+    performance: PerfStats? = null,
     onToggleSound: () -> Unit = {},
     onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
     gameKey: () -> String? = { null },
@@ -856,6 +858,22 @@ fun EmulationScreen(
                     }
                 },
                 onDismiss = { layoutsModalOpen = false },
+            )
+        }
+
+        // Bottom left, above the battery reading. The first attempt put it
+        // under the toolbar, which on a 20:9 phone is exactly where the
+        // picture starts - a diagnostic that covers what it is diagnosing is
+        // no use. Down here the strip is the one band no control wants.
+        performance?.let { stats ->
+            Text(
+                text = "${stats.fps} fps" +
+                    if (stats.underruns > 0) "  ${stats.underruns} underruns" else "",
+                color = if (stats.underruns > 0) Error else LedGreen,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 30.dp),
             )
         }
 
