@@ -919,8 +919,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            progress?.let { atomicWrite(achievementSidecar(slot), it) }
             if (atomicWrite(stateFile(slot), bytes)) {
+                // After the state, so a failed state write keeps the old pair
+                // intact. A save with no progress drops the old sidecar, or it
+                // would be restored onto a state it does not belong to.
+                val sidecar = achievementSidecar(slot)
+                if (progress != null) atomicWrite(sidecar, progress) else sidecar.delete()
                 _stateMessage.value = "Saved to ${slotName(slot)}"
             } else {
                 _stateMessage.value = "Failed to write ${slotName(slot)}"
