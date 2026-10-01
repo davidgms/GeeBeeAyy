@@ -185,7 +185,6 @@ fun GeeBeeAyyNavHost() {
             // returning here always recomposes this composable fresh.
             val scaleMode = remember(filePath) { DisplaySettings(context).getScaleMode() }
 
-            val frameBuffer by viewModel.frameBuffer.collectAsState()
             val isLoading by viewModel.isLoading.collectAsState()
             val errorMessage by viewModel.errorMessage.collectAsState()
             val stateMessage by viewModel.stateMessage.collectAsState()
@@ -242,7 +241,7 @@ fun GeeBeeAyyNavHost() {
                 LocalDpadCardinalHalf provides dpadCardinal,
             ) {
             EmulationScreen(
-                frameBuffer = frameBuffer,
+                frames = viewModel.frameBuffer,
                 isLoading = isLoading,
                 errorMessage = errorMessage,
                 stateMessage = stateMessage,

@@ -1,5 +1,16 @@
 package com.geebeeayy.app.ui.screens
 
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.StateFlow
+import com.geebeeayy.app.ui.picturePlacement
+import com.geebeeayy.app.ui.GameSurfaceRenderer
+import androidx.compose.ui.viewinterop.AndroidView
+import android.view.SurfaceView
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -29,7 +40,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
@@ -92,7 +102,7 @@ import kotlin.math.roundToInt
 
 @Composable
 fun EmulationScreen(
-    frameBuffer: ByteArray?,
+    frames: StateFlow<ByteArray?>,
     isLoading: Boolean = false,
     errorMessage: String? = null,
     stateMessage: String? = null,
@@ -577,7 +587,7 @@ fun EmulationScreen(
                         onDragEnd = handleDragEnd,
                     )
                     ScreenContainer(
-                        frameBuffer = frameBuffer,
+                        frames = frames,
                         isLoading = isLoading,
                         errorMessage = errorMessage,
                         isPaused = isPaused,
@@ -622,7 +632,7 @@ fun EmulationScreen(
                         .weight(1f)
                 ) {
                 ScreenContainer(
-                    frameBuffer = frameBuffer,
+                    frames = frames,
                     isLoading = isLoading,
                     errorMessage = errorMessage,
                     isPaused = isPaused,
@@ -984,7 +994,7 @@ fun EmulationScreen(
  */
 @Composable
 private fun ScreenContainer(
-    frameBuffer: ByteArray?,
+    frames: StateFlow<ByteArray?>,
     isLoading: Boolean,
     errorMessage: String?,
     isPaused: Boolean,
@@ -999,9 +1009,13 @@ private fun ScreenContainer(
             .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
-        if (frameBuffer != null) {
+        // Only whether a frame exists, not the frame: collecting the frame
+        // itself recomposed this whole screen 60 times a second.
+        val hasFrame by remember(frames) { frames.map { it != null }.distinctUntilChanged() }
+            .collectAsState(initial = frames.value != null)
+        if (hasFrame) {
             GbaScreen(
-                frameBuffer = frameBuffer,
+                frames = frames,
                 scaleMode = scaleMode,
                 filter = screenFilter,
                 verticalBias = pictureVerticalBias,
@@ -1153,127 +1167,33 @@ private fun LayoutEditBar(
     }
 }
 
-/**
- * Largest width/height preserving the source aspect ratio that still fits
- * within [availW] x [availH].
- */
-private fun fitSize(availW: Float, availH: Float, srcW: Int, srcH: Int): Pair<Float, Float> {
-    val scale = minOf(availW / srcW, availH / srcH)
-    return (srcW * scale) to (srcH * scale)
-}
-
-/**
- * Largest whole-number multiple of the source size that fits within
- * [availW] x [availH]. Falls back to [fitSize] when even a 1x scale would
- * overflow - i.e. the window is smaller than the native resolution.
- */
-private fun integerSize(availW: Float, availH: Float, srcW: Int, srcH: Int): Pair<Float, Float> {
-    val maxScale = minOf(availW / srcW, availH / srcH)
-    val intScale = floor(maxScale).toInt()
-    if (intScale < 1) return fitSize(availW, availH, srcW, srcH)
-    return (srcW * intScale).toFloat() to (srcH * intScale).toFloat()
-}
-
 @Composable
 fun GbaScreen(
-    frameBuffer: ByteArray,
+    frames: StateFlow<ByteArray?>,
     scaleMode: ScaleMode = ScaleMode.INTEGER,
     filter: ScreenFilter = ScreenFilter.NONE,
-    /**
-     * Where the picture sits in the space it is given, 0 for the top edge and
-     * 1 for the bottom. Only matters when the space is taller than the
-     * picture, which on a portrait phone it always is: a 3:2 picture is
-     * limited by width there, never by height.
-     */
+    /** 0 puts the picture at the top of its space, 1 at the bottom. See [picturePlacement]. */
     verticalBias: Float = 0.5f,
 ) {
-    val doubled = filter == ScreenFilter.SAI_2X
-    val width = if (doubled) GbaEngine.SCREEN_WIDTH * 2 else GbaEngine.SCREEN_WIDTH
-    val height = if (doubled) GbaEngine.SCREEN_HEIGHT * 2 else GbaEngine.SCREEN_HEIGHT
-    // Reused across frames: the bitmap and its pixel staging buffer are each
-    // allocated once and mutated in place, not recreated 60 times a second.
-    // Keyed on the filter because 2xSaI needs a bitmap four times the size.
-    val bitmap = remember(doubled) {
-        android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val renderer = remember { GameSurfaceRenderer() }
+    // Settings first, then a redraw, so a paused game shows a filter or scale
+    // change at once instead of on the next frame that never comes.
+    LaunchedEffect(scaleMode, filter, verticalBias) {
+        renderer.scaleMode = scaleMode
+        renderer.filter = filter
+        renderer.verticalBias = verticalBias
+        withContext(Dispatchers.Default) { renderer.redraw() }
     }
-    val pixels = remember { IntArray(GbaEngine.SCREEN_WIDTH * GbaEngine.SCREEN_HEIGHT) }
-    val scaled = remember(doubled) {
-        if (doubled) IntArray(width * height) else IntArray(0)
+    // Off the main thread: the pixel conversion and the draw both happen on
+    // the collector. StateFlow conflates, so a slow draw skips frames rather
+    // than queueing them.
+    LaunchedEffect(frames) {
+        withContext(Dispatchers.Default) { frames.collect { renderer.draw(it) } }
     }
-    // `asImageBitmap()` wraps the bitmap in a new object each call, so hoist it
-    // out of the per-frame draw rather than allocating a wrapper 60 times a
-    // second. It stays valid because the bitmap itself is mutated in place.
-    val image = remember(bitmap) { bitmap.asImageBitmap() }
-
-    // A short buffer would throw out of the draw path and take the UI down; the
-    // core has simply not produced a frame yet.
-    //
-    // Measured against the *source* frame, not `width`/`height`: those are
-    // already doubled for 2xSaI, so this asked for 460800 bytes of a buffer
-    // that is always 115200 and returned before drawing anything. Picking the
-    // 2xSaI filter left the play area black for the whole session.
-    if (frameBuffer.size < GbaEngine.FRAME_BUFFER_SIZE) {
-        return
-    }
-
-    for (i in pixels.indices) {
-        val o = i * 3
-        val r = frameBuffer[o].toInt() and 0xFF
-        val g = frameBuffer[o + 1].toInt() and 0xFF
-        val b = frameBuffer[o + 2].toInt() and 0xFF
-        pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-    }
-    if (doubled) {
-        Sai2x.scale(pixels, scaled, GbaEngine.SCREEN_WIDTH, GbaEngine.SCREEN_HEIGHT)
-        bitmap.setPixels(scaled, 0, width, 0, 0, width, height)
-    } else {
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-    }
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val (dstWidth, dstHeight) = when (scaleMode) {
-            ScaleMode.STRETCH -> size.width to size.height
-            ScaleMode.FIT -> fitSize(size.width, size.height, width, height)
-            ScaleMode.INTEGER -> integerSize(size.width, size.height, width, height)
-        }
-        val dstOffsetX = (size.width - dstWidth) / 2f
-        val dstOffsetY = (size.height - dstHeight) * verticalBias.coerceIn(0f, 1f)
-        drawImage(
-            image = image,
-            dstOffset = IntOffset(dstOffsetX.roundToInt(), dstOffsetY.roundToInt()),
-            dstSize = IntSize(dstWidth.roundToInt().coerceAtLeast(0), dstHeight.roundToInt().coerceAtLeast(0)),
-            // A 240x160 source stretched onto a phone screen is many times its
-            // native size; the default filter is bilinear and turns crisp
-            // pixel art into mush. FilterQuality.None disables that sampling
-            // so the game keeps its hard pixel edges.
-            // A 240x160 source stretched onto a phone screen is many times
-            // its native size; bilinear turns crisp pixel art to mush, so
-            // None is the default and Smooth is the opt-in.
-            filterQuality = if (filter == ScreenFilter.SMOOTH) {
-                FilterQuality.Low
-            } else {
-                FilterQuality.None
-            },
-        )
-
-        if (filter == ScreenFilter.SCANLINES) {
-            // Darken every other output row. Drawn as rectangles rather than
-            // a per-pixel pass so the GPU does the work: the cost is one draw
-            // list, not 38,400 multiplies a frame.
-            val rowHeight = (dstHeight / GbaEngine.SCREEN_HEIGHT).coerceAtLeast(1f)
-            if (rowHeight >= 2f) {
-                var y = dstOffsetY + rowHeight / 2f
-                while (y < dstOffsetY + dstHeight) {
-                    drawRect(
-                        color = Color.Black.copy(alpha = 0.35f),
-                        topLeft = Offset(dstOffsetX, y),
-                        size = Size(dstWidth, rowHeight / 2f),
-                    )
-                    y += rowHeight
-                }
-            }
-        }
-    }
+    AndroidView(
+        factory = { context -> SurfaceView(context).apply { holder.addCallback(renderer) } },
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 /**
