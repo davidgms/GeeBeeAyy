@@ -1115,3 +1115,102 @@ fn forced_blank_during_vblank_does_not_write_past_the_frame() {
     assert_eq!(gba.frame_buffer()[0], 0xFF);
     assert_eq!(gba.frame_buffer().len(), 240 * 160 * 3);
 }
+
+/// Mode 1: BG0 tiled in red, BG2 affine in green, both covering the screen,
+/// with the priorities given.
+fn mode1_bg0_and_bg2(bg0_priority: u16, bg2_priority: u16) -> Gba {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    gba.bus.write16(0x0500_0002, 0x001F); // colour 1: red
+    gba.bus.write16(0x0500_0006, 0x03E0); // colour 3: green
+                                          // BG0: 4bpp tile 0 at char base 0 is colour 1; its map at 0xF800 is zero.
+    for i in (0..32u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + i, 0x1111);
+    }
+    gba.bus.write16(0x0400_0008, 0x1F00 | bg0_priority);
+    // BG2: 8bpp tile 0 at char base 1 (0x4000) is colour 3; its map at
+    // screen base 0x10 (0x8000) is zero, so every entry is tile 0.
+    for i in (0..64u32).step_by(2) {
+        gba.bus.write16(0x0600_4000 + i, 0x0303);
+    }
+    gba.bus
+        .write16(0x0400_000C, 0x2000 | (0x10 << 8) | (1 << 2) | bg2_priority);
+    gba.bus.write16(0x0400_0020, 0x0100); // PA = 1.0
+    gba.bus.write16(0x0400_0026, 0x0100); // PD = 1.0
+    gba.bus.write16(0x0400_0000, 0x0501); // mode 1, BG0 + BG2
+    gba
+}
+
+/// GBATEK, LCD I/O BG Control: BGxCNT bits 0-1 order the layers in every
+/// tiled mode. Mode 1 drew BG2 after BG0 unconditionally, so the affine layer
+/// covered a tiled one that outranked it.
+#[test]
+fn mode1_sorts_an_affine_bg_under_a_higher_priority_tiled_bg() {
+    let mut gba = mode1_bg0_and_bg2(0, 1);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "priority-0 BG0 must cover priority-1 BG2"
+    );
+
+    let mut gba = mode1_bg0_and_bg2(1, 0);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0xF8, 0x00],
+        "priority-0 BG2 must cover priority-1 BG0"
+    );
+}
+
+/// Mode 2: BG2 affine in red, BG3 affine in green, both covering the screen.
+fn mode2_bg2_and_bg3(bg2_priority: u16, bg3_priority: u16) -> Gba {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    gba.bus.write16(0x0500_0002, 0x001F); // colour 1: red
+    gba.bus.write16(0x0500_0006, 0x03E0); // colour 3: green
+    for i in (0..64u32).step_by(2) {
+        gba.bus.write16(0x0600_0000 + i, 0x0101); // char base 0, tile 0
+        gba.bus.write16(0x0600_4000 + i, 0x0303); // char base 1, tile 0
+    }
+    // Maps at screen base 0x10 and 0x11 are zero: every entry is tile 0.
+    gba.bus
+        .write16(0x0400_000C, 0x2000 | (0x10 << 8) | bg2_priority);
+    gba.bus
+        .write16(0x0400_000E, 0x2000 | (0x11 << 8) | (1 << 2) | bg3_priority);
+    for base in [0x0400_0020u32, 0x0400_0030] {
+        gba.bus.write16(base, 0x0100); // PA = 1.0
+        gba.bus.write16(base + 6, 0x0100); // PD = 1.0
+    }
+    gba.bus.write16(0x0400_0000, 0x0C02); // mode 2, BG2 + BG3
+    gba
+}
+
+/// Mode 2 drew BG3 over BG2 whatever their priorities said, and broke a tie
+/// the wrong way: on equal priority the lower-numbered background wins.
+#[test]
+fn mode2_sorts_its_affine_bgs_by_priority_then_bg_number() {
+    let mut gba = mode2_bg2_and_bg3(0, 1);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "priority-0 BG2 must cover priority-1 BG3"
+    );
+
+    let mut gba = mode2_bg2_and_bg3(2, 2);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0xF8, 0x00, 0x00],
+        "on a priority tie BG2 must cover BG3"
+    );
+
+    let mut gba = mode2_bg2_and_bg3(1, 0);
+    gba.run_frame();
+    assert_eq!(
+        &gba.frame_buffer()[0..3],
+        [0x00, 0xF8, 0x00],
+        "priority-0 BG3 must cover priority-1 BG2"
+    );
+}

@@ -53,6 +53,9 @@ pub struct Cartridge {
     eeprom_large: bool,
 }
 
+/// Bytes of [`Cartridge::chip_state`] in a save state.
+pub(crate) const CHIP_STATE_LEN: usize = 18;
+
 /// The header's complement check, per GBATEK: subtract every byte from 0xA0 to
 /// 0xBC, then subtract 0x19. The result is what byte 0xBD must hold.
 ///
@@ -464,6 +467,81 @@ impl Cartridge {
             }
             SaveType::None => {}
         }
+    }
+
+    /// The save chip's volatile state - Flash command state, bank and ID
+    /// mode, and where the EEPROM's serial protocol stands - for a save state.
+    /// `save_data` carries only the memory; without this a state taken
+    /// mid-command resumed with the chip idle and bank 0 selected.
+    pub(crate) fn chip_state(&self) -> [u8; CHIP_STATE_LEN] {
+        let e = &self.eeprom_state;
+        let phase = match e.phase {
+            EepromPhase::Opcode => 0,
+            EepromPhase::Address { write: false } => 1,
+            EepromPhase::Address { write: true } => 2,
+            EepromPhase::WriteData => 3,
+            EepromPhase::ReadStop => 4,
+            EepromPhase::WriteStop => 5,
+            EepromPhase::Reading => 6,
+        };
+        let mut b = [0u8; CHIP_STATE_LEN];
+        b[0] = self.flash_state;
+        b[1] = self.flash_bank as u8;
+        b[2] = self.flash_id_mode as u8;
+        b[3] = self.eeprom_addr_bits.unwrap_or(0) as u8;
+        b[4] = self.eeprom_large as u8;
+        b[5] = phase;
+        b[6] = e.count as u8;
+        b[7..9].copy_from_slice(&(e.addr as u16).to_le_bytes());
+        b[9] = e.read_pos as u8;
+        b[10..18].copy_from_slice(&e.acc.to_le_bytes());
+        b
+    }
+
+    /// Inverse of [`Self::chip_state`]. The bytes come from a file, so every
+    /// field is range-checked against what the chip can actually hold, and
+    /// nothing is applied unless all of them pass.
+    pub(crate) fn restore_chip_state(
+        &mut self,
+        b: &[u8; CHIP_STATE_LEN],
+    ) -> Result<(), &'static str> {
+        let phase = match b[5] {
+            0 => EepromPhase::Opcode,
+            1 => EepromPhase::Address { write: false },
+            2 => EepromPhase::Address { write: true },
+            3 => EepromPhase::WriteData,
+            4 => EepromPhase::ReadStop,
+            5 => EepromPhase::WriteStop,
+            6 => EepromPhase::Reading,
+            _ => return Err("EEPROM phase"),
+        };
+        let addr = u16::from_le_bytes([b[7], b[8]]) as usize;
+        if !matches!(b[0], 0..=2 | 4..=8) {
+            return Err("flash command state");
+        }
+        if b[1] > 1 || b[2] > 1 || b[4] > 1 {
+            return Err("flash bank or flag");
+        }
+        if !matches!(b[3], 0 | 6 | 14) {
+            return Err("EEPROM address width");
+        }
+        // 8 KB is the largest chip: 1024 blocks of 8 bytes, 68 read-back bits.
+        if b[6] > 64 || addr >= 1024 || b[9] >= 68 {
+            return Err("EEPROM serial state");
+        }
+        self.flash_state = b[0];
+        self.flash_bank = b[1] as usize;
+        self.flash_id_mode = b[2] != 0;
+        self.eeprom_addr_bits = (b[3] != 0).then_some(b[3] as usize);
+        self.eeprom_large = b[4] != 0;
+        self.eeprom_state = EepromState {
+            phase,
+            acc: u64::from_le_bytes(b[10..18].try_into().unwrap()),
+            count: b[6] as usize,
+            addr,
+            read_pos: b[9] as usize,
+        };
+        Ok(())
     }
 }
 

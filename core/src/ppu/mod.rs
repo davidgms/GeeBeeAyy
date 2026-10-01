@@ -603,8 +603,7 @@ impl Ppu {
 
         match self.bg_mode {
             0 => self.render_mode0_scanline(y, bus),
-            1 => self.render_mode1_scanline(y, bus),
-            2 => self.render_mode2_scanline(y, bus),
+            1 | 2 => self.render_mode1_or_2_scanline(y, bus),
             3 => self.render_mode3_scanline(y, bus),
             4 => self.render_mode4_scanline(y, bus),
             5 => self.render_mode5_scanline(y, bus),
@@ -691,39 +690,9 @@ impl Ppu {
                 if allow & (1 << bg) == 0 {
                     continue;
                 }
-                let (mx, my) = self.mosaic_bg(bg, x, y);
-                let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
-                    self.get_bg_pixel(bg, mx, my, bus);
-
-                let color = if !is_8bpp {
-                    let tile_data_addr = char_base + screen_entry as usize * 32;
-                    let byte_offset = tile_local_y * 4 + tile_local_x / 2;
-                    let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                    let color_index = if tile_local_x % 2 == 0 {
-                        byte & 0x0F
-                    } else {
-                        (byte >> 4) & 0x0F
-                    };
-                    if color_index == 0 {
-                        continue;
-                    }
-                    let entry = palette_bank * 16 + color_index as usize;
-                    bus.read16((0x0500_0000 + entry * 2) as u32)
-                } else {
-                    let tile_data_addr = char_base + screen_entry as usize * 64;
-                    let byte_offset = tile_local_y * 8 + tile_local_x;
-                    let color_index = bus.read8((tile_data_addr + byte_offset) as u32);
-                    if color_index == 0 {
-                        continue;
-                    }
-                    bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
+                let Some(rgb) = self.tiled_bg_rgb(bg, x, y, bus) else {
+                    continue;
                 };
-
-                let rgb = (
-                    ((color & 0x001F) as u8) << 3,
-                    (((color >> 5) & 0x001F) as u8) << 3,
-                    (((color >> 10) & 0x001F) as u8) << 3,
-                );
                 hit[found] = Some((rgb, bg, bg_priority));
                 found += 1;
                 if found == 2 {
@@ -854,80 +823,92 @@ impl Ppu {
     }
 
     // ========================================================================
-    // Mode 1: BG0 + BG1 tiled, BG2 affine
+    // Mode 1: BG0 + BG1 tiled, BG2 affine. Mode 2: BG2 + BG3 affine
     // ========================================================================
 
-    fn render_mode1_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-        // BG0 and BG1: standard tiled (like Mode 0)
-        let mut bg_list: Vec<(u8, usize)> = Vec::new();
-        if self.bg0_enable {
-            bg_list.push(((self.bg0cnt & 3) as u8, 0));
-        }
-        if self.bg1_enable {
-            bg_list.push(((self.bg1cnt & 3) as u8, 1));
-        }
-        bg_list.sort_by_key(|&(p, _)| p);
+    /// Modes 1 and 2: paint the backgrounds the mode has, back to front.
+    /// BG0/BG1 are tiled and BG2/BG3 affine in both; mode 1 has no BG3 and
+    /// mode 2 no BG0/BG1.
+    ///
+    /// GBATEK, LCD I/O BG Control: BGxCNT bits 0-1 order the layers, and on a
+    /// tie the lower BG number is in front - in every tiled mode, not just 0.
+    /// Mode 1 used to draw BG2 over BG0/BG1 unconditionally and mode 2 BG3
+    /// over BG2. Painting lowest priority first also leaves `put_pixel`'s
+    /// 2nd-target buffers holding the next layer down by priority.
+    fn render_mode1_or_2_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
+        let enabled = [
+            self.bg0_enable && self.bg_mode == 1,
+            self.bg1_enable && self.bg_mode == 1,
+            self.bg2_enable,
+            self.bg3_enable && self.bg_mode == 2,
+        ];
+        let cnt = [self.bg0cnt, self.bg1cnt, self.bg2cnt, self.bg3cnt];
+        let mut order: Vec<(u16, usize)> = (0..4)
+            .filter(|&bg| enabled[bg])
+            .map(|bg| (cnt[bg] & 3, bg))
+            .collect();
+        // Back to front: highest priority value, then highest BG number.
+        order.sort_unstable_by(|a, b| b.cmp(a));
 
         for x in 0..SCREEN_WIDTH {
-            for &(_, bg) in &bg_list {
+            for &(_, bg) in &order {
                 if self.window[x] & (1 << bg) == 0 {
                     continue;
                 }
-                let (mx, my) = self.mosaic_bg(bg, x, y);
-                let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
-                    self.get_bg_pixel(bg, mx, my, bus);
-
-                let color = if !is_8bpp {
-                    let tile_data_addr = char_base + screen_entry as usize * 32;
-                    let byte_offset = tile_local_y * 4 + tile_local_x / 2;
-                    let byte = bus.read8((tile_data_addr + byte_offset) as u32);
-                    let color_index = if tile_local_x % 2 == 0 {
-                        byte & 0x0F
-                    } else {
-                        (byte >> 4) & 0x0F
-                    };
-                    if color_index == 0 {
-                        continue;
-                    }
-                    let entry = palette_bank * 16 + color_index as usize;
-                    bus.read16((0x0500_0000 + entry * 2) as u32)
+                let rgb = if bg >= 2 {
+                    self.affine_bg_rgb(bg, x, bus)
                 } else {
-                    let tile_data_addr = char_base + screen_entry as usize * 64;
-                    let byte_offset = tile_local_y * 8 + tile_local_x;
-                    let color_index = bus.read8((tile_data_addr + byte_offset) as u32);
-                    if color_index == 0 {
-                        continue;
-                    }
-                    bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
+                    self.tiled_bg_rgb(bg, x, y, bus)
                 };
-
-                let r = ((color & 0x001F) as u8) << 3;
-                let g = (((color >> 5) & 0x001F) as u8) << 3;
-                let b = (((color >> 10) & 0x001F) as u8) << 3;
-                self.put_pixel(y, x, (r, g, b), bg);
-                break;
-            }
-
-            // BG2 affine
-            if self.bg2_enable && self.window[x] & 0x04 != 0 {
-                self.render_affine_bg_pixel(2, x, y, bus);
+                if let Some(rgb) = rgb {
+                    self.put_pixel(y, x, rgb, bg);
+                }
             }
         }
     }
 
-    // ========================================================================
-    // Mode 2: BG2 + BG3 affine
-    // ========================================================================
+    /// One pixel of a tiled (text) background, or `None` where it is
+    /// transparent.
+    fn tiled_bg_rgb(
+        &self,
+        bg: usize,
+        x: usize,
+        y: usize,
+        bus: &mut super::memory::MemoryBus,
+    ) -> Option<(u8, u8, u8)> {
+        let (mx, my) = self.mosaic_bg(bg, x, y);
+        let (tile_local_x, tile_local_y, screen_entry, char_base, palette_bank, is_8bpp) =
+            self.get_bg_pixel(bg, mx, my, bus);
 
-    fn render_mode2_scanline(&mut self, y: usize, bus: &mut super::memory::MemoryBus) {
-        for x in 0..SCREEN_WIDTH {
-            if self.bg2_enable && self.window[x] & 0x04 != 0 {
-                self.render_affine_bg_pixel(2, x, y, bus);
+        let color = if !is_8bpp {
+            let tile_data_addr = char_base + screen_entry as usize * 32;
+            let byte_offset = tile_local_y * 4 + tile_local_x / 2;
+            let byte = bus.read8((tile_data_addr + byte_offset) as u32);
+            let color_index = if tile_local_x % 2 == 0 {
+                byte & 0x0F
+            } else {
+                (byte >> 4) & 0x0F
+            };
+            if color_index == 0 {
+                return None;
             }
-            if self.bg3_enable && self.window[x] & 0x08 != 0 {
-                self.render_affine_bg_pixel(3, x, y, bus);
+            let entry = palette_bank * 16 + color_index as usize;
+            bus.read16((0x0500_0000 + entry * 2) as u32)
+        } else {
+            let tile_data_addr = char_base + screen_entry as usize * 64;
+            let byte_offset = tile_local_y * 8 + tile_local_x;
+            let color_index = bus.read8((tile_data_addr + byte_offset) as u32);
+            if color_index == 0 {
+                return None;
             }
-        }
+            bus.read16((0x0500_0000 + color_index as usize * 2) as u32)
+        };
+
+        Some((
+            ((color & 0x001F) as u8) << 3,
+            (((color >> 5) & 0x001F) as u8) << 3,
+            (((color >> 10) & 0x001F) as u8) << 3,
+        ))
     }
 
     // ========================================================================
@@ -949,13 +930,12 @@ impl Ppu {
         self.bg3y_internal = self.bg3y;
     }
 
-    fn render_affine_bg_pixel(
-        &mut self,
+    fn affine_bg_rgb(
+        &self,
         bg: usize,
         screen_x: usize,
-        y: usize,
         bus: &mut super::memory::MemoryBus,
-    ) {
+    ) -> Option<(u8, u8, u8)> {
         let (cnt, ref_x, ref_y, pa, pb, pc, pd) = match bg {
             2 => (
                 self.bg2cnt,
@@ -975,7 +955,7 @@ impl Ppu {
                 self.bg3pc as i32,
                 self.bg3pd as i32,
             ),
-            _ => return,
+            _ => return None,
         };
 
         // Screen size 0-3 is 16x16, 32x32, 64x64 or 128x128 tiles.
@@ -993,7 +973,7 @@ impl Ppu {
             tx = tx.rem_euclid(map_pixels);
             ty = ty.rem_euclid(map_pixels);
         } else if tx < 0 || tx >= map_pixels || ty < 0 || ty >= map_pixels {
-            return;
+            return None;
         }
 
         let screen_base = ((cnt >> 8) & 0x1F) as usize * 0x800;
@@ -1007,16 +987,15 @@ impl Ppu {
         let addr = 0x0600_0000 + char_base + tile * 64 + (ty as usize % 8) * 8 + (tx as usize % 8);
         let color_index = bus.read8(addr as u32);
         if color_index == 0 {
-            return;
+            return None;
         }
 
         let color = bus.read16(0x0500_0000 + color_index as u32 * 2);
-        let rgb = (
+        Some((
             ((color & 0x001F) as u8) << 3,
             (((color >> 5) & 0x001F) as u8) << 3,
             (((color >> 10) & 0x001F) as u8) << 3,
-        );
-        self.put_pixel(y, screen_x, rgb, bg);
+        ))
     }
 
     // ========================================================================
@@ -1553,6 +1532,11 @@ impl Ppu {
     /// Turn the pixel work on or off. See [`Self::render_enabled`].
     pub fn set_render_enabled(&mut self, on: bool) {
         self.render_enabled = on;
+    }
+
+    /// Whether interframe blending is on.
+    pub fn interframe_blend(&self) -> bool {
+        self.interframe_blend
     }
 
     /// Turn interframe blending on or off. See [`Self::interframe_blend`].

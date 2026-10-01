@@ -550,3 +550,68 @@ fn div_arm_of_int_min_by_minus_one_does_not_panic() {
     assert_eq!(cpu.registers[0], 0x8000_0000);
     assert_eq!(cpu.registers[1], 0);
 }
+
+// ---------------------------------------------------------------------------
+// SWI 0x00: SoftReset
+// ---------------------------------------------------------------------------
+
+/// Run a THUMB `swi 0x00` from Supervisor mode with every register dirty and
+/// `flag` at 0x03007FFA, so the reset has to switch mode, state and bank.
+fn soft_reset(flag: u8) -> (Cpu, MemoryBus) {
+    let mut bus = MemoryBus::new();
+    bus.write16(BASE, 0xDF00); // swi 0x00
+    bus.write32(0x0300_7DFC, 0xCAFE_F00D); // just below the cleared block
+    bus.write32(0x0300_7E00, 0xDEAD_BEEF);
+    bus.write32(0x0300_7FF8, 0xDEAD_BEEF);
+    bus.write8(0x0300_7FFA, flag);
+    let mut cpu = Cpu::new();
+    cpu.set_cpsr(0x13 | 0x20); // Supervisor, THUMB
+    for r in 0..15 {
+        cpu.registers[r] = 0x1111_1111 * (r as u32 + 1);
+    }
+    cpu.registers[15] = BASE;
+    cpu.irq_registers = [0x1234, 0x5678];
+    cpu.spsr_svc = 0x1F;
+    cpu.spsr_irq = 0x1F;
+    cpu.step(&mut bus);
+    (cpu, bus)
+}
+
+/// GBATEK, BIOS Reset Functions: SoftReset clears 0x3007E00-0x3007FFF, sets
+/// SP_svc/SP_irq/SP_sys to 0x3007FE0/0x3007FA0/0x3007F00, zeroes R0-R12,
+/// LR_svc, SPSR_svc, LR_irq and SPSR_irq, enters System mode and jumps to
+/// 0x08000000 through `BX R14`. It used to return without doing anything.
+#[test]
+fn soft_reset_reinitialises_the_machine_and_jumps_to_rom() {
+    let (cpu, bus) = soft_reset(0);
+    assert_eq!(cpu.registers[15], 0x0800_0000, "SoftReset must jump to ROM");
+    assert_eq!(cpu.registers[14], 0x0800_0000, "the jump goes through LR");
+    assert_eq!(cpu.cpsr & 0x1F, 0x1F, "SoftReset must leave System mode");
+    assert_eq!(cpu.cpsr & 0x20, 0, "SoftReset must leave ARM state");
+    assert_eq!(cpu.registers[..13], [0; 13], "R0-R12 must be zero");
+    assert_eq!(cpu.registers[13], 0x0300_7F00, "SP_sys");
+    assert_eq!(cpu.svc_registers, [0x0300_7FE0, 0], "SP_svc and LR_svc");
+    assert_eq!(cpu.irq_registers, [0x0300_7FA0, 0], "SP_irq and LR_irq");
+    assert_eq!((cpu.spsr_svc, cpu.spsr_irq), (0, 0));
+    for addr in (0x0300_7E00..0x0300_8000).step_by(4) {
+        assert_eq!(bus.read32(addr), 0, "{addr:08X} must be cleared");
+    }
+    assert_eq!(
+        bus.read32(0x0300_7DFC),
+        0xCAFE_F00D,
+        "only 0x200 bytes clear"
+    );
+}
+
+/// A non-zero byte at 0x3007FFA selects the multiboot entry in EWRAM. It is
+/// read before the block holding it is cleared.
+#[test]
+fn soft_reset_with_the_ram_flag_jumps_to_ewram() {
+    let (cpu, bus) = soft_reset(1);
+    assert_eq!(cpu.registers[15], 0x0200_0000);
+    assert_eq!(
+        bus.read8(0x0300_7FFA),
+        0,
+        "the flag is cleared with the rest"
+    );
+}

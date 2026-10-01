@@ -23,12 +23,12 @@ pub extern "C" fn geebeeayy_create() -> *mut c_void {
                 .with_tag("GeeBeeAyy"),
         );
     }
-    eprintln!("[GeeBeeAyy] === Creating new GBA instance ===");
+    log::debug!("[GeeBeeAyy] === Creating new GBA instance ===");
     let handle = Box::new(GbaHandle {
         inner: Gba::new(),
         rewind: crate::rewind::Rewind::new(0),
     });
-    eprintln!("[GeeBeeAyy] Created, handle={:p}", handle.as_ref());
+    log::debug!("[GeeBeeAyy] Created, handle={:p}", handle.as_ref());
     Box::into_raw(handle) as *mut c_void
 }
 
@@ -78,22 +78,27 @@ pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, l
     // process. The Android side happens to reject anything under 0xC0 first;
     // this is a public C entry point and cannot rely on that.
     match rom.get(..4) {
-        Some(head) => eprintln!(
+        Some(head) => log::debug!(
             "[GeeBeeAyy] load_rom: {} bytes, first4={:02X}{:02X}{:02X}{:02X}",
-            len, head[0], head[1], head[2], head[3]
+            len,
+            head[0],
+            head[1],
+            head[2],
+            head[3]
         ),
-        None => eprintln!("[GeeBeeAyy] load_rom: {len} bytes, too short to be a ROM"),
+        None => log::warn!("[GeeBeeAyy] load_rom: {len} bytes, too short to be a ROM"),
     }
     guarded(-1, || match handle.inner.load_rom(rom) {
         Ok(()) => {
-            eprintln!(
+            log::debug!(
                 "[GeeBeeAyy] load_rom: OK, CPU PC={:08X} CPSR={:08X}",
-                handle.inner.cpu.registers[15], handle.inner.cpu.cpsr
+                handle.inner.cpu.registers[15],
+                handle.inner.cpu.cpsr
             );
             0
         }
         Err(e) => {
-            eprintln!("[GeeBeeAyy] load_rom: FAILED - {:?}", e);
+            log::warn!("[GeeBeeAyy] load_rom: FAILED - {:?}", e);
             -1
         }
     })
@@ -111,8 +116,12 @@ pub unsafe extern "C" fn geebeeayy_run_frame(ptr: *mut c_void) {
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     handle.inner.run_frame_counter += 1;
     let fc = handle.inner.run_frame_counter;
-    if fc <= 5 || fc % 60 == 0 {
-        eprintln!(
+    // `log`, not `eprintln!`: stderr goes nowhere on Android, and this runs
+    // on the frame path. The pixel count below is a full frame-buffer scan,
+    // so it only runs when someone is listening at debug level.
+    let trace = (fc <= 5 || fc % 60 == 0) && log::log_enabled!(log::Level::Debug);
+    if trace {
+        log::debug!(
             "[GeeBeeAyy] frame={} PC={:08X} CPSR={:08X} halted={} io_halt={} IME={} IE={:04X} IF={:04X} scanline={} cycles={}",
             fc,
             handle.inner.cpu.registers[15],
@@ -127,7 +136,7 @@ pub unsafe extern "C" fn geebeeayy_run_frame(ptr: *mut c_void) {
         );
     }
     guarded((), || handle.inner.run_frame());
-    if fc <= 5 || fc % 60 == 0 {
+    if trace {
         let fb = handle.inner.frame_buffer();
         let mut non_zero = 0u32;
         for chunk in fb.chunks(3) {
@@ -135,7 +144,7 @@ pub unsafe extern "C" fn geebeeayy_run_frame(ptr: *mut c_void) {
                 non_zero += 1;
             }
         }
-        eprintln!(
+        log::debug!(
             "[GeeBeeAyy] frame={} AFTER: PC={:08X} CPSR={:08X} halted={} IME={} IE={:04X} IF={:04X} non_zero_px={}",
             fc,
             handle.inner.cpu.registers[15],

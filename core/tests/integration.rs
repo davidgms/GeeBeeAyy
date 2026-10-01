@@ -236,3 +236,34 @@ fn reset_puts_the_clock_back_to_zero() {
     gba.reset();
     assert_eq!(gba.cycles, 0);
 }
+
+/// Loading a second ROM is a power cycle: nothing of the first game's CPU,
+/// memory or I/O state may survive into the second. `load_rom` used to swap
+/// the cartridge and reset only the PC.
+#[test]
+fn loading_a_rom_resets_the_machine() {
+    let mut gba = Gba::new();
+    gba.load_rom(&rom(&[0xEAFF_FFFE])).expect("ROM should load");
+    gba.cpu.registers[0] = 0x1234_5678;
+    gba.bus.write32(0x0200_0000, 0xDEAD_BEEF);
+    gba.bus.write32(0x0300_0000, 0xDEAD_BEEF);
+    gba.bus.write16(0x0500_0000, 0x7FFF);
+    gba.bus.write16(0x0400_0000, 0x0403); // DISPCNT
+    gba.bus.write16(0x0400_0200, 0x0001); // IE
+    gba.bus.write16(0x0400_0100, 0xFF00);
+    gba.bus.write16(0x0400_0102, 0x0080); // timer 0 on
+    gba.run_frame();
+    gba.set_interframe_blend(true);
+
+    gba.load_rom(&rom(&[0xEAFF_FFFE])).expect("ROM should load");
+    assert!(gba.ppu.interframe_blend(), "a display setting is not state");
+    assert_eq!(gba.cpu.registers[0], 0, "CPU registers survived the load");
+    assert_eq!(gba.bus.read32(0x0200_0000), 0, "EWRAM survived the load");
+    assert_eq!(gba.bus.read32(0x0300_0000), 0, "IWRAM survived the load");
+    assert_eq!(gba.bus.read16(0x0500_0000), 0, "palette survived the load");
+    assert_eq!(gba.bus.read16(0x0400_0000), 0, "DISPCNT survived the load");
+    assert_eq!(gba.bus.io.ie, 0, "IE survived the load");
+    assert_eq!(gba.cycles, 0, "the cycle count survived the load");
+    gba.run_frame();
+    assert_eq!(gba.bus.read16(0x0400_0100), 0, "timer 0 is still running");
+}

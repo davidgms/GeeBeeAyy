@@ -51,7 +51,9 @@ impl Gba {
         // `store8`, which is where save accesses land.
         self.bus.cart = Cartridge::from_bytes(data)?;
         self.bus.load_rom(data);
-        self.cpu.boot();
+        // A new cartridge is a power cycle. Booting the CPU alone left the
+        // previous game's RAM, I/O, timers and DMA running under the new one.
+        self.reset();
         Ok(())
     }
 
@@ -65,7 +67,11 @@ impl Gba {
         self.bus.reset();
         self.cpu = Cpu::new();
         self.cpu.boot();
+        // Interframe blending is a frontend display setting, not machine
+        // state, and the frontend may set it before the ROM is loaded.
+        let blend = self.ppu.interframe_blend();
         self.ppu = Ppu::new();
+        self.ppu.set_interframe_blend(blend);
         self.apu = Apu::new();
         self.timer = Timer::new();
         self.dma = Dma::new();
