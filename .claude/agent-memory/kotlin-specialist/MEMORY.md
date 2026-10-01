@@ -13,3 +13,4 @@ Newest last. Each line points at the file holding the detail.
 Durable facts about the project itself go to `.claude/memory.md` or
 `docs/` instead, so every agent and every human gets them; leave a line
 here pointing at it.
+- **2026-10-01** - [VM is per nav entry; proguard-rules.pro missing](2026-10-01-viewmodel-is-per-nav-entry-and-no-proguard-file.md)

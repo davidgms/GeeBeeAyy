@@ -732,7 +732,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private fun checkSaveDirty() {
         if (engine.saveTakeDirty()) {
-            pendingSaveBytes = engine.readSave()
+            val bytes = engine.readSave()
+            // An empty read is never a real save: no cart has zero bytes of
+            // save memory, so this is a failure. Writing it would rename a
+            // 0-byte file over the player's real .sav - the one loss a battery
+            // save exists to prevent. `loadExistingSave` already ignores empty
+            // files on the way in; this keeps them from being made.
+            if (bytes.isEmpty()) return
+            pendingSaveBytes = bytes
             scheduleSaveFlush()
         }
     }
@@ -1061,6 +1068,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             // `AudioTrack.write`, and releasing the track under a live write
             // is a native crash. Leaking both beats a SIGSEGV on the way out.
             audio.release()
+            // Detached before the free, not after: the achievement bridge
+            // holds this handle raw, and would otherwise read freed memory.
+            RaEngine.attachEmulator(0L)
             engine.destroy()
         } else {
             Log.w(TAG, "Emulation thread still running; leaking the core handle and the audio track rather than freeing them under a live call")
