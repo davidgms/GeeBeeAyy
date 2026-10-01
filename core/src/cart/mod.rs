@@ -183,6 +183,10 @@ impl Cartridge {
         self.rom.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.rom.is_empty()
+    }
+
     /// Address width in bits: 6 for a 512-byte EEPROM, 14 for an 8 KB one.
     ///
     /// The chip size is only a fallback. What actually decides it is the

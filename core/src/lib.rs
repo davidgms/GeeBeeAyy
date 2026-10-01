@@ -32,6 +32,12 @@ pub struct Gba {
     pub run_frame_counter: u64,
 }
 
+impl Default for Gba {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gba {
     pub fn new() -> Self {
         Self {
@@ -124,15 +130,15 @@ impl Gba {
         }
 
         let cycles = self.cpu.step(&mut self.bus);
-        self.cycles += cycles as u32 as u64;
+        self.cycles += cycles as u64;
         // Before the PPU tick, so a channel enabled by this instruction is
         // configured in time for an HBlank or VBlank that lands in the same
         // step.
         self.apply_dma_writes();
         self.apply_timer_writes();
-        self.timer.tick(cycles as u32, &mut self.bus);
-        self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
-        self.apu.tick(cycles as u32);
+        self.timer.tick(cycles, &mut self.bus);
+        self.ppu.tick(cycles, &mut self.bus, &mut self.dma);
+        self.apu.tick(cycles);
 
         self.post_tick();
 

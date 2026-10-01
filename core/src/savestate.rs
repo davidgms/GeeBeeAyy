@@ -117,11 +117,11 @@ impl SaveState {
         // background scroll registers and everything else came back as
         // whatever the fresh instance happened to hold.
         buf.extend_from_slice(gba.bus.io_regs_data());
-        buf.extend_from_slice(&gba.bus.ewram_data());
-        buf.extend_from_slice(&gba.bus.iwram_data());
-        buf.extend_from_slice(&gba.bus.palette_data());
-        buf.extend_from_slice(&gba.bus.vram_data());
-        buf.extend_from_slice(&gba.bus.oam_data());
+        buf.extend_from_slice(gba.bus.ewram_data());
+        buf.extend_from_slice(gba.bus.iwram_data());
+        buf.extend_from_slice(gba.bus.palette_data());
+        buf.extend_from_slice(gba.bus.vram_data());
+        buf.extend_from_slice(gba.bus.oam_data());
 
         // APU. Without this, every channel came back silent until the game
         // next wrote a sound register - a sustained note simply stopped.
@@ -275,11 +275,11 @@ impl SaveState {
 
         gba.bus.waitcnt = read_u16(&mut cursor)?;
         read_exact_vec(&mut cursor, gba.bus.io_regs_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.ewram_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.iwram_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.palette_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.vram_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.oam_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.ewram_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.iwram_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.palette_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.vram_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.oam_data_mut())?;
 
         // Bound the length against what is actually left: these come from a
         // file on disk, and a corrupt or truncated state with a length field

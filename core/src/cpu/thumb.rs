@@ -145,10 +145,10 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
         // Format 4/5/6: ALU, hi-register + BX, PC-relative load
         0b0100 => {
-            if bits15_10 == 0b0100_00 {
+            if bits15_10 == 0b01_0000 {
                 format4_alu(instruction, cpu);
                 1
-            } else if bits15_10 == 0b0100_01 {
+            } else if bits15_10 == 0b01_0001 {
                 format5_hireg(instruction, cpu);
                 3
             } else {
@@ -540,7 +540,7 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             if shift == 0 {
                 result = rd_val;
                 cpu.set_reg(rd, result);
-            } else if shift % 32 == 0 {
+            } else if shift.is_multiple_of(32) {
                 cpu.set_flag_nz_data(rd_val, rd_val >> 31 == 1);
                 cpu.set_reg(rd, rd_val);
             } else {

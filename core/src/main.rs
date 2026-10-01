@@ -121,7 +121,7 @@ fn main() {
 }
 
 fn save_ppm_file(path: &str, data: &[u8; 240 * 160 * 3]) {
-    let header = format!("P6\n240 160\n255\n");
+    let header = "P6\n240 160\n255\n".to_string();
     let mut output = header.into_bytes();
     output.extend_from_slice(data);
     fs::write(path, &output).expect("Failed to write PPM file");

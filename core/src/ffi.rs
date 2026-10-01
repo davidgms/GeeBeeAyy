@@ -66,6 +66,11 @@ fn guarded<T>(fallback: T, f: impl FnOnce() -> T) -> T {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(fallback)
 }
 
+/// Load a ROM image and power-cycle the machine. Returns 0 on success, -1 if
+/// the image is rejected.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `data` must point to `len` readable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, len: usize) -> i32 {
     if ptr.is_null() || data.is_null() {
@@ -492,6 +497,12 @@ pub unsafe extern "C" fn geebeeayy_rewind_clear(ptr: *mut c_void) {
     handle.rewind.clear();
 }
 
+/// Copy a fresh save state into `out`. Returns its length, or 0 if it does
+/// not fit in `max_len`.
+///
+/// # Safety
+/// `ptr` must be a valid handle and `out` must point to `max_len` writable
+/// bytes.
 #[no_mangle]
 pub unsafe extern "C" fn geebeeayy_state_read(
     ptr: *mut c_void,
@@ -751,7 +762,7 @@ pub mod android {
 
     #[no_mangle]
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveRead<'local>(
-        mut env: JNIEnv<'local>,
+        env: JNIEnv<'local>,
         _class: JClass,
         handle: jlong,
     ) -> JByteArray<'local> {
@@ -794,7 +805,7 @@ pub mod android {
 
     #[no_mangle]
     pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeStateRead<'local>(
-        mut env: JNIEnv<'local>,
+        env: JNIEnv<'local>,
         _class: JClass,
         handle: jlong,
     ) -> JByteArray<'local> {

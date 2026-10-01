@@ -190,6 +190,12 @@ pub struct Apu {
     pub fifo_b_enabled: bool,
 }
 
+impl Default for Apu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Apu {
     pub fn new() -> Self {
         Self {
@@ -673,7 +679,7 @@ impl Apu {
                     0
                 };
                 let wave_byte = self.ch3.wave_ram[(base + wave_idx / 2) % self.ch3.wave_ram.len()];
-                let nibble = if wave_idx % 2 == 0 {
+                let nibble = if wave_idx.is_multiple_of(2) {
                     wave_byte >> 4
                 } else {
                     wave_byte & 0x0F

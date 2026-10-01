@@ -533,8 +533,8 @@ fn a_window_hides_the_layers_winout_leaves_out() {
     let mut gba = bg_over_backdrop();
     // WIN0 covers x 0..64, y 0..32. GBATEK: X1/Y1 - the left and top edges -
     // live in bits 8-15, so the *high* byte is the near edge.
-    gba.bus.write16(0x0400_0040, (0 << 8) | 64);
-    gba.bus.write16(0x0400_0044, (0 << 8) | 32);
+    gba.bus.write16(0x0400_0040, 64);
+    gba.bus.write16(0x0400_0044, 32);
     gba.bus.write16(0x0400_0048, 0x0001); // inside WIN0: BG0 only
     gba.bus.write16(0x0400_004A, 0x0000); // outside: nothing
     gba.bus.write16(0x0400_0000, 0x2100); // mode 0, BG0 on, WIN0 on
@@ -565,10 +565,10 @@ fn a_window_hides_the_layers_winout_leaves_out() {
 #[test]
 fn win0_takes_precedence_over_win1() {
     let mut gba = bg_over_backdrop();
-    gba.bus.write16(0x0400_0040, (0 << 8) | 64); // WIN0: x 0..64
-    gba.bus.write16(0x0400_0044, (0 << 8) | 64); // WIN0: y 0..64
-    gba.bus.write16(0x0400_0042, (0 << 8) | 240); // WIN1: the whole screen
-    gba.bus.write16(0x0400_0046, (0 << 8) | 160);
+    gba.bus.write16(0x0400_0040, 64); // WIN0: x 0..64
+    gba.bus.write16(0x0400_0044, 64); // WIN0: y 0..64
+    gba.bus.write16(0x0400_0042, 240); // WIN1: the whole screen
+    gba.bus.write16(0x0400_0046, 160);
     gba.bus.write16(0x0400_0048, 0x0100); // WIN0: nothing, WIN1: BG0
     gba.bus.write16(0x0400_004A, 0x0000);
     gba.bus.write16(0x0400_0000, 0x6100); // BG0 on, WIN0 + WIN1 on

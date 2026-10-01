@@ -169,6 +169,12 @@ pub struct IoHandler {
     pub intr_wait_active: bool,
 }
 
+impl Default for IoHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IoHandler {
     pub fn new() -> Self {
         Self {

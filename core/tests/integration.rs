@@ -152,7 +152,7 @@ fn peek_copies_a_run_of_bytes() {
 /// whatever cart is in.
 #[test]
 fn peek_never_speaks_for_the_eeprom_chip() {
-    let mut gba = Gba::new();
+    let gba = Gba::new();
     let mut out = [0u8; 1];
     for address in [0x0DFF_FF00u32, 0x0DFF_FFFF, 0x0D00_0000] {
         gba.peek_memory(address, &mut out);

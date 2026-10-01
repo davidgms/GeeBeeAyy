@@ -412,7 +412,7 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
     let value = if immediate {
         let rotate = ((instruction >> 8) & 0xF) * 2;
         let imm8 = instruction & 0xFF;
-        (imm8 as u32).rotate_right(rotate)
+        imm8.rotate_right(rotate)
     } else {
         cpu.reg((instruction & 0xF) as usize)
     };
@@ -765,7 +765,7 @@ fn branch(instruction: u32, cpu: &mut Cpu) -> u32 {
     // Sign-extend 24-bit offset to 32 bits, shift left 2
     let offset = ((instruction & 0x00FF_FFFF) << 2) as i32;
     let offset = if offset & 0x0200_0000 != 0 {
-        (offset as i32) | 0xFC00_0000u32 as i32
+        offset | 0xFC00_0000u32 as i32
     } else {
         offset
     };

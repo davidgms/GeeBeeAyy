@@ -1,4 +1,6 @@
 const SCREEN_WIDTH: usize = 240;
+/// An RGB888 pixel.
+type Rgb = (u8, u8, u8);
 const SCREEN_HEIGHT: usize = 160;
 const FRAME_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
 
@@ -53,7 +55,7 @@ pub struct Ppu {
     /// whatever their priority said. Holding them here instead lets the
     /// compositor order them against the backgrounds properly.
     /// Colour, priority, and whether the sprite was semi-transparent.
-    obj_pixel: [Option<((u8, u8, u8), u8, bool)>; SCREEN_WIDTH],
+    obj_pixel: [Option<(Rgb, u8, bool)>; SCREEN_WIDTH],
     /// Pixels covered by an OBJ-window sprite (OAM mode 2). Those sprites are
     /// never drawn; their non-transparent dots shape a window instead.
     obj_window: [bool; SCREEN_WIDTH],
@@ -142,6 +144,12 @@ pub struct Ppu {
     bg2y_internal: i32,
     bg3x_internal: i32,
     bg3y_internal: i32,
+}
+
+impl Default for Ppu {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Ppu {
@@ -403,14 +411,14 @@ impl Ppu {
         self.bg2pc = bus.read16(0x0400_0024) as i16;
         self.bg2pd = bus.read16(0x0400_0026) as i16;
         self.bg3pa = bus.read16(0x0400_0030) as i16;
-        self.bg3pb = bus.read16(0x0400_0032) as u16 as i16;
+        self.bg3pb = bus.read16(0x0400_0032) as i16;
         self.bg3pc = bus.read16(0x0400_0034) as i16;
         self.bg3pd = bus.read16(0x0400_0036) as i16;
 
         // Color effects
         self.bldcnt = bus.read16(0x0400_0050);
         self.bldalpha = bus.read16(0x0400_0052);
-        self.bldy = (bus.read8(0x0400_0054) & 0x1F) as u8;
+        self.bldy = bus.read8(0x0400_0054) & 0x1F;
 
         // Mosaic
         let mosaic = bus.read16(0x0400_004C);
@@ -683,7 +691,7 @@ impl Ppu {
 
             // Colour effects need the layer *below* the top one, so collect
             // the first two opaque backgrounds rather than stopping at one.
-            let mut hit: [Option<((u8, u8, u8), usize, u8)>; 2] = [None, None];
+            let mut hit: [Option<(Rgb, usize, u8)>; 2] = [None, None];
             let mut found = 0usize;
             let allow = self.window[x];
             for &(bg_priority, bg) in &bg_list {
@@ -739,7 +747,6 @@ impl Ppu {
                 }
             }
             push((backdrop, LAYER_BD));
-            drop(push);
 
             let (top, top_layer) = stack[0];
             // With nothing but the backdrop there is no second layer; the
@@ -1096,7 +1103,7 @@ impl Ppu {
                 (width, height)
             };
             let row = (y as i32 - sy).rem_euclid(256);
-            if row >= box_h as i32 {
+            if row >= box_h {
                 continue;
             }
 
@@ -1148,10 +1155,10 @@ impl Ppu {
 
                 let (tex_x, tex_y) = if is_affine {
                     let rel_x = col as i32 - box_w as i32 / 2;
-                    let rel_y = row - box_h as i32 / 2;
+                    let rel_y = row - box_h / 2;
                     (
                         (pa * rel_x + pb * rel_y) / 256 + width as i32 / 2,
-                        (pc * rel_x + pd * rel_y) / 256 + height as i32 / 2,
+                        (pc * rel_x + pd * rel_y) / 256 + height / 2,
                     )
                 } else {
                     let x = if hflip {
@@ -1159,10 +1166,10 @@ impl Ppu {
                     } else {
                         col as i32
                     };
-                    let y = if vflip { height as i32 - 1 - row } else { row };
+                    let y = if vflip { height - 1 - row } else { row };
                     (x, y)
                 };
-                if tex_x < 0 || tex_x >= width as i32 || tex_y < 0 || tex_y >= height as i32 {
+                if tex_x < 0 || tex_x >= width as i32 || tex_y < 0 || tex_y >= height {
                     continue;
                 }
                 // Mosaic coarsens the coordinate the texture is sampled at,

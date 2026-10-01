@@ -27,6 +27,12 @@ pub struct MemoryBus {
     pub io: super::io::IoHandler,
 }
 
+impl Default for MemoryBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryBus {
     pub fn new() -> Self {
         let mut bus = Self {
