@@ -227,8 +227,8 @@ fun GeeBeeAyyNavHost() {
             DisposableEffect(lifecycleOwner, viewModel) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
-                        Lifecycle.Event.ON_STOP -> viewModel.onAppBackgrounded()
-                        Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                        Lifecycle.Event.ON_PAUSE -> viewModel.onAppBackgrounded()
+                        Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
                         else -> {}
                     }
                 }
