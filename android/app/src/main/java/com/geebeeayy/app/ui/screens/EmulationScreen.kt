@@ -1,5 +1,8 @@
 package com.geebeeayy.app.ui.screens
 
+import com.geebeeayy.app.ui.clampedDrag
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
@@ -1224,6 +1227,9 @@ private fun <T> Modifier.movableControl(
     // slider can move after a control was already sized.
     val scale = (scales[button] ?: 1f)
         .coerceAtLeast(smallestUsefulControlScale(LocalGlobalControlScale.current))
+    // Where the control is drawn, scale included, and the box the controls
+    // share: the drag below keeps the first inside the second. See [clampedDrag].
+    val drawnBounds = remember { arrayOf(Rect.Zero, Rect.Zero) }
     return this
         .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
         // A layer, not a size change. Compose maps pointer input back through
@@ -1231,6 +1237,10 @@ private fun <T> Modifier.movableControl(
         // register - and the neighbours do not move to make room, which is
         // the point of a layout the player positioned by hand.
         .graphicsLayer(scaleX = scale, scaleY = scale)
+        .onGloballyPositioned {
+            drawnBounds[0] = it.boundsInWindow()
+            it.parentLayoutCoordinates?.let { parent -> drawnBounds[1] = parent.boundsInWindow() }
+        }
         .then(
             if (!editing) {
                 Modifier
@@ -1251,7 +1261,11 @@ private fun <T> Modifier.movableControl(
                         ) { change, drag ->
                             change.consume()
                             val current = offsets[button] ?: Offset.Zero
-                            offsets[button] = current + drag
+                            val allowed = clampedDrag(drawnBounds[0], drag, drawnBounds[1])
+                            // Moved along with the control, so several drag
+                            // events before the next layout pass still add up.
+                            drawnBounds[0] = drawnBounds[0].translate(allowed)
+                            offsets[button] = current + allowed
                         }
                     }
             }

@@ -581,8 +581,9 @@ whole-codebase pass, before anything goes near a store.
       low storage, a dropped network during a fetch, the layout editor pushed
       to its limits. Looking for states a player can reach and not get out of.
       Partly done, see [`docs/phase4-device-run-2026-10-01.md`](docs/phase4-device-run-2026-10-01.md):
-      rapid input, save/load spam, backgrounding and ROM switching pass. Not yet:
-      rotation, low storage, dropped network, the layout editor.
+      rapid input, save/load spam, backgrounding, ROM switching, activity
+      rebuilds, a dropped network and the layout editor pass. Not yet: rotation
+      by hand and low storage.
 - [ ] **Performance on a phone** - frame pacing and audio underruns over a long
       session, not a single reading; CPU, memory and battery drain; thermal
       throttling after sustained play; cold-start and ROM-load times; the cost
