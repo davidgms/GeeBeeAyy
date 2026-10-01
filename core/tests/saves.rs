@@ -784,3 +784,77 @@ fn eeprom_round_trips_a_14_bit_block_on_a_large_cart() {
         "an 8 KB EEPROM on a 32 MB cart did not return the block that was written"
     );
 }
+
+/// Write one 64-bit block with a 14-bit address, the way an 8 KB game's DMA
+/// does: 2 opcode + 14 address + 64 data + 1 stop = 81 halfwords.
+fn eeprom14_write(gba: &mut Gba, window: u32, block: u64, payload: u64) {
+    let mut write = vec![true, false];
+    write.extend(bits_of(block, 14));
+    write.extend(bits_of(payload, 64));
+    write.push(false);
+    gba.bus.eeprom_begin_dma(window, write.len());
+    for &b in &write {
+        gba.bus.write16(window, b as u16);
+    }
+}
+
+fn eeprom14_read(gba: &mut Gba, window: u32, block: u64) -> u64 {
+    let mut read = vec![true, true];
+    read.extend(bits_of(block, 14));
+    read.push(false);
+    gba.bus.eeprom_begin_dma(window, read.len());
+    for &b in &read {
+        gba.bus.write16(window, b as u16);
+    }
+    gba.bus.eeprom_begin_dma(window, 68);
+    let out: Vec<bool> = (0..68)
+        .map(|_| gba.bus.read16_mut(window) & 1 == 1)
+        .collect();
+    out[4..].iter().fold(0u64, |acc, &b| (acc << 1) | b as u64)
+}
+
+/// An 8 KB EEPROM on a cart of 16 MB or less.
+///
+/// The chip size used to be guessed from the ROM size alone - over 16 MB
+/// meant 8 KB, anything else 512 bytes - so a small cart with a 64 Kbit chip
+/// was given 512 bytes and its 14-bit addresses masked to 6 bits. Block 100
+/// then landed on block 36 and overwrote it: **save corruption**, and an
+/// existing 8 KB `.sav` truncated on load. The Legend of Zelda: The Minish Cap
+/// is 16 MB with exactly this chip. The game says how big its chip is by the
+/// address width it uses, so that is what has to decide it.
+#[test]
+fn an_8kb_eeprom_on_a_small_cart_keeps_every_block() {
+    let mut gba = gba_with("EEPROM_V124"); // a 1 KB ROM - far under 16 MB
+    let window = 0x0D00_0000;
+
+    eeprom14_write(&mut gba, window, 36, 0x1111_1111_1111_1111);
+    eeprom14_write(&mut gba, window, 100, 0x2222_2222_2222_2222);
+
+    assert_eq!(
+        eeprom14_read(&mut gba, window, 36),
+        0x1111_1111_1111_1111,
+        "block 100 overwrote block 36: the 8 KB chip was sized as 512 bytes"
+    );
+    assert_eq!(eeprom14_read(&mut gba, window, 100), 0x2222_2222_2222_2222);
+    assert_eq!(
+        gba.cartridge().save_data().map(|d| d.len()),
+        Some(8 * 1024),
+        "a game that addresses 8 KB must get an 8 KB save file"
+    );
+}
+
+/// The other half: a 512-byte game must still get a 512-byte save, or every
+/// existing `.sav` for those games stops matching what is written back.
+#[test]
+fn a_512_byte_eeprom_game_keeps_a_512_byte_save() {
+    let mut gba = gba_with("EEPROM_V122");
+    let mut write = vec![true, false];
+    write.extend(bits_of(3, 6));
+    write.extend(bits_of(0xABCD, 64));
+    write.push(false);
+    gba.bus.eeprom_begin_dma(0x0D00_0000, write.len());
+    for &b in &write {
+        gba.bus.write16(0x0D00_0000, b as u16);
+    }
+    assert_eq!(gba.cartridge().save_data().map(|d| d.len()), Some(512));
+}

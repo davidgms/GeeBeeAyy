@@ -198,6 +198,9 @@ impl SaveState {
         gba.ppu.bg_mode = read_u8(&mut cursor)?;
         gba.ppu.dispcnt = read_u16(&mut cursor)?;
         gba.ppu.scanline = read_u16(&mut cursor)?;
+        if gba.ppu.scanline >= 228 {
+            return Err(SaveStateError::Corrupt("scanline past 227"));
+        }
         gba.ppu.vblank = read_bool(&mut cursor)?;
         gba.ppu.hblank = read_bool(&mut cursor)?;
         gba.ppu.bg0cnt = read_u16(&mut cursor)?;
@@ -235,6 +238,11 @@ impl SaveState {
             gba.timer.reloads[i] = read_u32(&mut cursor)?;
             gba.timer.controls[i] = read_u16(&mut cursor)?;
             gba.timer.prescaler[i] = read_u32(&mut cursor)?;
+            // The four the hardware has (GBATEK, TMxCNT_H bits 0-1). Zero is
+            // the dangerous one: `while tick >= 0` in Timer::tick never ends.
+            if !matches!(gba.timer.prescaler[i], 1 | 64 | 256 | 1024) {
+                return Err(SaveStateError::Corrupt("timer prescaler"));
+            }
             gba.timer.tick_counters[i] = read_u32(&mut cursor)?;
             gba.timer.enabled[i] = read_bool(&mut cursor)?;
             gba.timer.cascaded[i] = read_bool(&mut cursor)?;
@@ -316,6 +324,14 @@ pub enum SaveStateError {
     InvalidMagic,
     UnsupportedVersion(u32),
     InsufficientData,
+    /// The bytes parsed, but describe a machine that cannot exist: a scanline
+    /// past 227, a timer prescaler that is not 1/64/256/1024, a FIFO cursor
+    /// outside its 32-byte ring. A save state is bytes from outside the app -
+    /// a file a player picked, or one that was truncated or edited - and
+    /// restored as-is these did not fail politely: an index past an array is
+    /// a panic, which aborts the app through FFI, and a zero prescaler is an
+    /// infinite loop in the timer. Rejected here, the restore rolls back.
+    Corrupt(&'static str),
 }
 
 impl From<io::Error> for SaveStateError {
@@ -393,4 +409,66 @@ fn read_u32_array(r: &mut Cursor<&Vec<u8>>, arr: &mut [u32]) -> io::Result<()> {
 }
 fn read_exact_vec(r: &mut Cursor<&Vec<u8>>, buf: &mut [u8]) -> io::Result<()> {
     r.read_exact(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A state taken from a real machine with one field forced to a value
+    /// the hardware cannot hold. `pub(crate)` fields are why this lives in
+    /// the crate rather than in `core/tests`.
+    fn state_with(edit: impl FnOnce(&mut Gba)) -> SaveState {
+        let mut gba = Gba::new();
+        edit(&mut gba);
+        SaveState::create(&gba)
+    }
+
+    /// A zero prescaler is an infinite loop in `Timer::tick`: the restore has
+    /// to refuse it, or the next frame never returns.
+    #[test]
+    fn a_zero_timer_prescaler_is_rejected() {
+        let state = state_with(|gba| gba.timer.prescaler[0] = 0);
+        let mut target = Gba::new();
+        assert!(matches!(
+            state.restore(&mut target),
+            Err(SaveStateError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn every_real_prescaler_is_accepted() {
+        for p in [1u32, 64, 256, 1024] {
+            let state = state_with(|gba| gba.timer.prescaler[2] = p);
+            assert!(
+                state.restore(&mut Gba::new()).is_ok(),
+                "prescaler {p} is real"
+            );
+        }
+    }
+
+    /// Line 228 does not exist. Restored as-is, it sent the PPU past its
+    /// frame buffer on the next forced-blank line.
+    #[test]
+    fn a_scanline_past_227_is_rejected() {
+        let state = state_with(|gba| gba.ppu.scanline = 300);
+        assert!(matches!(
+            state.restore(&mut Gba::new()),
+            Err(SaveStateError::Corrupt(_))
+        ));
+    }
+
+    /// The rollback is the point: a rejected state must leave the machine as
+    /// it was, not half-restored with the bad value already applied.
+    #[test]
+    fn a_rejected_state_leaves_the_machine_untouched() {
+        let bad = state_with(|gba| gba.timer.prescaler[1] = 0);
+        let mut target = Gba::new();
+        target.run_frame();
+        let before = SaveState::create(&target).data;
+        assert!(bad.restore(&mut target).is_err());
+        assert_eq!(SaveState::create(&target).data, before);
+        // And it still runs - the bad prescaler never reached the timer.
+        target.run_frame();
+    }
 }

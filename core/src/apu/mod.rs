@@ -993,6 +993,12 @@ impl FifoChannel {
         self.read_pos = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
         self.write_pos = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
         self.count = u32::from_le_bytes(take(cur, 4)?.try_into().ok()?) as usize;
+        // Cursors into a 32-byte ring, and how full it is. Restored unchecked,
+        // a value from a corrupt or edited state indexed straight past the
+        // buffer on the next FIFO write - a panic, which aborts the app.
+        if self.read_pos >= 32 || self.write_pos >= 32 || self.count > 32 {
+            return None;
+        }
         self.timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
         self.enabled = take(cur, 1)?[0] != 0;
         self.dma_refill = take(cur, 1)?[0] != 0;
@@ -1063,5 +1069,41 @@ impl Apu {
     pub fn restore(&mut self, data: &[u8]) -> bool {
         let mut cur = data;
         self.read_state(&mut cur).is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bytes `FifoChannel::read_state` expects, with chosen cursors.
+    fn fifo_state(read_pos: u32, write_pos: u32, count: u32) -> Vec<u8> {
+        let mut bytes = vec![0u8; 32];
+        bytes.extend_from_slice(&read_pos.to_le_bytes());
+        bytes.extend_from_slice(&write_pos.to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
+        bytes.extend_from_slice(&[0, 0, 0]); // timer, enabled, dma_refill
+        bytes
+    }
+
+    #[test]
+    fn a_fifo_state_with_cursors_inside_the_ring_restores() {
+        let mut fifo = FifoChannel::new();
+        let bytes = fifo_state(3, 7, 4);
+        assert!(fifo.read_state(&mut bytes.as_slice()).is_some());
+    }
+
+    /// Restored unchecked, a cursor of 1000 indexed past the 32-byte ring on
+    /// the next FIFO write: a panic, which aborts the app through FFI.
+    #[test]
+    fn a_fifo_cursor_outside_the_ring_is_rejected() {
+        for (read, write, count) in [(1000, 0, 0), (0, 32, 0), (0, 0, 33), (u32::MAX, 0, 0)] {
+            let mut fifo = FifoChannel::new();
+            let bytes = fifo_state(read, write, count);
+            assert!(
+                fifo.read_state(&mut bytes.as_slice()).is_none(),
+                "read={read} write={write} count={count} must be refused"
+            );
+        }
     }
 }
