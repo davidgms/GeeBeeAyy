@@ -5,7 +5,7 @@
 This file is parked on purpose. The project is shipping Android first, and iOS
 begins only when two things are true:
 
-1. [`ROADMAP.md`](ROADMAP.md)'s Phase 4 is finished and the Android app is live
+1. [`ROADMAP.md`](ROADMAP.md)'s Phase 6 is finished and the Android app is live
    on Google Play.
 2. The repository owner has been asked, and has said yes.
 

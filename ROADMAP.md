@@ -6,7 +6,7 @@ The plan, ordered by what actually blocks the next milestone.
 since the core exists to be played on a phone - is scoped to shipping the
 Android app on Google Play. iOS has its own file,
 [`ROADMAP-ios.md`](ROADMAP-ios.md), and it is **deliberately not being worked
-on**. Nothing in it starts until Phase 4 here is finished and the app is live
+on**. Nothing in it starts until Phase 6 here is finished and the app is live
 on Play, and then only after asking the repository owner whether the iOS work
 should begin at all. Do not open iOS tasks before that gate; do not treat an
 idle moment on Android as a reason to start them.
@@ -558,7 +558,67 @@ Details in [`.claude/memory.md`](.claude/memory.md).
 
 ---
 
-## Phase 4 - Ship it on Google Play
+## Phase 4 - Review, test, and measure on a real phone
+
+Everything before this was built one feature at a time and reviewed one PR at
+a time. Nobody has read the whole thing at once, and per-PR reviews in this
+project have repeatedly missed what only shows across files. This phase is the
+whole-codebase pass, before anything goes near a store.
+
+- [ ] **Whole-codebase code review** - `core/` (Rust), the Android frontend
+      (Kotlin) and the C bridge, reviewed as a whole rather than as a diff.
+      Every finding verified against the code before it is acted on: in this
+      project agent reviews have reported confident bugs that were not there,
+      and the verification is the part that matters.
+- [ ] **Tests for what the review finds untested** - unit tests where the logic
+      is pure, macro tests through `Gba::run_frame` where it is not. A finding
+      fixed without a test that fails first is not finished.
+- [ ] **UI and UX stress test on a phone** - every screen and flow driven on the
+      Mi 10T Pro: rapid input, rotation mid-action, backgrounding mid-save,
+      low storage, a dropped network during a fetch, the layout editor pushed
+      to its limits. Looking for states a player can reach and not get out of.
+- [ ] **Performance on a phone** - frame pacing and audio underruns over a long
+      session, not a single reading; CPU, memory and battery drain; thermal
+      throttling after sustained play; cold-start and ROM-load times; the cost
+      of each optional feature (blending, 2xSaI, fast-forward, achievements).
+
+**Exit criterion:** every review finding is fixed or recorded as a decision,
+and the app holds its frame rate and audio over a long session on a phone.
+
+---
+
+## Phase 5 - Security and privacy
+
+The app now reads files the player owns, holds a RetroAchievements login token,
+talks to two third-party servers, and loads two native libraries. Each of those
+is a door. This phase checks every one of them before strangers can install it.
+
+- [ ] **What leaves the phone** - every network request the app can make,
+      audited: where it goes, what it carries, whether it can carry anything
+      about the player beyond what they asked to send. The data-safety form on
+      Play is answered from this audit, not from intent.
+- [ ] **What stays on the phone, and who can read it** - the login token, save
+      files, save states, cached covers and badges: where each lives, whether
+      another app can reach it, whether it ends up in a backup or a log.
+- [ ] **Permissions** - each one justified or removed. `MANAGE_EXTERNAL_STORAGE`
+      in particular reaches far beyond ROM folders and is the first thing a
+      reviewer, or an attacker, looks at.
+- [ ] **Hostile input** - a malformed ROM, a zip bomb, a zip with path traversal
+      in its entry names, a corrupt save state, a truncated header, an oversized
+      server response. The core and the C bridge parse untrusted bytes; this is
+      where a crash becomes an exploit.
+- [ ] **The native boundary** - JNI and the C bridge read lengths and pointers
+      from the other side. Bounds, lifetimes, and what happens when Kotlin and C
+      disagree about a size.
+- [ ] **Exported components and intents** - nothing reachable from another app
+      that should not be.
+
+**Exit criterion:** no path by which the app leaks the player's data or exposes
+something on their phone they did not grant, with the reasoning written down.
+
+---
+
+## Phase 6 - Ship it on Google Play
 
 The last Android phase, and the gate in front of everything iOS. Owned by
 `mobile-app-developer`, with `visual-asset-generator` on the artwork.
