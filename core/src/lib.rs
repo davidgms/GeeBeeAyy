@@ -32,6 +32,12 @@ pub struct Gba {
     pub run_frame_counter: u64,
 }
 
+impl Default for Gba {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gba {
     pub fn new() -> Self {
         Self {
@@ -51,7 +57,9 @@ impl Gba {
         // `store8`, which is where save accesses land.
         self.bus.cart = Cartridge::from_bytes(data)?;
         self.bus.load_rom(data);
-        self.cpu.boot();
+        // A new cartridge is a power cycle. Booting the CPU alone left the
+        // previous game's RAM, I/O, timers and DMA running under the new one.
+        self.reset();
         Ok(())
     }
 
@@ -65,7 +73,11 @@ impl Gba {
         self.bus.reset();
         self.cpu = Cpu::new();
         self.cpu.boot();
+        // Interframe blending is a frontend display setting, not machine
+        // state, and the frontend may set it before the ROM is loaded.
+        let blend = self.ppu.interframe_blend();
         self.ppu = Ppu::new();
+        self.ppu.set_interframe_blend(blend);
         self.apu = Apu::new();
         self.timer = Timer::new();
         self.dma = Dma::new();
@@ -118,15 +130,15 @@ impl Gba {
         }
 
         let cycles = self.cpu.step(&mut self.bus);
-        self.cycles += cycles as u32 as u64;
+        self.cycles += cycles as u64;
         // Before the PPU tick, so a channel enabled by this instruction is
         // configured in time for an HBlank or VBlank that lands in the same
         // step.
         self.apply_dma_writes();
         self.apply_timer_writes();
-        self.timer.tick(cycles as u32, &mut self.bus);
-        self.ppu.tick(cycles as u32, &mut self.bus, &mut self.dma);
-        self.apu.tick(cycles as u32);
+        self.timer.tick(cycles, &mut self.bus);
+        self.ppu.tick(cycles, &mut self.bus, &mut self.dma);
+        self.apu.tick(cycles);
 
         self.post_tick();
 

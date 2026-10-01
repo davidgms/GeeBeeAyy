@@ -44,6 +44,12 @@ pub struct BarrelShiftResult {
     pub carry_out: bool,
 }
 
+impl Default for Cpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cpu {
     pub fn new() -> Self {
         Self {
@@ -153,7 +159,7 @@ impl Cpu {
         // R15 reads as the address of the instruction plus two fetches while it
         // executes: +8 in ARM, +4 in THUMB.
         let cycles = if is_thumb {
-            let instruction = bus.read16(pc) as u16;
+            let instruction = bus.read16(pc);
             self.registers[15] = pc.wrapping_add(4);
             self.execute_thumb(instruction, bus)
         } else {
@@ -429,7 +435,7 @@ impl Cpu {
             if shift_by_reg {
                 // Register shift: shift amount comes from bits [11:8] (Rs)
                 let rs = ((instruction >> 8) & 0xF) as usize;
-                let shift_amount = (self.registers[rs] & 0xFF) as u32;
+                let shift_amount = self.registers[rs] & 0xFF;
                 match shift_type {
                     0b00 => self.lsl(rm_val, shift_amount),
                     0b01 => self.lsr(rm_val, shift_amount),
@@ -440,7 +446,7 @@ impl Cpu {
                                 value: rm_val,
                                 carry_out: self.flag_c(),
                             }
-                        } else if shift_amount % 32 == 0 {
+                        } else if shift_amount.is_multiple_of(32) {
                             BarrelShiftResult {
                                 value: rm_val,
                                 carry_out: rm_val >> 31 == 1,

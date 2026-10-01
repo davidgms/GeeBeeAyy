@@ -1,0 +1,18 @@
+---
+name: worktree-sandbox-quirks
+description: In an isolated .claude/worktrees/ checkout, heredoc/compound Bash is refused and test ROMs are absent
+metadata:
+  type: reference
+---
+
+When run isolated in `.claude/worktrees/agent-*`:
+
+- **Bash with a heredoc (`cat >> f <<'EOF'`, `python3 - <<EOF`) followed by
+  more commands is refused** as "too complex to verify it stays inside the
+  worktree". Write the content with the Write tool into `temp/`, then
+  `cat temp/x >> file` as its own call. Edit/Write tools always work.
+- **`temp/roms/` does not exist in a worktree**, so every ROM-backed test
+  (`tests/ppu.rs`, `gba_suite.rs`, `tonerom.rs`) silently skips and passes.
+  The fixtures live in the main checkout's `temp/roms/`; symlink it:
+  `ln -s /home/david/projects/GeeBeeAyy/temp/roms <worktree>/temp/roms`.
+  Without that, "cargo test passes" proves much less than it looks.

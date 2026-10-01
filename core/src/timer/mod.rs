@@ -16,6 +16,12 @@ pub struct Timer {
     pub overflow_flags: [u32; 4],
 }
 
+impl Default for Timer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timer {
     pub fn new() -> Self {
         Self {

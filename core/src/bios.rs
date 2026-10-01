@@ -38,7 +38,28 @@ pub fn handle_swi(swi_num: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 /// halfword, and `IntrWait` consumes them from it.
 const BIOS_INTR_FLAGS: u32 = 0x0300_7FF8;
 
-fn handle_soft_reset(_cpu: &mut Cpu, _bus: &mut MemoryBus) -> bool {
+/// SWI 0x00. GBATEK, BIOS Reset Functions: clears 0x3007E00-0x3007FFF,
+/// sets SP_svc/SP_irq/SP_sys, zeroes R0-R12, LR_svc, SPSR_svc, LR_irq and
+/// SPSR_irq, enters System mode and `BX R14`s to 0x08000000 - or to
+/// 0x02000000 if the byte at 0x3007FFA, read before the clear, is non-zero.
+fn handle_soft_reset(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
+    let target = if bus.read8(0x0300_7FFA) != 0 {
+        0x0200_0000
+    } else {
+        0x0800_0000
+    };
+    bus.iwram_data_mut()[0x7E00..].fill(0);
+
+    // System mode, ARM state; set_cpsr parks the caller's bank first.
+    cpu.set_cpsr(0x1F);
+    cpu.svc_registers = [0x0300_7FE0, 0];
+    cpu.irq_registers = [0x0300_7FA0, 0];
+    cpu.spsr_svc = 0;
+    cpu.spsr_irq = 0;
+    cpu.registers[..13].fill(0);
+    cpu.registers[13] = 0x0300_7F00;
+    cpu.registers[14] = target;
+    cpu.set_reg(15, target);
     true
 }
 

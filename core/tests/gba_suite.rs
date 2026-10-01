@@ -112,10 +112,10 @@ fn gba_suite_save_none() {
     run_suite("none");
 }
 
-/// Exercises the HLE BIOS. Expect this to disagree with a real BIOS in places
-/// - its first check reads the BIOS ROM itself, which high-level emulation
-/// does not reproduce - so read a failure here as "which test number", not as
-/// a simple pass/fail.
+/// Exercises the HLE BIOS. Expect this to disagree with a real BIOS in places,
+/// because its first check reads the BIOS ROM itself, which high-level
+/// emulation does not reproduce. Read a failure here as "which test number",
+/// not as a simple pass/fail.
 #[test]
 #[ignore = "HLE BIOS cannot satisfy tests that read the BIOS ROM itself"]
 fn gba_suite_bios() {

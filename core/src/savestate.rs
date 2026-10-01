@@ -11,7 +11,10 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// register file and the cartridge's battery save.
 /// v4 added the APU, so sound continues across a load instead of restarting
 /// from silence.
-const SAVE_VERSION: u32 = 6;
+/// v7 appended the save chip's command state (Flash state machine, bank and
+/// ID mode; EEPROM serial phase and address). v6 still loads, leaving the
+/// chip as it was.
+const SAVE_VERSION: u32 = 7;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -114,11 +117,11 @@ impl SaveState {
         // background scroll registers and everything else came back as
         // whatever the fresh instance happened to hold.
         buf.extend_from_slice(gba.bus.io_regs_data());
-        buf.extend_from_slice(&gba.bus.ewram_data());
-        buf.extend_from_slice(&gba.bus.iwram_data());
-        buf.extend_from_slice(&gba.bus.palette_data());
-        buf.extend_from_slice(&gba.bus.vram_data());
-        buf.extend_from_slice(&gba.bus.oam_data());
+        buf.extend_from_slice(gba.bus.ewram_data());
+        buf.extend_from_slice(gba.bus.iwram_data());
+        buf.extend_from_slice(gba.bus.palette_data());
+        buf.extend_from_slice(gba.bus.vram_data());
+        buf.extend_from_slice(gba.bus.oam_data());
 
         // APU. Without this, every channel came back silent until the game
         // next wrote a sound register - a sustained note simply stopped.
@@ -137,6 +140,8 @@ impl SaveState {
 
         // Global state
         write_u64(&mut buf, gba.cycles);
+
+        buf.extend_from_slice(&gba.bus.cart.chip_state());
 
         SaveState { data: buf }
     }
@@ -173,7 +178,7 @@ impl SaveState {
             return Err(SaveStateError::InvalidMagic);
         }
         let version = read_u32(&mut cursor)?;
-        if version != SAVE_VERSION {
+        if !(6..=SAVE_VERSION).contains(&version) {
             return Err(SaveStateError::UnsupportedVersion(version));
         }
 
@@ -270,11 +275,11 @@ impl SaveState {
 
         gba.bus.waitcnt = read_u16(&mut cursor)?;
         read_exact_vec(&mut cursor, gba.bus.io_regs_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.ewram_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.iwram_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.palette_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.vram_data_mut())?;
-        read_exact_vec(&mut cursor, &mut gba.bus.oam_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.ewram_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.iwram_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.palette_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.vram_data_mut())?;
+        read_exact_vec(&mut cursor, gba.bus.oam_data_mut())?;
 
         // Bound the length against what is actually left: these come from a
         // file on disk, and a corrupt or truncated state with a length field
@@ -302,6 +307,15 @@ impl SaveState {
 
         // Global
         gba.cycles = read_u64(&mut cursor)?;
+
+        if version >= 7 {
+            let mut chip = [0u8; crate::cart::CHIP_STATE_LEN];
+            cursor.read_exact(&mut chip)?;
+            gba.bus
+                .cart
+                .restore_chip_state(&chip)
+                .map_err(SaveStateError::Corrupt)?;
+        }
 
         Ok(())
     }
@@ -470,5 +484,95 @@ mod tests {
         assert_eq!(SaveState::create(&target).data, before);
         // And it still runs - the bad prescaler never reached the timer.
         target.run_frame();
+    }
+
+    /// A blank ROM carrying a save-library tag, so `detect_save_type` picks
+    /// the chip.
+    fn machine_with(tag: &[u8]) -> Gba {
+        let mut rom = vec![0u8; 0x200];
+        rom[0x100..0x100 + tag.len()].copy_from_slice(tag);
+        let mut gba = Gba::new();
+        gba.load_rom(&rom).expect("ROM should load");
+        gba
+    }
+
+    /// The Flash command state machine and bank select are chip state, not
+    /// save memory. A state taken between `AA 55 A0` and the data byte, with
+    /// bank 1 selected, has to finish that program into bank 1 after a load.
+    #[test]
+    fn flash_command_state_and_bank_survive_a_save_state() {
+        let mut gba = machine_with(b"FLASH1M_V103");
+        let cmd = |gba: &mut Gba, c: u8| {
+            gba.bus.write8(0x0E00_5555, 0xAA);
+            gba.bus.write8(0x0E00_2AAA, 0x55);
+            gba.bus.write8(0x0E00_5555, c);
+        };
+        cmd(&mut gba, 0xB0);
+        gba.bus.write8(0x0E00_0000, 1); // bank 1
+        cmd(&mut gba, 0xA0); // byte program, data byte still to come
+        let state = SaveState::create(&gba);
+
+        let mut target = machine_with(b"FLASH1M_V103");
+        state.restore(&mut target).expect("state should load");
+        target.bus.write8(0x0E00_0010, 0x42);
+        assert_eq!(
+            target.save_data().expect("flash cart")[0x1_0010],
+            0x42,
+            "the pending program was lost, or landed in the wrong bank"
+        );
+    }
+
+    /// EEPROM is a serial device: a state taken after a set-address command
+    /// and before the read-back has to stream the addressed block afterwards.
+    #[test]
+    fn an_eeprom_read_in_progress_survives_a_save_state() {
+        let mut gba = machine_with(b"EEPROM_V124");
+        let mut save = vec![0xFFu8; 8 * 1024];
+        save[5 * 8..6 * 8].fill(0xA5);
+        gba.load_save(&save);
+        gba.bus.cart.eeprom_begin_dma(17);
+        let mut bits = vec![1u16, 1];
+        bits.extend((0..14).rev().map(|i| (5u16 >> i) & 1));
+        bits.push(0);
+        for b in bits {
+            gba.bus.cart.eeprom_write(b);
+        }
+        let state = SaveState::create(&gba);
+
+        let mut target = machine_with(b"EEPROM_V124");
+        state.restore(&mut target).expect("state should load");
+        let out: Vec<u16> = (0..68).map(|_| target.bus.cart.eeprom_read()).collect();
+        let want: Vec<u16> = [0u16; 4]
+            .into_iter()
+            .chain((0..64).map(|i| (0xA5u16 >> (7 - i % 8)) & 1))
+            .collect();
+        assert_eq!(out, want, "the read-back did not resume at block 5");
+    }
+
+    /// Chip bytes come from a file. One naming an EEPROM block past the chip
+    /// must be refused, not indexed.
+    #[test]
+    fn a_hostile_chip_state_is_rejected() {
+        let mut state = SaveState::create(&machine_with(b"EEPROM_V124"));
+        let len = state.data.len();
+        let chip = &mut state.data[len - crate::cart::CHIP_STATE_LEN..];
+        chip[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes()); // EEPROM block
+        let mut target = machine_with(b"EEPROM_V124");
+        assert!(matches!(
+            state.restore(&mut target),
+            Err(SaveStateError::Corrupt(_))
+        ));
+        target.run_frame();
+    }
+
+    /// v6 had no chip block. It still loads.
+    #[test]
+    fn a_version_6_state_still_loads() {
+        let mut state = SaveState::create(&machine_with(b"FLASH1M_V103"));
+        state
+            .data
+            .truncate(state.data.len() - crate::cart::CHIP_STATE_LEN);
+        state.data[4..8].copy_from_slice(&6u32.to_le_bytes());
+        assert!(state.restore(&mut machine_with(b"FLASH1M_V103")).is_ok());
     }
 }

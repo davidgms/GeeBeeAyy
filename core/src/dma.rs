@@ -25,6 +25,12 @@ pub struct Dma {
     hblank_fired: bool,
 }
 
+impl Default for Dma {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Dma {
     pub fn new() -> Self {
         Self {

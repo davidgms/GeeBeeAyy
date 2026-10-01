@@ -27,6 +27,12 @@ pub struct MemoryBus {
     pub io: super::io::IoHandler,
 }
 
+impl Default for MemoryBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryBus {
     pub fn new() -> Self {
         let mut bus = Self {
@@ -384,12 +390,19 @@ impl MemoryBus {
                     0xBB | 0xC7 | 0xD3 | 0xDF => {
                         self.dma_writes.push((offset - 0xBB) / 12);
                     }
-                    // High byte of TMxCNT_L (reload) or TMxCNT_H (control),
-                    // latched for the same reason as DMA's: it is the last
-                    // byte a 16-bit write touches.
-                    0x101 | 0x103 | 0x105 | 0x107 | 0x109 | 0x10B | 0x10D | 0x10F => {
+                    // High byte of TMxCNT_L (reload), or either byte of
+                    // TMxCNT_H (control). The control register's enable bit is
+                    // bit 7, in its *low* byte, so latching control only on
+                    // the high byte dropped every `strb` that started a timer.
+                    // A 16-bit control write latches twice; the first sees the
+                    // old high byte, which is unused (GBATEK, TMxCNT_H bits
+                    // 8-15). The reload stays high-byte only: `post_tick`
+                    // keeps the live counter in TMxCNT_L's io_regs bytes, so a
+                    // lone low-byte write would merge with the counter.
+                    0x101 | 0x105 | 0x109 | 0x10D | 0x102 | 0x103 | 0x106 | 0x107 | 0x10A
+                    | 0x10B | 0x10E | 0x10F => {
                         let timer = (offset - 0x100) / 4;
-                        let is_control = offset % 4 == 3;
+                        let is_control = offset & 2 != 0;
                         let base = offset & !1;
                         let word =
                             self.io_regs[base] as u16 | ((self.io_regs[base + 1] as u16) << 8);

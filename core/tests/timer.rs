@@ -107,3 +107,20 @@ fn a_prescaled_timer_overflows_after_its_full_period() {
     );
     assert_eq!(timer.drain_overflows()[0], 1);
 }
+
+/// TMxCNT_H's enable bit lives in its low byte, at 0x4000102 for timer 0.
+/// The bus only handed a timer write to the timer unit on the register's
+/// high byte, so `strb` to the control byte never started the timer.
+#[test]
+fn a_byte_write_to_the_control_register_starts_the_timer() {
+    let mut gba = geebeeayy_core::Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    gba.bus.write16(0x0400_0100, 0xFFF0); // TM0CNT_L reload
+    gba.bus.write8(0x0400_0102, (ENABLE | IRQ) as u8);
+    gba.run_frame();
+    assert_ne!(
+        gba.bus.io.if_ & 0x0008,
+        0,
+        "timer 0 never overflowed: the byte write did not start it"
+    );
+}
