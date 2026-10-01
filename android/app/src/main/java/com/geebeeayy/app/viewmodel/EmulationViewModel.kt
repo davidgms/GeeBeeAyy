@@ -10,6 +10,8 @@ import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.RomHeader
 import com.geebeeayy.app.data.StateSlot
+import com.geebeeayy.app.data.BatterySaveStore
+import com.geebeeayy.app.data.atomicWrite
 import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.engine.GbaEngine
@@ -338,16 +340,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private val saveFlushLock = Any()
     private var saveFlushJob: Job? = null
 
-    /** Bytes captured on the engine thread, written to disk on Dispatchers.IO. */
+    /**
+     * This cart's battery save: where it lives, what is waiting to be written,
+     * and the one-writer-at-a-time flush. Null until the ROM is resolved.
+     * See [BatterySaveStore] for the three ways the old fields here lost it.
+     */
     @Volatile
-    private var pendingSaveBytes: ByteArray? = null
-
-    /** Where the next battery-save flush lands; set once the ROM's save is resolved. */
-    @Volatile
-    private var saveFilePath: String? = null
-
-    @Volatile
-    private var fallbackSavePath: String? = null
+    private var batterySave: BatterySaveStore? = null
 
     // --- Save states ---------------------------------------------------------
     //
@@ -504,11 +503,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
         val primaryDir = romFile.parentFile
         val baseName = romFile.nameWithoutExtension
-        saveFilePath = if (primaryDir != null) File(primaryDir, "$baseName.sav").absolutePath else null
-        fallbackSavePath = File(fallbackSaveDir(), "${romStateKey}.sav").absolutePath
-        if (saveFilePath == null) {
-            saveFilePath = fallbackSavePath
-        }
+        batterySave = BatterySaveStore(
+            primary = primaryDir?.let { File(it, "$baseName.sav") },
+            fallback = File(fallbackSaveDir(), "${romStateKey}.sav"),
+        )
     }
 
     private fun fallbackSaveDir(): File =
@@ -532,23 +530,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * the ROM folder wasn't writable).
      */
     private fun loadExistingSave() {
-        val primary = saveFilePath?.let { File(it) }
-        val fallback = fallbackSavePath?.let { File(it) }
-        val (file, path) = when {
-            primary != null && primary.exists() -> primary to primary.absolutePath
-            fallback != null && fallback.exists() -> fallback to fallback.absolutePath
-            else -> return
-        }
-        try {
-            val bytes = file.readBytes()
-            if (bytes.isNotEmpty()) {
-                engine.writeSave(bytes)
-                saveFilePath = path
-                Log.i(TAG, "Loaded battery save from $path (${bytes.size} bytes)")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed reading battery save at $path", e)
-        }
+        val store = batterySave ?: return
+        val bytes = store.load() ?: return
+        engine.writeSave(bytes)
+        Log.i(TAG, "Loaded battery save from ${store.current} (${bytes.size} bytes)")
     }
 
     /** Wall-clock instant the batch being paced is allowed to end. */
@@ -739,7 +724,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             // save exists to prevent. `loadExistingSave` already ignores empty
             // files on the way in; this keeps them from being made.
             if (bytes.isEmpty()) return
-            pendingSaveBytes = bytes
+            batterySave?.submit(bytes)
             scheduleSaveFlush()
         }
     }
@@ -764,41 +749,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun flushPendingSave() {
-        val bytes = pendingSaveBytes ?: return
-        val primary = saveFilePath ?: return
-        if (!tryAtomicWrite(primary, bytes)) {
-            val fallback = fallbackSavePath
-            if (fallback != null && fallback != primary) {
-                Log.w(TAG, "Battery save write to $primary failed, falling back to app storage")
-                if (tryAtomicWrite(fallback, bytes)) {
-                    saveFilePath = fallback
-                } else {
-                    Log.e(TAG, "Battery save write failed at both $primary and $fallback")
-                }
-            }
-        }
-        pendingSaveBytes = null
-    }
-
-    /** Temp file then rename, so a crash mid-write never leaves a half-written save on disk. */
-    private fun tryAtomicWrite(path: String, bytes: ByteArray): Boolean {
-        return try {
-            val target = File(path)
-            target.parentFile?.mkdirs()
-            val tmp = File(target.parentFile, "${target.name}.tmp")
-            // fsync before the rename. Without it the rename can land while the
-            // bytes are still only in the page cache, so a power loss leaves an
-            // atomically-renamed but empty save - the exact failure this
-            // function exists to prevent.
-            FileOutputStream(tmp).use { out ->
-                out.write(bytes)
-                out.flush()
-                out.fd.sync()
-            }
-            tmp.renameTo(target)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed writing $path", e)
-            false
+        val store = batterySave ?: return
+        if (!store.flush()) {
+            Log.e(TAG, "Battery save write failed beside the ROM and in app storage")
         }
     }
 
@@ -976,7 +929,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            if (tryAtomicWrite(stateFile(slot).absolutePath, bytes)) {
+            if (atomicWrite(stateFile(slot), bytes)) {
                 _stateMessage.value = "Saved to ${slotName(slot)}"
             } else {
                 _stateMessage.value = "Failed to write ${slotName(slot)}"
