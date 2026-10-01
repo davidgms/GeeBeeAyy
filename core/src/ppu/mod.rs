@@ -550,18 +550,23 @@ impl Ppu {
         if !self.render_enabled {
             return;
         }
+        // Before anything writes. This runs on all 228 lines, VBlank's 68
+        // included, and forced blank used to fill its line first and check
+        // second: line 160 is index 115200 of a 115200-byte buffer, the panic
+        // unwound out through FFI, and on a phone that is the app closing.
+        // Games force blank during VBlank routinely, to load VRAM faster.
+        let y = self.scanline as usize;
+        if y >= SCREEN_HEIGHT {
+            return;
+        }
+
         if self.force_blank {
             for x in 0..SCREEN_WIDTH {
-                let idx = (self.scanline as usize * SCREEN_WIDTH + x) * 3;
+                let idx = (y * SCREEN_WIDTH + x) * 3;
                 self.frame_buffer[idx] = 0xFF;
                 self.frame_buffer[idx + 1] = 0xFF;
                 self.frame_buffer[idx + 2] = 0xFF;
             }
-            return;
-        }
-
-        let y = self.scanline as usize;
-        if y >= SCREEN_HEIGHT {
             return;
         }
 

@@ -43,6 +43,14 @@ pub struct Cartridge {
     /// Address width of the command currently being clocked in, taken from
     /// the length of the DMA that carries it. `None` until a DMA says.
     eeprom_addr_bits: Option<usize>,
+    /// Whether this is an 8 KB chip rather than a 512-byte one.
+    ///
+    /// Starts as a guess from the ROM size and is **corrected by the game**:
+    /// a 14-bit command proves 8 KB, and so does an 8 KB `.sav` on disk. The
+    /// guess alone was the bug - a cart of 16 MB or less with a 64 Kbit chip
+    /// was given 512 bytes, its 14-bit addresses masked to 6, and block 100
+    /// written over block 36. The Minish Cap is exactly that cart.
+    eeprom_large: bool,
 }
 
 /// The header's complement check, per GBATEK: subtract every byte from 0xA0 to
@@ -74,6 +82,7 @@ impl Cartridge {
             flash_id_mode: false,
             eeprom_state: EepromState::new(),
             eeprom_addr_bits: None,
+            eeprom_large: false,
         }
     }
 
@@ -108,9 +117,12 @@ impl Cartridge {
             SaveType::Flash64 => 64 * 1024,
             _ => 0,
         };
+        // Always backed by 8 KB, whichever chip the header suggests. The size
+        // a game actually uses is learned from its own commands - see
+        // `eeprom_large` - and storage that is already big enough means that
+        // discovery can never alias one block onto another.
         let eeprom_size = match save_type {
-            SaveType::Eeprom8k => 8 * 1024,
-            SaveType::Eeprom512 => 512,
+            SaveType::Eeprom8k | SaveType::Eeprom512 => 8 * 1024,
             _ => 0,
         };
 
@@ -129,6 +141,7 @@ impl Cartridge {
             flash_id_mode: false,
             eeprom_state: EepromState::new(),
             eeprom_addr_bits: None,
+            eeprom_large: save_type == SaveType::Eeprom8k,
         })
     }
 
@@ -175,13 +188,8 @@ impl Cartridge {
     /// cartridge with an 8 KB part is still addressed with 6 bits during
     /// detection, and hardcoding 14 desynchronises the whole bit stream.
     fn eeprom_address_bits(&self) -> usize {
-        self.eeprom_addr_bits.unwrap_or({
-            if self.eeprom.len() > 512 {
-                14
-            } else {
-                6
-            }
-        })
+        self.eeprom_addr_bits
+            .unwrap_or(if self.eeprom_large { 14 } else { 6 })
     }
 
     /// Told by the DMA unit how long the transfer driving the EEPROM is, in
@@ -203,7 +211,13 @@ impl Cartridge {
     pub fn eeprom_begin_dma(&mut self, words: usize) {
         match words {
             9 | 73 => self.eeprom_addr_bits = Some(6),
-            17 | 81 => self.eeprom_addr_bits = Some(14),
+            17 | 81 => {
+                self.eeprom_addr_bits = Some(14);
+                // Sticky. A game probes with 6 bits first and settles on 14,
+                // so a 6-bit command after this one is detection, not proof
+                // the chip shrank.
+                self.eeprom_large = true;
+            }
             _ => {}
         }
     }
@@ -417,8 +431,13 @@ impl Cartridge {
             SaveType::Sram => Some(self.sram.clone()),
             SaveType::Flash64 => Some(self.flash[..64 * 1024].to_vec()),
             SaveType::Flash128 => Some(self.flash.clone()),
-            SaveType::Eeprom512 => Some(self.eeprom[..512].to_vec()),
-            SaveType::Eeprom8k => Some(self.eeprom.clone()),
+            // The chip the game has shown it has, not the header's guess, so an
+            // existing `.sav` keeps the size it was written at.
+            SaveType::Eeprom512 | SaveType::Eeprom8k => Some(if self.eeprom_large {
+                self.eeprom.clone()
+            } else {
+                self.eeprom[..512].to_vec()
+            }),
             SaveType::None => None,
         }
     }
@@ -435,6 +454,11 @@ impl Cartridge {
                 self.flash[..len].copy_from_slice(&data[..len]);
             }
             SaveType::Eeprom512 | SaveType::Eeprom8k => {
+                // A save file bigger than 512 bytes can only have come from an
+                // 8 KB chip. Without this an 8 KB `.sav` was truncated on load.
+                if data.len() > 512 {
+                    self.eeprom_large = true;
+                }
                 let len = data.len().min(self.eeprom.len());
                 self.eeprom[..len].copy_from_slice(&data[..len]);
             }

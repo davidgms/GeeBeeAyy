@@ -51,6 +51,21 @@ pub unsafe extern "C" fn geebeeayy_destroy(ptr: *mut c_void) {
 ///
 /// # Safety
 /// `ptr` must be a valid handle. `data` must point to `len` readable bytes.
+/// Run `f`, turning a panic into `fallback` instead of an aborted process.
+///
+/// A panic unwinding out of an `extern "C"` or JNI function aborts the whole
+/// app - there is no exception for the caller to catch. The core parses bytes
+/// from outside (ROMs, save files, save states), and a whole-codebase review
+/// found several that panicked on hostile or merely unlucky input. Each was
+/// fixed at its source; this is the backstop for the ones nobody has found.
+///
+/// **The machine may be left inconsistent after a caught panic.** That is the
+/// trade: a frontend can report an error and offer to reload, which beats the
+/// app vanishing mid-game with no message and no chance to save.
+fn guarded<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(fallback)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, len: usize) -> i32 {
     if ptr.is_null() || data.is_null() {
@@ -69,7 +84,7 @@ pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, l
         ),
         None => eprintln!("[GeeBeeAyy] load_rom: {len} bytes, too short to be a ROM"),
     }
-    match handle.inner.load_rom(rom) {
+    guarded(-1, || match handle.inner.load_rom(rom) {
         Ok(()) => {
             eprintln!(
                 "[GeeBeeAyy] load_rom: OK, CPU PC={:08X} CPSR={:08X}",
@@ -81,7 +96,7 @@ pub unsafe extern "C" fn geebeeayy_load_rom(ptr: *mut c_void, data: *const u8, l
             eprintln!("[GeeBeeAyy] load_rom: FAILED - {:?}", e);
             -1
         }
-    }
+    })
 }
 
 /// Run a single frame of emulation.
@@ -111,7 +126,7 @@ pub unsafe extern "C" fn geebeeayy_run_frame(ptr: *mut c_void) {
             handle.inner.cycles,
         );
     }
-    handle.inner.run_frame();
+    guarded((), || handle.inner.run_frame());
     if fc <= 5 || fc % 60 == 0 {
         let fb = handle.inner.frame_buffer();
         let mut non_zero = 0u32;
@@ -144,7 +159,7 @@ pub unsafe extern "C" fn geebeeayy_run_frames(ptr: *mut c_void, count: u32) {
         return;
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
-    handle.inner.run_frames(count);
+    guarded((), || handle.inner.run_frames(count));
 }
 
 /// Copy the current frame buffer (240x160 RGB888) into `out`.
@@ -179,7 +194,7 @@ pub unsafe extern "C" fn geebeeayy_reset(ptr: *mut c_void) {
         return;
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
-    handle.inner.reset();
+    guarded((), || handle.inner.reset());
 }
 
 /// Copy emulated memory into `out`, without disturbing the machine.
@@ -212,7 +227,7 @@ pub unsafe extern "C" fn geebeeayy_peek_memory(
     }
     let handle = unsafe { &*(ptr as *mut GbaHandle) };
     let slice = unsafe { std::slice::from_raw_parts_mut(out, len) };
-    handle.inner.peek_memory(address, slice)
+    guarded(0, || handle.inner.peek_memory(address, slice))
 }
 
 /// Get a pointer to the internal frame buffer (240x160 RGB888, 115200 bytes).
@@ -345,7 +360,7 @@ pub unsafe extern "C" fn geebeeayy_save_write(
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    handle.inner.load_save(bytes);
+    guarded((), || handle.inner.load_save(bytes));
     0
 }
 
@@ -434,11 +449,11 @@ pub unsafe extern "C" fn geebeeayy_rewind_pop(ptr: *mut c_void) -> i32 {
     }
     let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
     let GbaHandle { inner, rewind } = handle;
-    match rewind.pop(inner) {
+    guarded(-1, || match rewind.pop(inner) {
         Ok(true) => 1,
         Ok(false) => 0,
         Err(_) => -1,
-    }
+    })
 }
 
 /// Bytes the rewind ring is holding right now, so a frontend can size its
@@ -511,10 +526,10 @@ pub unsafe extern "C" fn geebeeayy_state_write(
     let state = crate::savestate::SaveState {
         data: bytes.to_vec(),
     };
-    match handle.inner.load_state(&state) {
+    guarded(-1, || match handle.inner.load_state(&state) {
         Ok(()) => 0,
         Err(_) => -1,
-    }
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -592,7 +607,9 @@ pub mod android {
     ) {
         if handle != 0 {
             unsafe {
-                geebeeayy_run_frames(handle as *mut c_void, count as u32);
+                // A negative jint cast to u32 is about four billion frames,
+                // which is a hang rather than a crash but no better for it.
+                geebeeayy_run_frames(handle as *mut c_void, count.max(0) as u32);
             }
         }
     }
@@ -665,7 +682,9 @@ pub mod android {
         out: JFloatArray,
         max_samples: jint,
     ) -> jint {
-        if handle == 0 {
+        // `<= 0` and not `== 0`: a negative jint cast to usize is about 2^64,
+        // and `vec!` of that aborts the process on capacity overflow.
+        if handle == 0 || max_samples <= 0 {
             return 0;
         }
         let mut buf = vec![0.0f32; max_samples as usize];

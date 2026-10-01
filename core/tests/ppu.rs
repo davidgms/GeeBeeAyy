@@ -1096,3 +1096,22 @@ fn between_sprites_of_equal_priority_the_lower_oam_index_wins() {
         "a later sprite of the same priority overwrote an earlier one"
     );
 }
+
+/// Forced blank during VBlank must not write past the frame buffer.
+///
+/// `render_scanline` runs on every line, VBlank's 68 included, and the
+/// forced-blank branch used to fill the line *before* checking it was a
+/// visible one. Line 160 is index 115200 of a 115200-byte buffer: the panic
+/// unwinds out through FFI, and on the phone that is the app closing.
+/// Games force blank during VBlank routinely, to load VRAM faster.
+#[test]
+fn forced_blank_during_vblank_does_not_write_past_the_frame() {
+    let mut gba = spinning_gba();
+    gba.bus.write16(0x0400_0000, 0x0080); // DISPCNT: forced blank
+                                          // Two whole frames, so every VBlank line reaches HBlank with it set.
+    tick_one_frame(&mut gba);
+    tick_one_frame(&mut gba);
+    // Forced blank shows white on the visible lines and nowhere else.
+    assert_eq!(gba.frame_buffer()[0], 0xFF);
+    assert_eq!(gba.frame_buffer().len(), 240 * 160 * 3);
+}
