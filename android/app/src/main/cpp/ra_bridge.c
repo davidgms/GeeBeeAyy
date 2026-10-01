@@ -13,6 +13,7 @@
  */
 
 #include <dlfcn.h>
+#include <pthread.h>
 #include <jni.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,6 +115,23 @@ typedef struct {
 
 static ra_pending_t g_pending[RA_MAX_PENDING];
 
+/* The slot table is touched from more than one thread: a request is parked by
+ * whichever thread called into rcheevos (the UI thread for a sign-in, the
+ * emulation thread for everything a frame triggers), and an answer is
+ * collected on the emulation thread. rcheevos guards its own state with its
+ * own mutex; this table is ours, so it needs ours. */
+static pthread_mutex_t g_pending_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void ra_fail_request(rc_client_server_callback_t callback, void* callback_data) {
+  /* Answering with a client error is the documented way to fail a request,
+   * and it is the only way: leaving one unanswered makes rcheevos wait for a
+   * reply that is never coming, which hangs the session. */
+  rc_api_server_response_t response;
+  memset(&response, 0, sizeof(response));
+  response.http_status_code = RC_API_SERVER_RESPONSE_CLIENT_ERROR;
+  callback(&response, callback_data);
+}
+
 static void RC_CCONV ra_server_call(const rc_api_request_t* request,
                                     rc_client_server_callback_t callback,
                                     void* callback_data, rc_client_t* client) {
@@ -124,29 +142,36 @@ static void RC_CCONV ra_server_call(const rc_api_request_t* request,
   jstring post;
   (void)client;
 
-  for (i = 0; i < RA_MAX_PENDING; i++) {
-    if (!g_pending[i].in_use) {
-      slot = i;
-      break;
-    }
-  }
-  if (slot < 0 || g_vm == NULL) {
-    /* Answering with a client error is the documented way to fail a request,
-     * and it keeps rcheevos from waiting for a reply that is not coming. */
-    rc_api_server_response_t response;
-    memset(&response, 0, sizeof(response));
-    response.http_status_code = RC_API_SERVER_RESPONSE_CLIENT_ERROR;
-    callback(&response, callback_data);
+  if (g_vm == NULL) {
+    ra_fail_request(callback, callback_data);
     return;
   }
 
-  g_pending[slot].in_use = 1;
-  g_pending[slot].callback = callback;
-  g_pending[slot].callback_data = callback_data;
+  pthread_mutex_lock(&g_pending_lock);
+  for (i = 0; i < RA_MAX_PENDING; i++) {
+    if (!g_pending[i].in_use) {
+      slot = i;
+      g_pending[i].in_use = 1;
+      g_pending[i].callback = callback;
+      g_pending[i].callback_data = callback_data;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&g_pending_lock);
+
+  if (slot < 0) {
+    ra_fail_request(callback, callback_data);
+    return;
+  }
 
   (*g_vm)->GetEnv(g_vm, (void**)&env, JNI_VERSION_1_6);
   if (env == NULL) {
+    /* Freed *and answered*. It used to be only freed, which left rcheevos
+     * waiting on a request nobody would ever send. */
+    pthread_mutex_lock(&g_pending_lock);
     g_pending[slot].in_use = 0;
+    pthread_mutex_unlock(&g_pending_lock);
+    ra_fail_request(callback, callback_data);
     return;
   }
   url = (*env)->NewStringUTF(env, request->url ? request->url : "");
@@ -168,18 +193,30 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeServerResponse(
   void* callback_data;
   (void)clazz;
 
-  if (slot < 0 || slot >= RA_MAX_PENDING || !g_pending[slot].in_use) {
+  if (slot < 0 || slot >= RA_MAX_PENDING) {
+    return;
+  }
+  pthread_mutex_lock(&g_pending_lock);
+  if (!g_pending[slot].in_use) {
+    pthread_mutex_unlock(&g_pending_lock);
     return;
   }
   callback = g_pending[slot].callback;
   callback_data = g_pending[slot].callback_data;
   g_pending[slot].in_use = 0;
+  pthread_mutex_unlock(&g_pending_lock);
 
   memset(&response, 0, sizeof(response));
   response.http_status_code = status;
   if (body != NULL) {
     length = (*env)->GetArrayLength(env, body);
     bytes = (*env)->GetByteArrayElements(env, body, NULL);
+    if (bytes == NULL) {
+      /* Out of memory pinning the array. Handing rcheevos a NULL body with a
+       * non-zero length would have it read through a null pointer. */
+      ra_fail_request(callback, callback_data);
+      return;
+    }
     response.body = (const char*)bytes;
     response.body_length = (size_t)length;
   }

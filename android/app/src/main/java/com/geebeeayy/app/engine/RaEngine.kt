@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * The RetroAchievements side of the house.
@@ -53,6 +54,32 @@ object RaEngine {
 
     private var store: RaCredentials? = null
     private var started = false
+
+    /**
+     * The emulator rcheevos reads memory from, or 0 when none is attached.
+     *
+     * Volatile because it is written from the loading coroutine and read from
+     * the network one.
+     */
+    @Volatile
+    private var attachedHandle = 0L
+
+    /** A server answer waiting to be handed back to rcheevos. */
+    private class PendingResponse(val slot: Int, val status: Int, val body: ByteArray)
+
+    /**
+     * Answers that arrived while a game is running, held for the emulation
+     * thread.
+     *
+     * **This is the important part.** Handing an answer to rcheevos can make
+     * it read emulated memory - loading a game validates every achievement's
+     * address against the live machine. Done on the network thread, that read
+     * ran *while the emulation thread was inside the core*, two threads in one
+     * machine with nothing between them. Queued here and drained in [doFrame],
+     * every read happens on the emulation thread, under the same lock that
+     * already keeps everything else out of the engine mid-frame.
+     */
+    private val pendingResponses = ConcurrentLinkedQueue<PendingResponse>()
 
     private val _user = MutableStateFlow<String?>(null)
     /** The signed-in player's display name, or null. */
@@ -107,9 +134,28 @@ object RaEngine {
         return true
     }
 
-    /** Tell the client which emulator to read memory from. */
+    /**
+     * Tell the client which emulator to read memory from, or 0 to detach.
+     *
+     * Detach **before** that emulator is destroyed. The C side keeps the raw
+     * handle, and a handle outliving its machine is a read of freed memory
+     * the next time anything asks rcheevos about memory.
+     */
     fun attachEmulator(handle: Long) {
+        attachedHandle = handle
         if (available && started) runCatching { nativeSetEmulator(handle) }
+        if (handle == 0L) {
+            // Delivered, not dropped. Each one holds a slot on the C side, and
+            // a slot nobody answers is never freed: sixteen of those and every
+            // request after fails. With the emulator detached first, nothing
+            // they trigger can reach memory.
+            while (true) {
+                val response = pendingResponses.poll() ?: break
+                runCatching {
+                    nativeServerResponse(response.slot, response.status, response.body)
+                }
+            }
+        }
     }
 
     /**
@@ -140,9 +186,20 @@ object RaEngine {
         _game.value = null
     }
 
-    /** Once per emulated frame, on the emulation thread. */
+    /**
+     * Once per emulated frame, on the emulation thread.
+     *
+     * Hands over any server answers first, so whatever they trigger - an
+     * address validation, an unlock - happens here, on this thread, and not
+     * on the one that fetched them.
+     */
     fun doFrame() {
-        if (available && started) nativeDoFrame()
+        if (!available || !started) return
+        while (true) {
+            val response = pendingResponses.poll() ?: break
+            runCatching { nativeServerResponse(response.slot, response.status, response.body) }
+        }
+        nativeDoFrame()
     }
 
     /** While paused, so the session stays alive without evaluating. */
@@ -265,7 +322,15 @@ object RaEngine {
                 // one. Leaving the slot unanswered would hang the session.
                 status = -1
             }
-            runCatching { nativeServerResponse(slot, status, body) }
+            if (attachedHandle != 0L) {
+                // A game is running: the answer waits for the emulation
+                // thread, because it may read that game's memory.
+                pendingResponses.add(PendingResponse(slot, status, body))
+            } else {
+                // No game, so nothing for rcheevos to read. A sign-in from
+                // Settings lands here, and there is no frame loop to wait for.
+                runCatching { nativeServerResponse(slot, status, body) }
+            }
         }
     }
 

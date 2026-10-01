@@ -38,6 +38,7 @@ import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.Favorites
 import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.RelativeTime
+import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFiles
 import com.geebeeayy.app.data.RomPlaceholder
@@ -668,7 +669,10 @@ fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
     LaunchedEffect(rom.filePath) {
         header = withContext(Dispatchers.IO) { RomHeader.read(File(rom.filePath)) }
         raHash = withContext(Dispatchers.IO) {
-            runCatching { RaEngine.hashRom(File(rom.filePath).readBytes()) }.getOrNull()
+            // The cart's bytes, not the file's. For a zip those differ, and the
+            // archive's hash is not the identity RetroAchievements keys on -
+            // the dialog showed a number the server would never recognise.
+            runCatching { RomBytes.read(rom.filePath)?.let(RaEngine::hashRom) }.getOrNull()
         }
     }
 
