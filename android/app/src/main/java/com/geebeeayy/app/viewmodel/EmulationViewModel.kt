@@ -304,8 +304,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private var loadedRomPath: String? = null
 
-    /** True if backgrounding paused a session the player had not paused themselves. */
-    private var pausedByBackground = false
+    /** Whether the screen is resumed, and whether the player paused. See [RunGate]. */
+    private val runGate = RunGate()
 
     /** Read once per ROM launch, like the other display settings. */
     private var showPerformance = false
@@ -354,20 +354,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     // different carts never collide on the same slot file, even if their
     // filenames happen to match.
 
-    private sealed class StateCommand {
-        data class Save(val slot: Int) : StateCommand()
-        data class LoadBytes(val bytes: ByteArray) : StateCommand()
-    }
-
     /**
-     * Single-slot mailbox for a user-triggered save/load-state request,
-     * drained by the emulation loop once per frame - same ownership pattern
-     * as [keyState]. A second request before the first is drained overwrites
-     * it; save/load-state is a discrete user action, not a stream, so this is
-     * an acceptable loss under the same "at most one frame of latency" logic.
+     * Mailbox for user-triggered save/load-state requests, drained by the
+     * emulation loop once per frame - same ownership pattern as [keyState].
+     * A queue, not a slot: a second request before the loop's next frame
+     * used to overwrite the first.
      */
-    @Volatile
-    private var pendingStateCommand: StateCommand? = null
+    private val stateCommands = CommandQueue<StateCommand>()
 
     @Volatile
     private var romStateKey: String? = null
@@ -404,7 +397,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // a new game. Resume what leaving paused and keep the session.
         if (romLoaded && loadedRomPath == filePath) {
             _isLoading.value = false
-            onAppForegrounded()
+            // Not onAppForegrounded(): only the lifecycle may mark the screen resumed.
+            if (runGate.shouldAutoResume(romLoaded, emulationJob != null)) startEmulation()
             return
         }
         // A different cart: the achievement session belongs to the one being
@@ -567,7 +561,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun startEmulation() {
-        if (romLoaded && emulationJob == null) {
+        if (runGate.mayStart(romLoaded) && emulationJob == null) {
             _isRunning.value = true
             audio.start()
             audio.resume()
@@ -592,12 +586,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         // forgotten.
                         engine.setKeys(keyState or transientPresses.getAndSet(0))
 
-                        pendingStateCommand?.let { cmd ->
-                            pendingStateCommand = null
+                        stateCommands.drain { cmd ->
                             when (cmd) {
                                 is StateCommand.Save -> performSaveState(cmd.slot)
                                 is StateCommand.LoadBytes -> {
-                                    applyStateBytes(cmd.bytes)
+                                    applyStateBytes(cmd.bytes, cmd.sidecar)
                                     // The history belongs to the timeline we
                                     // just left.
                                     engine.rewindClear()
@@ -768,29 +761,28 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun togglePause() {
         if (_isRunning.value) {
-            pausedByBackground = false
+            runGate.userPaused = true
             stopEmulation()
         } else if (romLoaded) {
+            runGate.userPaused = false
             startEmulation()
         }
     }
 
-    /** Called when the app leaves the foreground. Does not run the loop behind a lock screen. */
+    /** Called when the screen is paused. Does not run the loop behind a lock screen. */
     fun onAppBackgrounded() {
-        if (_isRunning.value) {
-            pausedByBackground = true
-            stopEmulation()
-        }
+        runGate.resumed = false
+        if (_isRunning.value) stopEmulation()
     }
 
-    /** Called when the app returns to the foreground. Only resumes what backgrounding paused. */
+    /**
+     * Called when the screen is resumed. Starts a loaded ROM the player had
+     * not paused - including one that finished loading while backgrounded.
+     */
     fun onAppForegrounded() {
-        if (pausedByBackground && romLoaded) {
-            pausedByBackground = false
-            startEmulation()
-        }
+        runGate.resumed = true
+        if (runGate.shouldAutoResume(romLoaded, emulationJob != null)) startEmulation()
     }
-
 
     /**
      * Hold to walk backwards through the rewind ring; release to resume.
@@ -903,7 +895,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     fun saveState(slot: Int) {
         if (!romLoaded || slot !in 0 until SLOT_COUNT) return
         if (_isRunning.value) {
-            pendingStateCommand = StateCommand.Save(slot)
+            stateCommands.offer(StateCommand.Save(slot))
         } else {
             // Under the lock, not merely off the loop: `_isRunning` flips from
             // the UI thread, so resuming a few ms after tapping save would
@@ -920,9 +912,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // Written beside the state, not inside it: the state file's format is
         // the core's, and the achievement runtime is not the core's business.
         // A slot saved before achievements existed simply has no sidecar.
-        RaEngine.serializeProgress()?.let { progress ->
-            runCatching { achievementSidecar(slot).writeBytes(progress) }
-        }
+        val progress = RaEngine.serializeProgress()
         val bytes = engine.readState()
         if (bytes.isEmpty()) {
             _stateMessage.value = "Failed to capture save state"
@@ -930,6 +920,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
         viewModelScope.launch(Dispatchers.IO) {
             if (atomicWrite(stateFile(slot), bytes)) {
+                // After the state, so a failed state write keeps the old pair
+                // intact. A save with no progress drops the old sidecar, or it
+                // would be restored onto a state it does not belong to.
+                val sidecar = achievementSidecar(slot)
+                if (progress != null) atomicWrite(sidecar, progress) else sidecar.delete()
                 _stateMessage.value = "Saved to ${slotName(slot)}"
             } else {
                 _stateMessage.value = "Failed to write ${slotName(slot)}"
@@ -957,27 +952,26 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 _stateMessage.value = "Could not read ${slotName(slot)}"
                 return@launch
             }
-            // Before the state lands, so the runtime is already at the right
-            // moment when the next frame is evaluated against it.
-            runCatching {
-                val sidecar = achievementSidecar(slot)
-                if (sidecar.isFile) RaEngine.restoreProgress(sidecar.readBytes())
-            }
+            // Only read here; it is restored after the core accepts the
+            // state, in applyStateBytes.
+            val sidecar = runCatching {
+                achievementSidecar(slot).takeIf { it.isFile }?.readBytes()
+            }.getOrNull()
             if (_isRunning.value) {
-                pendingStateCommand = StateCommand.LoadBytes(bytes)
+                stateCommands.offer(StateCommand.LoadBytes(bytes, sidecar))
             } else {
                 // Same reasoning as saveState(): the lock, not just the
                 // dispatcher, is what keeps a resumed loop out of the engine.
                 withContext(Dispatchers.Default) {
-                    engineLock.withLock { applyStateBytes(bytes) }
+                    engineLock.withLock { applyStateBytes(bytes, sidecar) }
                 }
             }
         }
     }
 
     /** Runs on the engine thread (loop or the one-shot fallback above). */
-    private fun applyStateBytes(bytes: ByteArray) {
-        if (engine.writeState(bytes)) {
+    private fun applyStateBytes(bytes: ByteArray, sidecar: ByteArray?) {
+        if (applyStateLoad(bytes, sidecar, engine::writeState, RaEngine::restoreProgress)) {
             _stateMessage.value = "Save state loaded"
         } else {
             // `SaveState::restore` snapshots the machine and rolls back when
