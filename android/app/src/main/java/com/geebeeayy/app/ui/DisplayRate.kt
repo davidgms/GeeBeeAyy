@@ -8,7 +8,7 @@ import kotlin.math.roundToInt
 data class DisplayModeSpec(val id: Int, val width: Int, val height: Int, val refreshRate: Float)
 
 /** The GBA's frame rate: 16.78 MHz / 280896 cycles per frame. */
-private const val GBA_FPS = 59.7275f
+internal const val GBA_FPS = 59.7275f
 
 /**
  * The display mode to ask for while a game runs, or null to leave the system's choice.
