@@ -565,22 +565,32 @@ a time. Nobody has read the whole thing at once, and per-PR reviews in this
 project have repeatedly missed what only shows across files. This phase is the
 whole-codebase pass, before anything goes near a store.
 
-- [ ] **Whole-codebase code review** - `core/` (Rust), the Android frontend
+- [x] **Whole-codebase code review** - `core/` (Rust), the Android frontend
       (Kotlin) and the C bridge, reviewed as a whole rather than as a diff.
       Every finding verified against the code before it is acted on: in this
       project agent reviews have reported confident bugs that were not there,
       and the verification is the part that matters.
-- [ ] **Tests for what the review finds untested** - unit tests where the logic
+      Done; fixed in #43, #44, #45 and #46. Still open: frame conversion on
+      the UI thread, Homebrew downloads with no checksum or size cap,
+      `frame_buffer_ptr` that can dangle, APU volume and routing, Mode 5, wait
+      states, and the iOS bridge calling removed functions.
+- [x] **Tests for what the review finds untested** - unit tests where the logic
       is pure, macro tests through `Gba::run_frame` where it is not. A finding
       fixed without a test that fails first is not finished.
 - [ ] **UI and UX stress test on a phone** - every screen and flow driven on the
       Mi 10T Pro: rapid input, rotation mid-action, backgrounding mid-save,
       low storage, a dropped network during a fetch, the layout editor pushed
       to its limits. Looking for states a player can reach and not get out of.
+      Partly done, see [`docs/phase4-device-run-2026-10-01.md`](docs/phase4-device-run-2026-10-01.md):
+      rapid input, save/load spam, backgrounding and ROM switching pass. Not yet:
+      rotation, low storage, dropped network, the layout editor.
 - [ ] **Performance on a phone** - frame pacing and audio underruns over a long
       session, not a single reading; CPU, memory and battery drain; thermal
       throttling after sustained play; cold-start and ROM-load times; the cost
       of each optional feature (blending, 2xSaI, fast-forward, achievements).
+      Partly done, same doc: 10 minutes hold 60 fps with flat memory, but MIUI
+      keeps the panel at 50 Hz, so one frame in six never reaches the screen.
+      The fix there is the game drawn into its own `SurfaceView`.
 
 **Exit criterion:** every review finding is fixed or recorded as a decision,
 and the app holds its frame rate and audio over a long session on a phone.
