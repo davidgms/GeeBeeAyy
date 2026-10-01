@@ -52,6 +52,7 @@ import android.os.BatteryManager
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.geebeeayy.app.ui.findActivity
+import com.geebeeayy.app.ui.requestGameDisplayMode
 import com.geebeeayy.app.data.ControlButton
 import com.geebeeayy.app.data.ControlPalette
 import com.geebeeayy.app.data.ControlLayout
@@ -354,6 +355,13 @@ fun EmulationScreen(
     DisposableEffect(view) {
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
+    }
+
+    // Adaptive refresh dropped the screen to 50 Hz mid-game and hid a sixth of
+    // the frames. See [gameDisplayMode].
+    DisposableEffect(view) {
+        val restore = view.context.findActivity()?.window?.let(::requestGameDisplayMode)
+        onDispose { restore?.invoke() }
     }
 
     // The status and navigation bars are worth about 200px on a tall phone,
