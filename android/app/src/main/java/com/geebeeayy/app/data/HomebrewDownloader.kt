@@ -14,6 +14,24 @@ import java.net.URL
 object HomebrewDownloader {
 
     private const val TAG = "GeeBeeAyy/Download"
+
+    /**
+     * What a player reads when a download fails. The exception's own text
+     * ("Software caused connection abort") is for the log, not the screen.
+     * A disk error is told apart by its errno, because the platform raises
+     * a plain IOException for both a full disk and a stream cut short.
+     */
+    internal fun failureMessage(e: Exception): String {
+        val text = e.message.orEmpty()
+        return when {
+            e is java.net.SocketTimeoutException -> "The server took too long to answer. Try again later."
+            DISK_ERRORS.any { it in text } -> "Could not save the file. Check that the folder has free space."
+            e is java.io.IOException -> "Connection lost. Check your internet and try again."
+            else -> "Download failed."
+        }
+    }
+
+    private val DISK_ERRORS = listOf("ENOSPC", "EACCES", "EROFS", "EDQUOT")
     private const val TIMEOUT_MS = 30_000
 
     sealed interface Result {
@@ -85,7 +103,7 @@ object HomebrewDownloader {
         } catch (e: Exception) {
             Log.e(TAG, "Downloading ${entry.name} failed", e)
             partial.delete()
-            return Result.Failed(e.message ?: e.javaClass.simpleName)
+            return Result.Failed(failureMessage(e))
         } finally {
             connection?.disconnect()
         }

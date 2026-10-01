@@ -63,10 +63,32 @@ renders 0 frames.
 | 6 rounds of switching between two ROMs | PSS 181 MB at start, 190-194 MB after round 2, then flat |
 | 400 taps across A, B and the d-pad, plus 10 fast-forward toggles and 10 rewind holds | No crash, 61 fps after |
 
+## Second pass, after the SurfaceView change
+
+| Step | Result |
+|---|---|
+| 6 activity rebuilds mid-game (dark mode toggled; rotation itself does not rebuild, `configChanges` covers it) | Same process, no ROM reload, 60 fps, picture redrawn |
+| Wi-Fi cut 0.4 s into a 5 MB Homebrew download | Error shown, no crash, no `.part` left behind; retry with Wi-Fi back completes |
+| Layout editor: d-pad dragged past both corners, resized 15 up and 30 down, 25 undo and 25 redo, then Cancel | No crash; Cancel restores `control_layouts.xml` byte for byte |
+
+Two findings, both fixed in the same PR:
+
+- **A control could be dragged almost entirely off the screen** - two thirds
+  of the d-pad left the bottom-right corner, under B. Drags are now clamped to
+  the controls' box (`ui/ControlDrag.kt`, `ControlDragTest`); a control already
+  outside can still be dragged back. Still possible: a control placed over
+  the top bar.
+- **The download error was raw Java text** ("Software caused connection
+  abort"). Now a sentence a player can act on
+  (`HomebrewDownloader.failureMessage`, `DownloadFailureTest`).
+
+Rotation could not be driven over adb: the app's orientation setting is
+portrait-locked on this phone and `FULL_SENSOR` ignores the system rotation
+lock. Low storage was not simulated: it would mean filling the player's phone.
+
 ## Not covered this run
 
-- Rotation mid-action, low storage, a dropped network during a fetch, and the
-  layout editor at its limits.
+- Rotation by hand, and low storage.
 - A session longer than 10 minutes, cold-start and ROM-load times, and the cost
   of each optional feature (blending, 2xSaI, fast-forward, achievements).
 
