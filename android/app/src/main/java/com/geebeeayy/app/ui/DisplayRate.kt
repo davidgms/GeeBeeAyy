@@ -34,8 +34,8 @@ fun gameDisplayMode(modes: List<DisplayModeSpec>, width: Int, height: Int): Disp
  * Ask [window] for the [gameDisplayMode], returning what to restore on the way out.
  * The request is a hint: the system may still override it (battery saver, heat).
  * MIUI's smart refresh ignores both hints - measured on a Mi 10T Pro, it stays
- * at 50 Hz. A per-surface `Surface.setFrameRate` vote is the path there, and
- * needs the game drawn into its own SurfaceView.
+ * at 50 Hz - and also the per-surface vote in [GameSurfaceRenderer], although
+ * the compositor lists both votes (60 Exact, 59.73 ExactOrMultiple).
  */
 fun requestGameDisplayMode(window: Window): () -> Unit {
     @Suppress("DEPRECATION") // Window.getContext().display needs API 30; minSdk is 26.

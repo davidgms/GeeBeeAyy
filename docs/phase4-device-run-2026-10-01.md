@@ -39,9 +39,20 @@ Tried, in order:
 
 Kept: (1) and (2), in `ui/DisplayRate.kt` with `DisplayRateTest`. They are the
 standard request and should work on stock Android and on vendors that honour
-it. What would work on MIUI: the game drawn into its own `SurfaceView`, voting
-with `Surface.setFrameRate` on a surface that actually presents frames. That is
-the same change as the open "frame conversion on the UI thread" finding.
+it.
+
+Then the game moved to its own `SurfaceView` (`ui/GameSurface.kt`), drawn off
+the main thread, with `Surface.setFrameRate(59.73, FIXED_SOURCE)` on a surface
+that presents every frame. `dumpsys SurfaceFlinger` now lists both votes - the
+game layer at `59.73fps ExactOrMultiple` and the window at `60.00fps Exact` -
+with content detection off, and the panel **still** runs at 50 Hz. MIUI
+overrides a correct, visible request. How it decides is the subject of a
+separate research note.
+
+The surface move paid off anyway: process CPU went from about 135% to about
+115% of a core over 3 minutes, because the screen no longer recomposes and
+converts pixels on the main thread every frame. With the game paused the app
+renders 0 frames.
 
 ## Stress, no crash, no ANR, no skipped-frame warning in logcat
 

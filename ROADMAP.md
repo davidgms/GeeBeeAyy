@@ -570,8 +570,7 @@ whole-codebase pass, before anything goes near a store.
       Every finding verified against the code before it is acted on: in this
       project agent reviews have reported confident bugs that were not there,
       and the verification is the part that matters.
-      Done; fixed in #43, #44, #45 and #46. Still open: frame conversion on
-      the UI thread, Homebrew downloads with no checksum or size cap,
+      Done; fixed in #43 to #48. Still open: Homebrew downloads with no checksum or size cap,
       `frame_buffer_ptr` that can dangle, APU volume and routing, Mode 5, wait
       states, and the iOS bridge calling removed functions.
 - [x] **Tests for what the review finds untested** - unit tests where the logic
@@ -590,7 +589,8 @@ whole-codebase pass, before anything goes near a store.
       of each optional feature (blending, 2xSaI, fast-forward, achievements).
       Partly done, same doc: 10 minutes hold 60 fps with flat memory, but MIUI
       keeps the panel at 50 Hz, so one frame in six never reaches the screen.
-      The fix there is the game drawn into its own `SurfaceView`.
+      The game now draws on its own `SurfaceView` with a 60 Hz vote; MIUI still
+      overrides it. CPU fell from about 135% to 115% of a core.
 
 **Exit criterion:** every review finding is fixed or recorded as a decision,
 and the app holds its frame rate and audio over a long session on a phone.
