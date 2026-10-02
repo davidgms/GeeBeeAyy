@@ -626,7 +626,17 @@ and their PR and issue history.
       All five FuzzARM ROMs are hard gates again.
 - [x] **`bios::arc_tan` overflow** (#58). BIOS math still scores 305/615 in
       the mGBA suite: other BIOS functions diverge.
-- [ ] **Look into mGBA suite Timer IRQ 0/90, I/O read 10/130, SIO.**
+- [x] **mGBA suite Timer IRQ 0/90 -> 90/90, I/O read 10/130 -> 130/130**
+      (#60; total 3602 -> 4204). The device test caught a regression the
+      suites could not: old quick saves taken inside an IRQ handler returned
+      into a moved BIOS stub (Yggdra at 37 fps). The old return address is
+      kept; save states carry no BIOS, so the stub layout is part of the format.
+- [ ] **Timer count-up 729/936** - every failure is a prescaled timer (64,
+      256, 1024); cause not found.
+- [ ] **BIOS math 305/615, SIO, Timing** - Timing needs per-access wait states.
+- [ ] **Per-instruction cost rose ~10% in #60** (Mario Tennis on the host,
+      same instruction count). Still 60 fps on the Mi 10T Pro; profile before
+      it matters on slower phones.
 
 **Exit criterion:** each action is done, or recorded as declined with a reason.
 
