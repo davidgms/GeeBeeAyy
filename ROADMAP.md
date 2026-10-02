@@ -609,12 +609,22 @@ and their PR and issue history.
       conclusions in [`docs/research/emulators-research.md`](docs/research/emulators-research.md).
       Key result: no emulator has a MIUI workaround; audio as the master
       clock is the right call for us.
-- [ ] **Never block emulation on the draw** - guard it with a test.
-- [ ] **`appCategory="game"` and `isGame`**, tested on the phone.
-- [ ] **Re-apply the display mode in `onResume`.**
-- [ ] **One-time MIUI tip** when a game runs below 60 Hz.
-- [ ] **Audio-driven render frameskip, audio watchdog, Android's own buffer
-      size and sample rate, Performance Hint API.**
+- [x] **Never block emulation on the draw** - `FramePublishTest` (#53).
+- [x] **`appCategory="game"` and `isGame`** (#53). No change to the MIUI 14
+      trap on the phone; the 60 Hz default it buys is Android 15's.
+- [x] **Re-apply the display mode in `onResume`** (#53).
+- [x] **Low screen-rate tip**, on by default on Xiaomi, plus the live Hz in
+      the FPS readout (#53, #55). Tested on the phone.
+- [x] **Audio-driven render frameskip, audio watchdog, Android's own buffer
+      burst, Performance Hint API** (#54).
+- [x] **Input read four times per frame**, each slice paced by its own audio
+      write (#56).
+- [x] **FuzzARM, ARMWrestler and mGBA suite harnesses** (#56). They found a
+      THUMB shift-by-zero flags bug, a `bios::arc_tan` overflow, and low
+      Timer IRQ / I/O read / SIO scores - open below.
+- [ ] **THUMB shift by register with amount 0 must still set N and Z.**
+- [ ] **`bios::arc_tan` overflow.**
+- [ ] **Look into mGBA suite Timer IRQ 0/90, I/O read 10/130, SIO.**
 
 **Exit criterion:** each action is done, or recorded as declined with a reason.
 
