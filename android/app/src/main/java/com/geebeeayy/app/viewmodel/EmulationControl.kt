@@ -64,3 +64,22 @@ internal class RunGate {
     fun shouldAutoResume(romLoaded: Boolean, running: Boolean): Boolean =
         mayStart(romLoaded) && !userPaused && !running
 }
+
+/**
+ * The keys to apply for one slice of a frame. A tap that came and went
+ * between two polls is latched until the frame ends: with one poll per frame
+ * it was down for the whole frame, and a game that reads KEYINPUT once per
+ * vblank must still see it. See [EmulationViewModel]'s INPUT_SLICES.
+ */
+internal class FrameKeys {
+    private var latched = 0
+
+    fun forSlice(held: Int, pressedSinceLast: Int): Int {
+        latched = latched or pressedSinceLast
+        return held or latched
+    }
+
+    fun endFrame() {
+        latched = 0
+    }
+}

@@ -95,6 +95,20 @@ class GbaEngine {
     }
 
     /**
+     * Run slice [index] of a frame cut into [count] parts, so [setKeys] can be
+     * called between slices and the game sees input mid-frame. Calling it for
+     * every index in `0 until count`, in order, is exactly one [runFrame]; the
+     * frame buffer is copied after the last slice only.
+     */
+    fun runFrameSlice(index: Int, count: Int) {
+        ensureHandle()
+        nativeRunFrameSlice(handle, index, count)
+        if (index >= count - 1) {
+            nativeFrameBufferCopy(handle, frameBuffer)
+        }
+    }
+
+    /**
      * Get the current frame buffer as a ByteArray (240x160 RGB888).
      *
      * Call this after [runFrame] or [runFrames] to get the latest frame.
@@ -280,6 +294,7 @@ class GbaEngine {
     private external fun nativeRunFrame(handle: Long)
     private external fun nativeReset(handle: Long)
     private external fun nativeRunFrames(handle: Long, count: Int)
+    private external fun nativeRunFrameSlice(handle: Long, index: Int, count: Int)
     private external fun nativeFrameBufferCopy(handle: Long, out: ByteArray)
     private external fun nativeAudioCopy(handle: Long, out: FloatArray, maxSamples: Int): Int
     private external fun nativePeekMemory(handle: Long, address: Int, out: ByteArray, len: Int): Int
