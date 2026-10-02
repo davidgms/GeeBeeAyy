@@ -1,7 +1,9 @@
 package com.geebeeayy.app.engine
 
 import android.media.AudioAttributes
+import android.content.Context
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
 import android.util.Log
@@ -14,7 +16,7 @@ import android.util.Log
  * clock the timing master, which is what keeps playback from crackling or
  * drifting against the video frame rate.
  */
-class AudioOutput {
+class AudioOutput(private val context: Context? = null) {
 
     companion object {
         private const val TAG = "GeeBeeAyy/Audio"
@@ -79,8 +81,18 @@ class AudioOutput {
         // safe size for the normal mixer, and taking it costs 80 ms of
         // latency on a device whose fast mixer runs a 4 ms period. Ask for
         // the smaller buffer and let the framework raise it if it must.
-        val wanted = BUFFERED_FRAMES * SAMPLES_PER_FRAME * Float.SIZE_BYTES
-        val bufferBytes = wanted
+        // Rounded up to the device's own burst size so the mixer never
+        // reads a partial burst. Only ever grows the request, so the
+        // measured safety margin of two frames stays intact. The sample rate
+        // needs no action: the core emits a fixed 48 kHz, which is what
+        // virtually every device mixer runs, so there is nothing to resample.
+        val am = context?.getSystemService(AudioManager::class.java)
+        val burst = am?.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)?.toIntOrNull() ?: 0
+        val nativeRate = am?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull()
+        if (nativeRate != null && nativeRate != SAMPLE_RATE) {
+            Log.w(TAG, "Device mixer runs at ${nativeRate}Hz, the core emits ${SAMPLE_RATE}Hz: AudioTrack will resample")
+        }
+        val bufferBytes = alignToBurst(BUFFERED_FRAMES * SAMPLES_PER_FRAME, burst) * Float.SIZE_BYTES
 
         track = try {
             AudioTrack.Builder()
@@ -105,7 +117,10 @@ class AudioOutput {
                     }
                 }
                 .build()
-                .also { it.play() }
+                .also {
+                    it.setVolume(volume)
+                    it.play()
+                }
         } catch (e: Exception) {
             // A missing or busy audio device must not take the emulator down;
             // the caller falls back to timer-based pacing.
@@ -136,6 +151,7 @@ class AudioOutput {
             Log.e(TAG, "Audio write failed (code $written)")
             return false
         }
+        framesWritten += written
         return true
     }
 
@@ -158,7 +174,34 @@ class AudioOutput {
      * would be work for nothing.
      */
     fun setVolume(volume: Float) {
-        track?.setVolume(volume.coerceIn(0f, 1f))
+        this.volume = volume.coerceIn(0f, 1f)
+        track?.setVolume(this.volume)
+    }
+
+    /** Remembered so a rebuilt track comes back at the same level. */
+    private var volume = 1f
+
+    /**
+     * Samples queued but not yet played, or -1 with no track. The frame-skip
+     * governor reads this; it is a cheap, non-blocking query.
+     */
+    val bufferedSamples: Int
+        get() = track?.let { (framesWritten - headPosition).toInt().coerceAtLeast(0) } ?: -1
+
+    /** Underrun count read live, unlike [underruns] which is sampled at each write. */
+    val liveUnderruns: Int get() = track?.underrunCount ?: 0
+
+    /** Playback head as an unsigned 32-bit frame count (the platform wraps it). */
+    val headPosition: Long get() = (track?.playbackHeadPosition ?: 0).toLong() and 0xFFFFFFFFL
+
+    private var framesWritten = 0L
+
+    /** Drop the track and open a fresh one, e.g. after a device change killed it. */
+    fun rebuild() {
+        Log.w(TAG, "Audio stopped consuming, rebuilding the track")
+        release()
+        framesWritten = 0
+        start()
     }
 
     fun stop() {
@@ -166,6 +209,8 @@ class AudioOutput {
             pause()
             flush()
         }
+        // flush() resets the head to 0, so the written count must follow.
+        framesWritten = 0
     }
 
     fun resume() {
@@ -173,8 +218,10 @@ class AudioOutput {
     }
 
     fun release() {
+        // A track killed by a device change can throw from stop(); release()
+        // must still run, or the rebuild leaks the dead object.
         track?.run {
-            stop()
+            runCatching { stop() }
             release()
         }
         track = null
