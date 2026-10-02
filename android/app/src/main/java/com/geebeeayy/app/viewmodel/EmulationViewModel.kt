@@ -14,6 +14,9 @@ import com.geebeeayy.app.data.BatterySaveStore
 import com.geebeeayy.app.data.atomicWrite
 import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.engine.AudioOutput
+import com.geebeeayy.app.engine.AudioWatchdog
+import com.geebeeayy.app.engine.FrameSkipGovernor
+import com.geebeeayy.app.engine.PerformanceHint
 import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.engine.RaEngine
 import kotlinx.coroutines.Dispatchers
@@ -163,7 +166,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private val engine = GbaEngine()
-    private val audio = AudioOutput()
+    private val audio = AudioOutput(application)
 
     /**
      * Frames actually shown per second, and how often the audio starved.
@@ -566,7 +569,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             audio.start()
             audio.resume()
             emulationJob = viewModelScope.launch(Dispatchers.Default) {
+                val skipGovernor = FrameSkipGovernor()
+                val watchdog = AudioWatchdog()
+                // One GBA frame, 16777216 / 280896 Hz.
+                val hint = PerformanceHint(getApplication(), 16_743_000L)
+                try {
                 while (isActive) {
+                    val workStart = System.nanoTime()
                     val fastForwarding = fastForward.value
                     // Sampled once per iteration: the batch size and the
                     // audio squeeze have to agree, and the player can change
@@ -627,7 +636,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             // produced the memory they read. Cheap when no
                             // game is loaded: rcheevos returns immediately.
                             RaEngine.doFrame()
-                            _frameBuffer.value = engine.getFrameBuffer().copyOf()
+                            // Drawing, not emulating, is what gets dropped
+                            // when the audio buffer is about to run dry.
+                            val skipDraw = !fastForwarding &&
+                                skipGovernor.shouldSkip(audio.liveUnderruns, audio.bufferedSamples)
+                            if (!skipDraw) _frameBuffer.value = engine.getFrameBuffer().copyOf()
 
                             // Snapshot on a cadence, not every frame: a state
                             // is about 500 KB, so REWIND_DEPTH * the interval
@@ -642,6 +655,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             engine.readAudio(audioSamples)
                         }
                     }
+
+                    hint.report(System.nanoTime() - workStart)
 
                     if (count < 0) {
                         delay(
@@ -692,12 +707,19 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     if (!_soundEnabled.value || (fastForwarding && muteOnFastForward)) {
                         audioSamples.fill(0f, 0, toWrite)
                     }
-                    if (!audio.write(audioSamples, toWrite)) {
+                    val wrote = audio.write(audioSamples, toWrite)
+                    if (!wrote) {
                         // No audio device: one deadline per iteration is one
                         // real frame period per batch, so the ratio still
                         // holds without any arithmetic here.
                         delayUntilDeadline()
                     }
+                    if (toWrite > 0 && watchdog.observe(audio.headPosition, wrote)) {
+                        audio.rebuild()
+                    }
+                }
+                } finally {
+                    hint.close()
                 }
             }
         }
