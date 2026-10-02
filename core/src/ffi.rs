@@ -176,6 +176,21 @@ pub unsafe extern "C" fn geebeeayy_run_frames(ptr: *mut c_void, count: u32) {
     guarded((), || handle.inner.run_frames(count));
 }
 
+/// Run slice `index` of a frame cut into `count` parts, for polling input
+/// between slices. Calling it for every `index` in `0..count`, in order, is
+/// exactly one `geebeeayy_run_frame`; see `Gba::run_frame_slice`.
+///
+/// # Safety
+/// `ptr` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_run_frame_slice(ptr: *mut c_void, index: u32, count: u32) {
+    if ptr.is_null() {
+        return;
+    }
+    let handle = unsafe { &mut *(ptr as *mut GbaHandle) };
+    guarded((), || handle.inner.run_frame_slice(index, count));
+}
+
 /// Copy the current frame buffer (240x160 RGB888) into `out`.
 ///
 /// `out` must point to at least 240*160*3 = 115200 bytes.
@@ -630,6 +645,27 @@ pub mod android {
                 // A negative jint cast to u32 is about four billion frames,
                 // which is a hang rather than a crash but no better for it.
                 geebeeayy_run_frames(handle as *mut c_void, count.max(0) as u32);
+            }
+        }
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeRunFrameSlice(
+        _env: JNIEnv,
+        _class: JClass,
+        handle: jlong,
+        index: jint,
+        count: jint,
+    ) {
+        if handle != 0 {
+            unsafe {
+                // Negative values clamp to 0; the core treats a count of 0
+                // as 1 and an index past the end as the last slice.
+                geebeeayy_run_frame_slice(
+                    handle as *mut c_void,
+                    index.max(0) as u32,
+                    count.max(0) as u32,
+                );
             }
         }
     }

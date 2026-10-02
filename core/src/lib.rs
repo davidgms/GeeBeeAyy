@@ -30,6 +30,9 @@ pub struct Gba {
     pub dma: Dma,
     pub cycles: u64,
     pub run_frame_counter: u64,
+    /// `cycles` when the current frame's first slice began; see
+    /// `run_frame_slice`. Not machine state, so not in a save state.
+    frame_start: u64,
 }
 
 impl Default for Gba {
@@ -49,6 +52,7 @@ impl Gba {
             dma: Dma::new(),
             cycles: 0,
             run_frame_counter: 0,
+            frame_start: 0,
         }
     }
 
@@ -83,6 +87,7 @@ impl Gba {
         self.dma = Dma::new();
         self.cycles = 0;
         self.run_frame_counter = 0;
+        self.frame_start = 0;
     }
 
     /// Advance the whole machine by one CPU instruction.
@@ -151,7 +156,25 @@ impl Gba {
     }
 
     pub fn run_frame(&mut self) {
-        let target = self.cycles + CYCLES_PER_FRAME;
+        self.run_frame_slice(0, 1);
+    }
+
+    /// Run slice `index` of a frame cut into `count` equal parts, so the
+    /// frontend can push fresh keys between slices and the game sees input
+    /// mid-frame (NanoBoyAdvance polls four times a frame).
+    ///
+    /// Call it for `index` in `0..count`, in order. Slice 0 marks the frame
+    /// start and the last slice stops on the same target `run_frame` uses, so
+    /// a sliced frame is cycle-for-cycle the same emulation as a whole one:
+    /// both are "step while `cycles` < target", only paused in between.
+    /// `count` of 0 is treated as 1 and an out-of-range `index` as the last.
+    pub fn run_frame_slice(&mut self, index: u32, count: u32) {
+        let count = count.max(1);
+        let index = index.min(count - 1);
+        if index == 0 {
+            self.frame_start = self.cycles;
+        }
+        let target = self.frame_start + CYCLES_PER_FRAME * u64::from(index + 1) / u64::from(count);
         while self.cycles < target {
             self.step();
         }
@@ -350,7 +373,11 @@ impl Gba {
         &mut self,
         state: &savestate::SaveState,
     ) -> Result<(), savestate::SaveStateError> {
-        state.restore(self)
+        state.restore(self)?;
+        // A restored `cycles` from another frame would make a following
+        // non-zero slice run far too long or not at all.
+        self.frame_start = self.cycles;
+        Ok(())
     }
 
     /// Run `count` frames, drawing only the last one.

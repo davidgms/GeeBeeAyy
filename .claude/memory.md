@@ -1098,3 +1098,28 @@ nobody signs in with a game open), and `stopEmulation` unloaded the session
 while the ROM reload guard meant it never came back. Anything that looks like
 "session lifecycle" in this app should be checked against that guard.
 
+
+### 2026-10-02 - Homebrew suites beyond gba-suite, and what they found
+
+`core/tests/homebrew_suites.rs` runs FuzzARM, ARMWrestler and the mGBA suite
+from `temp/roms/` (fetch commands in its header). Results on 2026-10-02:
+
+- **ARMWrestler 79/79 OK** (ARM and THUMB pages), **FuzzARM ARM ROMs clean**.
+- **FuzzARM THUMB ROMs fail on one bug**: THUMB format-4 `lsl/lsr/asr/ror
+  Rd, Rs` with `Rs & 0xFF == 0` skips the N/Z update (`core/src/cpu/thumb.rs`,
+  the `shift == 0` arms of the ALU block). GBATEK: N and Z are always set,
+  only C is unchanged. The three tests are `#[ignore]`d with that reason.
+- **mGBA suite 3602/6998** (score, `#[ignore]`d): Shifter 140/140 and Carry
+  93/93 perfect; Timer IRQ 0/90, I/O read 10/130, Timing 235/2020, SIO near 0.
+  The timing numbers are expected for an interpreter without per-access
+  waitstates; Timer IRQ 0/90 and I/O read 10/130 are worth a look.
+- **`bios::arc_tan` panics in debug builds** ("attempt to multiply with
+  overflow", `core/src/bios.rs` ~line 206) on inputs the mGBA BIOS-math suite
+  feeds it. Release wraps silently. The BIOS math is 32-bit wrapping, so the
+  fix is `wrapping_mul`, with a test.
+
+Two harness traps, so nobody rediscovers them: FuzzARM writes its EWRAM dump
+marker *first* and the rest between slow text draws, so reading on the marker
+deadlocks the key handshake - wait for its key-down loop instead. And
+ARMWrestler draws its verdicts as bitmap text; the harness reads the failure
+mask at the entry of its own `DrawResult` routine, found by byte pattern.
