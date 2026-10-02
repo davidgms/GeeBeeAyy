@@ -163,6 +163,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
          * file write per byte.
          */
         private const val SAVE_FLUSH_DEBOUNCE_MS = 2_000L
+
+        /**
+         * Input is read this many times per normal-speed frame, each slice
+         * followed by its own blocking audio write. Fast-forward and rewind
+         * keep whole frames.
+         */
+        private const val INPUT_SLICES = 4
     }
 
     private val engine = GbaEngine()
@@ -573,9 +580,15 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 val watchdog = AudioWatchdog()
                 // One GBA frame, 16777216 / 280896 Hz.
                 val hint = PerformanceHint(getApplication(), 16_743_000L)
+                val frameKeys = FrameKeys()
+                // Which quarter of the frame runs next. See INPUT_SLICES.
+                var slice = 0
+                var workStart = System.nanoTime()
                 try {
                 while (isActive) {
-                    val workStart = System.nanoTime()
+                    if (slice == 0) workStart = System.nanoTime()
+                    // False only between the slices of one normal-speed frame.
+                    var frameEnded = true
                     val fastForwarding = fastForward.value
                     // Sampled once per iteration: the batch size and the
                     // audio squeeze have to agree, and the player can change
@@ -593,9 +606,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         // Held keys, plus anything pressed and released since
                         // the last frame, which `keyState` alone has already
                         // forgotten.
-                        engine.setKeys(keyState or transientPresses.getAndSet(0))
+                        engine.setKeys(frameKeys.forSlice(keyState, transientPresses.getAndSet(0)))
 
-                        stateCommands.drain { cmd ->
+                        // Between frames only: a state landing mid-frame would
+                        // leave the next slices finishing a frame it never began.
+                        if (slice == 0) stateCommands.drain { cmd ->
                             when (cmd) {
                                 is StateCommand.Save -> performSaveState(cmd.slot)
                                 is StateCommand.LoadBytes -> {
@@ -608,6 +623,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                         }
 
+                        if (rewinding || fastForwarding) slice = 0
                         if (rewinding) {
                             // Walking back through the ring one snapshot at a
                             // time, paced so REWIND_INTERVAL_FRAMES of play
@@ -629,8 +645,18 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                                     if (ratio == 0) FAST_FORWARD_BATCH else ratio
                                 )
                             } else {
-                                engine.runFrame()
+                                // A quarter frame, then its audio is written
+                                // below. The blocking write spreads the four
+                                // slices across the real frame period, so a
+                                // button read before slice 3 is at most ~4 ms
+                                // old instead of up to a whole frame
+                                // (NanoBoyAdvance reads input 4x per frame).
+                                engine.runFrameSlice(slice, INPUT_SLICES)
+                                slice = (slice + 1) % INPUT_SLICES
+                                frameEnded = slice == 0
                             }
+                            if (frameEnded) {
+                            frameKeys.endFrame()
                             // Achievements are evaluated here, on the
                             // emulation thread, right after the frame that
                             // produced the memory they read. Cheap when no
@@ -652,11 +678,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                             }
 
                             checkSaveDirty()
+                            }
                             engine.readAudio(audioSamples)
                         }
                     }
 
-                    hint.report(System.nanoTime() - workStart)
+                    if (frameEnded) hint.report(System.nanoTime() - workStart)
 
                     if (count < 0) {
                         delay(
@@ -676,7 +703,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     // Once a second, not every frame: the flow drives a
                     // recomposition, and a number that changes 60 times a
                     // second is unreadable as well as wasteful.
-                    if (showPerformance) {
+                    if (showPerformance && frameEnded) {
                         framesThisSecond++
                         val now = System.nanoTime()
                         if (now - perfWindowStart >= 1_000_000_000L) {
@@ -708,13 +735,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         audioSamples.fill(0f, 0, toWrite)
                     }
                     val wrote = audio.write(audioSamples, toWrite)
-                    if (!wrote) {
+                    if (!wrote && frameEnded) {
                         // No audio device: one deadline per iteration is one
                         // real frame period per batch, so the ratio still
                         // holds without any arithmetic here.
                         delayUntilDeadline()
                     }
-                    if (toWrite > 0 && watchdog.observe(audio.headPosition, wrote)) {
+                    if (frameEnded && toWrite > 0 && watchdog.observe(audio.headPosition, wrote)) {
                         audio.rebuild()
                     }
                 }
