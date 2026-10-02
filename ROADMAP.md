@@ -622,8 +622,10 @@ and their PR and issue history.
 - [x] **FuzzARM, ARMWrestler and mGBA suite harnesses** (#56). They found a
       THUMB shift-by-zero flags bug, a `bios::arc_tan` overflow, and low
       Timer IRQ / I/O read / SIO scores - open below.
-- [ ] **THUMB shift by register with amount 0 must still set N and Z.**
-- [ ] **`bios::arc_tan` overflow.**
+- [x] **THUMB shift by register with amount 0 must still set N and Z** (#58).
+      All five FuzzARM ROMs are hard gates again.
+- [x] **`bios::arc_tan` overflow** (#58). BIOS math still scores 305/615 in
+      the mGBA suite: other BIOS functions diverge.
 - [ ] **Look into mGBA suite Timer IRQ 0/90, I/O read 10/130, SIO.**
 
 **Exit criterion:** each action is done, or recorded as declined with a reason.
