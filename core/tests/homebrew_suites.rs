@@ -87,11 +87,10 @@ fn c_string(gba: &Gba, mut address: u32) -> String {
 
 // --- FuzzARM ---------------------------------------------------------------
 //
-// The three ROMs with THUMB tests are ignored, not deleted, the same way
-// `gba_suite.rs` handles its known failures: every failure they report is one
-// bug. THUMB format-4 shifts by a register (`lsl/lsr/asr/ror Rd, Rs`) skip the
-// N/Z update when the low byte of Rs is 0; GBATEK says N and Z are always set
-// and only C is left unchanged. Drop the `#[ignore]` with the fix.
+// All five ROMs are hard gates. The THUMB ones were ignored until 2026-10-02:
+// every failure they reported was one bug, THUMB format-4 shifts by a register
+// (`lsl/lsr/asr/ror Rd, Rs`) skipping the N/Z update when the low byte of Rs
+// is 0 (`cpu.rs` `thumb_register_shift_by_zero_still_sets_n_and_z`).
 
 /// Give up counting past this many failures; a broken CPU fails everything.
 const FUZZARM_MAX_FAILURES: usize = 100;
@@ -185,7 +184,6 @@ fn fuzzarm(name: &str) {
 }
 
 #[test]
-#[ignore = "THUMB LSL/LSR/ASR/ROR Rd,Rs with Rs=0 leaves N/Z stale (cpu/thumb.rs ALU ops)"]
 fn fuzzarm_mixed() {
     fuzzarm("FuzzARM");
 }
@@ -196,7 +194,6 @@ fn fuzzarm_arm_any() {
 }
 
 #[test]
-#[ignore = "THUMB LSL/LSR/ASR/ROR Rd,Rs with Rs=0 leaves N/Z stale (cpu/thumb.rs ALU ops)"]
 fn fuzzarm_thumb_any() {
     fuzzarm("THUMB_Any");
 }
@@ -207,7 +204,6 @@ fn fuzzarm_arm_data_processing() {
 }
 
 #[test]
-#[ignore = "THUMB LSL/LSR/ASR/ROR Rd,Rs with Rs=0 leaves N/Z stale (cpu/thumb.rs ALU ops)"]
 fn fuzzarm_thumb_data_processing() {
     fuzzarm("THUMB_DataProcessing");
 }

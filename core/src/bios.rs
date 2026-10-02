@@ -93,7 +93,7 @@ fn handle_register_ram_reset(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     true
 }
 
-/// SWI 0x02: Halt — enters low-power state until interrupt
+/// SWI 0x02: Halt - enters low-power state until interrupt
 fn handle_halt(_cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     bus.io.halt = true;
     true
@@ -139,7 +139,7 @@ fn handle_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     true
 }
 
-/// SWI 0x05: VBlankIntrWait — waits specifically for VBlank
+/// SWI 0x05: VBlankIntrWait - waits specifically for VBlank
 /// SWI 05h. GBATEK: "sets r0=1, r1=1, and then calls IntrWait".
 fn handle_vblank_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     cpu.set_reg(0, 1); // discard old flags
@@ -199,15 +199,14 @@ fn handle_sqrt(cpu: &mut Cpu) -> bool {
 /// The coefficients are the ones in the BIOS ROM (cross-checked against mGBA's
 /// `_ArcTan`); GBATEK documents only the interface, not the series.
 fn arc_tan(tan: i32) -> i32 {
-    let a = -((tan * tan) >> 14);
-    let mut b = ((0xA9 * a) >> 14) + 0x390;
-    b = ((b * a) >> 14) + 0x91C;
-    b = ((b * a) >> 14) + 0xFB60;
-    b = ((b * a) >> 14) + 0x16C9;
-    b = ((b * a) >> 14) + 0x2081;
-    b = ((b * a) >> 14) + 0x3B10;
-    b = ((b * a) >> 14) + 0xA2F9;
-    (tan * b) >> 16
+    // 32-bit wrapping throughout, as the BIOS's ARM code computes it: near
+    // |tan| = 1.0 the products leave i32, and a checked multiply panicked.
+    let a = (tan.wrapping_mul(tan) >> 14).wrapping_neg();
+    let mut b = (0xA9i32.wrapping_mul(a) >> 14).wrapping_add(0x390);
+    for c in [0x91C, 0xFB60, 0x16C9, 0x2081, 0x3B10, 0xA2F9] {
+        b = (b.wrapping_mul(a) >> 14).wrapping_add(c);
+    }
+    tan.wrapping_mul(b) >> 16
 }
 
 /// SWI 0x09: ArcTan(r0 = tan) -> r0 = angle in C000h..4000h.
