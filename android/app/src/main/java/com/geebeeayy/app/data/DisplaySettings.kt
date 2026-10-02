@@ -289,6 +289,18 @@ class DisplaySettings(context: Context) {
     }
 
     /**
+     * Tell the player when the phone holds the screen below 60 Hz during a
+     * game. On by default on Xiaomi phones, where MIUI's smart refresh does it.
+     * See [com.geebeeayy.app.ui.RateTip].
+     */
+    fun getRateTip(): Boolean =
+        prefs.getBoolean(KEY_RATE_TIP, com.geebeeayy.app.ui.RateTip.defaultEnabled(android.os.Build.MANUFACTURER))
+
+    fun setRateTip(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_RATE_TIP, enabled).apply()
+    }
+
+    /**
      * Output level, 0.0 to 1.0.
      *
      * Separate from the system volume because an emulator is often played
@@ -324,6 +336,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_COVER_ART = "download_cover_art"
         private const val KEY_AUTO_LOAD = "auto_load_quick_save"
         private const val KEY_PERFORMANCE = "show_performance"
+        private const val KEY_RATE_TIP = "rate_tip"
         private const val KEY_VOLUME = "volume"
         private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
         private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
