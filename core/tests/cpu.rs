@@ -703,3 +703,26 @@ fn thumb_register_shift_by_zero_still_sets_n_and_z() {
         assert!(!cpu.flag_n(), "{name} by 0: N set on a zero result");
     }
 }
+
+/// ARM7TDMI TRM instruction timings: an instruction that writes PC other than
+/// through a branch pays the 1S+1N pipeline refill on top of its own cost. In
+/// one-cycle memory: data processing 1 -> 3, LDR 3 -> 5, LDM nS+1N+1I -> +2.
+/// Without it the BIOS IRQ path (`ldr pc, [r0, #-4]`) ran two cycles short
+/// and the mGBA suite's timer-IRQ handler stopped the timer too early.
+#[test]
+fn arm_writes_to_pc_pay_the_pipeline_refill() {
+    let cases: [(u32, u32, &str); 4] = [
+        (0xE1A0_F000, 3, "mov pc, r0"),
+        (0xE591_F000, 5, "ldr pc, [r1]"),
+        (0xE891_8004, 6, "ldmia r1, {r2, pc}"),
+        (0xE891_0004, 3, "ldmia r1, {r2}"),
+    ];
+    for (op, want, text) in cases {
+        let (mut cpu, mut bus) = setup_arm(&[op]);
+        cpu.registers[0] = BASE + 0x100;
+        cpu.registers[1] = BASE + 0x200;
+        bus.write32(BASE + 0x200, BASE + 0x100);
+        bus.write32(BASE + 0x204, BASE + 0x100);
+        assert_eq!(cpu.step(&mut bus), want, "{text}");
+    }
+}

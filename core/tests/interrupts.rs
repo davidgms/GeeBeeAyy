@@ -545,3 +545,44 @@ fn tm_cnt_l_reads_the_running_counter_not_the_reload() {
         "TM0CNT_L still reads back the reload the game wrote"
     );
 }
+
+/// GBATEK, BIOS Interrupt handling: the BIOS at 0x18 branches to 0x128,
+/// which saves r0-r3/r12/lr, sets r0 = 0x04000000 and lr = 0x138, and jumps
+/// to [0x03007FFC] with `ldr pc, [r0, #-4]`. With exception entry (2S+1N),
+/// the branch (2S+1N), `stmfd` of six registers ((n-1)S+2N), `mov`, `add`
+/// and `ldr pc` (2S+2N+1I), all in one-cycle BIOS memory, the game's
+/// handler starts 3 + 3 + 7 + 1 + 1 + 5 = 20 cycles after the IRQ is taken.
+/// The mGBA suite's timer-IRQ test measures exactly that path; a stub that
+/// called the handler with `blx r0` and charged nothing for the exception
+/// reached it six cycles early.
+#[test]
+fn the_bios_irq_path_reaches_the_game_handler_in_twenty_cycles() {
+    let mut bus = MemoryBus::new();
+    bus.write32(0x0300_1000, 0xEAFF_FFFE); // b .  (game handler)
+    bus.write32(0x0300_7FFC, 0x0300_1000);
+    bus.write32(BASE, 0xEAFF_FFFE); // b .  (interrupted code)
+
+    let mut cpu = Cpu::new();
+    cpu.boot();
+    cpu.registers[15] = BASE;
+    cpu.step(&mut bus);
+    bus.io.ie = 0x0001;
+    bus.io.ime = 1;
+    bus.io.request_interrupt(0x0001);
+    cpu.handle_irq();
+
+    let mut cycles = 0;
+    for _ in 0..16 {
+        if cpu.registers[15] == 0x0300_1000 {
+            break;
+        }
+        cycles += cpu.step(&mut bus);
+    }
+    assert_eq!(cpu.registers[15], 0x0300_1000, "the game handler never ran");
+    assert_eq!(cycles, 20, "IRQ entry to game handler took the wrong time");
+    assert_eq!(
+        cpu.registers[0], 0x0400_0000,
+        "BIOS hands the handler r0 = I/O base"
+    );
+    assert_eq!(cpu.registers[14], 0x0000_0138, "BIOS return address");
+}

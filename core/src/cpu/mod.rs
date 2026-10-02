@@ -37,6 +37,8 @@ pub struct Cpu {
     pub halted: bool,
     /// Set when an instruction writes R15, so `step` knows not to advance PC itself.
     branched: bool,
+    /// Cycles owed by an exception entry, charged to the next `step`.
+    entry_cycles: u32,
 }
 
 pub struct BarrelShiftResult {
@@ -69,6 +71,7 @@ impl Cpu {
             spsr_und: 0,
             halted: false,
             branched: false,
+            entry_cycles: 0,
         }
     }
 
@@ -155,6 +158,9 @@ impl Cpu {
         let pc = self.registers[15];
         let is_thumb = self.cpsr & 0x20 != 0;
         self.branched = false;
+        let entry = std::mem::take(&mut self.entry_cycles);
+        bus.exec_pc = pc;
+        bus.exec_thumb = is_thumb;
 
         // R15 reads as the address of the instruction plus two fetches while it
         // executes: +8 in ARM, +4 in THUMB.
@@ -178,7 +184,7 @@ impl Cpu {
         // flipped the T bit as part of this instruction.
         self.align_pc();
 
-        cycles
+        cycles + entry
     }
 
     /// Force PC alignment for the current instruction set: halfword in THUMB,
@@ -545,5 +551,8 @@ impl Cpu {
         self.spsr_irq = old_cpsr;
         self.registers[14] = return_addr.wrapping_add(4);
         self.registers[15] = 0x0000_0018;
+        // ARM7TDMI TRM: exception entry is 2S+1N, the pipeline refill at the
+        // vector. Charged to the vector's first instruction.
+        self.entry_cycles = 3;
     }
 }

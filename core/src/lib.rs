@@ -21,6 +21,13 @@ use timer::Timer;
 
 const CYCLES_PER_FRAME: u64 = 280896;
 
+/// Cycles between an interrupt source raising IF and the CPU taking the IRQ
+/// at an instruction boundary. Fitted to the mGBA suite's timer-IRQ test,
+/// whose expected values were recorded on hardware: a read four cycles after
+/// a timer overflow is pre-empted by the IRQ, a read three cycles after is
+/// not.
+const IRQ_DELAY: u64 = 4;
+
 pub struct Gba {
     pub cpu: Cpu,
     pub ppu: Ppu,
@@ -33,6 +40,9 @@ pub struct Gba {
     /// `cycles` when the current frame's first slice began; see
     /// `run_frame_slice`. Not machine state, so not in a save state.
     frame_start: u64,
+    /// When the CPU's IRQ line (IE & IF with IME set) went high, for
+    /// `IRQ_DELAY`. A few cycles of state, so not in a save state either.
+    irq_since: Option<u64>,
 }
 
 impl Default for Gba {
@@ -53,6 +63,7 @@ impl Gba {
             cycles: 0,
             run_frame_counter: 0,
             frame_start: 0,
+            irq_since: None,
         }
     }
 
@@ -88,6 +99,7 @@ impl Gba {
         self.cycles = 0;
         self.run_frame_counter = 0;
         self.frame_start = 0;
+        self.irq_since = None;
     }
 
     /// Advance the whole machine by one CPU instruction.
@@ -140,16 +152,26 @@ impl Gba {
         // configured in time for an HBlank or VBlank that lands in the same
         // step.
         self.apply_dma_writes();
+        // Timer writes land *after* the tick. A store writes in its last
+        // cycle, so none of this instruction's cycles belong to a timer it
+        // starts, and an overflow in that last cycle still reloads the old
+        // value (mGBA suite, timer-IRQ test).
+        let timer_irq = self.timer.tick(cycles, &mut self.bus);
         self.apply_timer_writes();
-        self.timer.tick(cycles, &mut self.bus);
         self.ppu.tick(cycles, &mut self.bus, &mut self.dma);
         self.apu.tick(cycles);
 
         self.post_tick();
 
-        // Deliver IRQs to CPU
+        // Deliver IRQs to CPU, `IRQ_DELAY` cycles after the line went high.
         if self.bus.io.interrupt_pending() {
-            self.cpu.handle_irq();
+            let raised = timer_irq.map_or(self.cycles, |at| before + u64::from(at));
+            let since = *self.irq_since.get_or_insert(raised);
+            if self.cycles >= since + IRQ_DELAY {
+                self.cpu.handle_irq();
+            }
+        } else {
+            self.irq_since = None;
         }
 
         (self.cycles - before) as u32
@@ -235,7 +257,11 @@ impl Gba {
     fn apply_timer_writes(&mut self) {
         for (timer, is_control, value) in self.bus.drain_timer_writes() {
             if is_control {
+                let was_enabled = self.timer.enabled[timer];
                 self.timer.set_control(timer, value);
+                if !was_enabled && self.timer.enabled[timer] {
+                    self.timer.delay_start(timer, 1);
+                }
             } else {
                 self.timer.set_reload(timer, value);
             }
@@ -318,9 +344,10 @@ impl Gba {
             0x82..=0x83 => 0x82,
             _ => return,
         };
-        let lo = self.bus.read8(0x0400_0000 + base) as u16;
-        let hi = self.bus.read8(0x0400_0000 + base + 1) as u16;
-        self.apu.write_register(base, lo | (hi << 8));
+        // The latched value: the APU needs the write-only bits (frequency,
+        // length, trigger) that a CPU read masks off.
+        let value = self.bus.io_read16(0x0400_0000 + base);
+        self.apu.write_register(base, value);
     }
 
     /// The cartridge's battery-backed save, or `None` if the cart has no save
@@ -377,6 +404,7 @@ impl Gba {
         // A restored `cycles` from another frame would make a following
         // non-zero slice run far too long or not at all.
         self.frame_start = self.cycles;
+        self.irq_since = None;
         Ok(())
     }
 

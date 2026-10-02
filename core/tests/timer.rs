@@ -124,3 +124,121 @@ fn a_byte_write_to_the_control_register_starts_the_timer() {
         "timer 0 never overflowed: the byte write did not start it"
     );
 }
+
+/// Run the mGBA suite's timer-IRQ probe (`src/timer-irq.c`) from IWRAM: start
+/// timer 0 at `start` with IRQ enabled via `str r3, [r1]` (TM0CNT_L = start,
+/// TM0CNT_H = 0xC0), set the reload to 0 with `strh r2, [r1]`, run `nops`
+/// NOPs, then `ldrh` the counter. The IRQ handler stops the timer, so a read
+/// the IRQ got in front of sees a frozen, much later value.
+fn timer_irq_probe(start: u16, nops: usize) -> u16 {
+    const CODE: u32 = 0x0300_0000;
+    const HANDLER: u32 = 0x0300_0400;
+    const RESULT: u32 = 0x0300_0800;
+    let mut gba = geebeeayy_core::Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+
+    let mut code = vec![
+        0xE581_3000, // str r3, [r1]
+        0xE1C1_20B0, // strh r2, [r1]
+    ];
+    code.extend(std::iter::repeat_n(0xE1A0_0000, nops)); // mov r0, r0
+    code.extend([
+        0xE1D1_00B0, // ldrh r0, [r1]
+        0xE1C7_00B0, // strh r0, [r7]
+        0xEAFF_FFFE, // b .
+    ]);
+    let handler = [
+        0xE3A0_C301, // mov r12, #0x04000000
+        0xE28C_CC01, // add r12, r12, #0x100
+        0xE3A0_0000, // mov r0, #0
+        0xE1CC_00B2, // strh r0, [r12, #2]   ; TM0CNT_H = 0, timer stops
+        0xE28C_CC01, // add r12, r12, #0x100
+        0xE3A0_0008, // mov r0, #8
+        0xE1CC_00B2, // strh r0, [r12, #2]   ; acknowledge IF bit 3
+        0xE12F_FF1E, // bx lr
+    ];
+    for (i, &w) in code.iter().enumerate() {
+        gba.bus.write32(CODE + 4 * i as u32, w);
+    }
+    for (i, &w) in handler.iter().enumerate() {
+        gba.bus.write32(HANDLER + 4 * i as u32, w);
+    }
+    gba.bus.write32(0x0300_7FFC, HANDLER);
+    gba.bus.write16(0x0400_0200, 0x0008); // IE: timer 0
+    gba.bus.write16(0x0400_0208, 1); // IME
+    gba.bus.write16(RESULT, 0xBEEF);
+
+    gba.cpu.registers[1] = 0x0400_0100;
+    gba.cpu.registers[2] = 0x00C0_0000;
+    gba.cpu.registers[3] = 0x00C0_0000 | u32::from(start);
+    gba.cpu.registers[7] = RESULT;
+    gba.cpu.registers[15] = CODE;
+    for _ in 0..200 {
+        gba.step();
+    }
+    gba.bus.read16(RESULT)
+}
+
+/// What hardware reads in the mGBA suite's timer-IRQ test, for the reads the
+/// IRQ does not get in front of. A timer enabled by a store starts counting
+/// one cycle after that store ends, a reload written in the same cycle as an
+/// overflow is not yet the one reloaded, and `ldrh` samples the counter in
+/// its second cycle. The `None`s are where hardware takes the IRQ first:
+/// four cycles after the overflow, the IRQ wins the next instruction boundary.
+#[test]
+fn timer_reads_and_irq_latency_match_the_mgba_timer_irq_suite() {
+    let cases: [(u16, [Option<u16>; 7]); 3] = [
+        (
+            0xFFFF,
+            [Some(0), Some(1), Some(2), Some(3), None, None, None],
+        ),
+        (
+            0xFFFE,
+            [Some(0), Some(1), Some(2), Some(3), Some(4), None, None],
+        ),
+        (
+            0xFFFD,
+            [
+                Some(0xFFFF),
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                None,
+            ],
+        ),
+    ];
+    for (start, expected) in cases {
+        for (nops, want) in expected.into_iter().enumerate() {
+            let got = timer_irq_probe(start, nops);
+            match want {
+                Some(value) => assert_eq!(
+                    got, value,
+                    "start {start:04X}, {nops} nops: counter read wrong"
+                ),
+                // Frozen by the handler well after the overflow, and nowhere
+                // near the 4 or 5 the uninterrupted read would see.
+                None => assert!(
+                    (0x10..0x100).contains(&got),
+                    "start {start:04X}, {nops} nops: the IRQ should have stopped the \
+                     timer before the read, got {got:04X}"
+                ),
+            }
+        }
+    }
+}
+
+/// Lowering the prescaler of a running timer leaves its cycle accumulator
+/// past the new period. The next count is then simply due, never an
+/// underflow.
+#[test]
+fn lowering_the_prescaler_of_a_running_timer_keeps_counting() {
+    let mut bus = MemoryBus::new();
+    let mut timer = Timer::new();
+    timer.set_control(0, ENABLE | 3); // prescaler 1024
+    timer.tick(500, &mut bus);
+    timer.set_control(0, ENABLE); // prescaler 1, still running
+    timer.tick(3, &mut bus);
+    assert_eq!(timer.counter(0), 3);
+}

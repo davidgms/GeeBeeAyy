@@ -14,6 +14,9 @@ pub struct Timer {
     /// silently collapses the several overflows a single tick can produce at
     /// a short reload, and the FIFO then drains slower than the game fills it.
     pub overflow_flags: [u32; 4],
+    /// Cycles a just-started timer waits before its first count; see
+    /// `delay_start`. Transient, so not part of a save state.
+    pub(crate) start_delay: [u32; 4],
 }
 
 impl Default for Timer {
@@ -34,10 +37,17 @@ impl Timer {
             irq_enabled: [false; 4],
             tick_counters: [0; 4],
             overflow_flags: [0; 4],
+            start_delay: [0; 4],
         }
     }
 
-    pub fn tick(&mut self, cycles: u32, bus: &mut super::memory::MemoryBus) {
+    /// Advance every running timer by `cycles`.
+    ///
+    /// Returns how many cycles into this slice the first timer IRQ was
+    /// raised, so the caller can time the CPU's IRQ latency from the overflow
+    /// itself rather than from the end of the instruction it fell in.
+    pub fn tick(&mut self, cycles: u32, bus: &mut super::memory::MemoryBus) -> Option<u32> {
+        let mut first_irq: Option<u32> = None;
         for i in 0..4 {
             if !self.enabled[i] {
                 continue;
@@ -47,13 +57,55 @@ impl Timer {
                 continue;
             }
 
-            self.tick_counters[i] += cycles;
-
+            let skip = self.start_delay[i].min(cycles);
+            self.start_delay[i] -= skip;
+            let mut elapsed = skip;
             let prescaler = self.prescaler[i];
-            while self.tick_counters[i] >= prescaler {
-                self.tick_counters[i] -= prescaler;
-                self.increment(i, bus);
+            loop {
+                // Saturating: a prescaler lowered on a running timer can leave
+                // the accumulator past it, and then the next count is due now.
+                let next = prescaler.saturating_sub(self.tick_counters[i]).max(1);
+                if elapsed + next > cycles {
+                    self.tick_counters[i] += cycles - elapsed;
+                    break;
+                }
+                elapsed += next;
+                self.tick_counters[i] = 0;
+                if self.increment(i, bus) && first_irq.is_none() {
+                    first_irq = Some(elapsed);
+                }
             }
+        }
+        first_irq
+    }
+
+    /// Hold a timer that was just started off its first count for `cycles`.
+    ///
+    /// Hardware does not count the cycle right after the store that set the
+    /// enable bit. The mGBA suite's timer-IRQ test pins this down: a timer
+    /// started at 0xFFFF and one started at 0xFFFE both read 0 two
+    /// instructions later, which only works if the 0xFFFF one overflowed once
+    /// with the old reload before the `strh` that changed it took effect.
+    pub fn delay_start(&mut self, timer: usize, cycles: u32) {
+        if timer < 4 {
+            self.start_delay[timer] = cycles;
+        }
+    }
+
+    /// The counter as it will read one cycle from now.
+    ///
+    /// A load samples an I/O register in its second cycle, not its first, and
+    /// this interpreter executes the whole instruction before ticking the
+    /// timers. Publishing the counter one count ahead is what a load sees.
+    fn counter_after_one_cycle(&self, i: usize) -> u16 {
+        let counts = self.enabled[i]
+            && !(self.cascaded[i] && i > 0)
+            && self.start_delay[i] == 0
+            && self.tick_counters[i] + 1 >= self.prescaler[i];
+        match (counts, self.counters[i] + 1) {
+            (false, _) => self.counters[i] as u16,
+            (true, 0x10000) => self.reloads[i] as u16,
+            (true, next) => next as u16,
         }
     }
 
@@ -66,20 +118,23 @@ impl Timer {
     /// an overflow flag for DMA sound, and never raising its IRQ. Going
     /// through the same function recursively gives the cascade target the
     /// identical overflow handling, including cascading on to the next timer.
-    fn increment(&mut self, i: usize, bus: &mut super::memory::MemoryBus) {
+    ///
+    /// Returns whether an IRQ was raised, by this timer or a cascade target.
+    fn increment(&mut self, i: usize, bus: &mut super::memory::MemoryBus) -> bool {
         self.counters[i] += 1;
 
         // Timer overflow at 0x10000 (16-bit counter)
         if self.counters[i] < 0x10000 {
-            return;
+            return false;
         }
         self.counters[i] = self.reloads[i];
         self.overflow_flags[i] += 1;
 
         // Handle cascade to next timer. A cascade target only counts up while
         // it is itself enabled.
+        let mut irq = false;
         if i < 3 && self.cascaded[i + 1] && self.enabled[i + 1] {
-            self.increment(i + 1, bus);
+            irq = self.increment(i + 1, bus);
         }
 
         // GBATEK, GBA Interrupt Control: IF bits 3,4,5,6 are Timer 0,1,2,3
@@ -87,7 +142,9 @@ impl Timer {
         // never whether IF is set.
         if self.irq_enabled[i] {
             bus.io.request_interrupt(1 << (3 + i));
+            irq = true;
         }
+        irq
     }
 
     pub fn set_reload(&mut self, timer: usize, value: u16) {
@@ -129,13 +186,9 @@ impl Timer {
         std::mem::take(&mut self.overflow_flags)
     }
 
-    /// The live counter of each timer, for writing back into `TMxCNT_L`.
+    /// The counter of each timer as a load reads it, for writing back into
+    /// `TMxCNT_L`; see `counter_after_one_cycle`.
     pub fn counters(&self) -> [u16; 4] {
-        [
-            self.counters[0] as u16,
-            self.counters[1] as u16,
-            self.counters[2] as u16,
-            self.counters[3] as u16,
-        ]
+        std::array::from_fn(|i| self.counter_after_one_cycle(i))
     }
 }

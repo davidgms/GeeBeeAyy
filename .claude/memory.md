@@ -1112,7 +1112,8 @@ from `temp/roms/` (fetch commands in its header). Results on 2026-10-02:
 - **mGBA suite 3602/6998** (score, `#[ignore]`d): Shifter 140/140 and Carry
   93/93 perfect; Timer IRQ 0/90, I/O read 10/130, Timing 235/2020, SIO near 0.
   The timing numbers are expected for an interpreter without per-access
-  waitstates; Timer IRQ 0/90 and I/O read 10/130 are worth a look.
+  waitstates. (Timer IRQ and I/O read were fixed to 90/90 and 130/130 on
+  2026-10-02 - see the entry below.)
 - **`bios::arc_tan` panics in debug builds** ("attempt to multiply with
   overflow", `core/src/bios.rs` ~line 206) on inputs the mGBA BIOS-math suite
   feeds it. Release wraps silently. The BIOS math is 32-bit wrapping, so the
@@ -1123,3 +1124,33 @@ marker *first* and the rest between slow text draws, so reading on the marker
 deadlocks the key handshake - wait for its key-down loop instead. And
 ARMWrestler draws its verdicts as bitmap text; the harness reads the failure
 mask at the entry of its own `DrawResult` routine, found by byte pattern.
+
+### 2026-10-02 - Timer IRQ 90/90 and I/O read 130/130: what the model now assumes
+
+Branch `fix/mgba-suite-timer-irq-io-read`. mGBA suite 3602 -> 4204/6998.
+
+- **The CPU's view of I/O and the hardware's latched view are two different
+  reads.** `MemoryBus::read8/16/32` now apply `io::read_rule` (readable-bit
+  masks, open bus for write-only registers). The PPU and APU need the
+  write-only bits (scroll, frequency, length), so they read through
+  `MemoryBus::io_read8/io_read16`. **Any new internal consumer of an I/O
+  register must use `io_read*`**; `bus.read16(0x0400_00xx)` from core code
+  now silently returns 0xDEAD-style open bus for write-only registers.
+- Open bus is GBATEK "Reading from Unused Memory": `Cpu::step` publishes the
+  executing PC and state into `bus.exec_pc/exec_thumb`, and `open_bus()`
+  re-reads the prefetch. Unmapped memory (`_` arm of `read8`) uses it too.
+- Timer/IRQ timing fitted to the suite's hardware values, all three needed
+  together: timer register writes apply *after* that instruction's timer
+  tick; a newly started timer skips one more cycle (`Timer::delay_start`);
+  `TMxCNT_L` is published one count ahead because a load samples in its
+  second cycle; IRQs are taken `IRQ_DELAY = 4` cycles after the line rises
+  (`lib.rs`). The BIOS IRQ stub is now the real BIOS sequence
+  (`b 0x128` ... `ldr pc, [r0, #-4]`, so r0 = 0x04000000 and the user handler
+  must be ARM, as on hardware); exception entry costs 3 cycles; ARM writes to
+  PC pay the 2-cycle refill.
+- **Left open**: Timer count-up 729/936. Every prescaler-1 case passes; all
+  207 failures are prescaler 64/256/1024. mGBA aligns prescaled timers to the
+  global clock (`src/gba/timer.c`, `currentTime &= ~tickMask`); a phase sweep
+  of that model did not converge, most likely because the HLE `IntrWait` the
+  test syncs on is not cycle-accurate. Not a waitstate issue: the test runs
+  from IWRAM.

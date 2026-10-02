@@ -25,6 +25,10 @@ pub struct MemoryBus {
     /// no DMA sound, which is driven entirely by timer overflows.
     timer_writes: Vec<(usize, bool, u16)>,
     pub io: super::io::IoHandler,
+    /// Address and state of the instruction executing now, set by
+    /// `Cpu::step`, so a read of nothing can return the open bus.
+    pub(crate) exec_pc: u32,
+    pub(crate) exec_thumb: bool,
 }
 
 impl Default for MemoryBus {
@@ -50,6 +54,8 @@ impl MemoryBus {
             dma_writes: Vec::new(),
             timer_writes: Vec::new(),
             io: super::io::IoHandler::new(),
+            exec_pc: 0,
+            exec_thumb: false,
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -94,47 +100,42 @@ impl MemoryBus {
         self.io_regs[super::io::IO_KEYINPUT + 1] = (raw >> 8) as u8;
     }
 
-    /// Populate BIOS memory with the IRQ handler the real BIOS has at 0x18:
-    /// save r0-r3/r12/lr, call the game's handler from [0x03007FFC], restore,
-    /// and return with `SUBS PC, LR, #4`. Acknowledging IF and updating the
-    /// IntrWait flags at 0x03007FF8 are the game handler's responsibility on
-    /// hardware, and doing either here breaks games that read IF themselves.
+    /// Populate BIOS memory with the IRQ handler the real BIOS has at 0x18.
     fn init_bios(&mut self) {
-        // BIOS IRQ handler at 0x18: save registers, call the game handler at
-        // [0x03007FFC], restore, return.
+        // The real BIOS IRQ path, instruction for instruction (GBATEK, BIOS
+        // Interrupt handling):
         //
-        // Layout:
-        //   0x18: stmdb sp!, {r0-r3, r12, lr}
-        //   0x1C: mov r12, #0x04000000
-        //   0x20: ldr r0, [r12, #-4]     ; [0x03FFFFFC] = the game's handler
-        //   0x24: blx r0
-        //   0x28: ldmia sp!, {r0-r3, r12, lr}
-        //   0x2C: subs pc, lr, #4        ; return from IRQ, restoring CPSR
+        //   0x018: b     0x128
+        //   0x128: stmfd sp!, {r0-r3, r12, lr}
+        //   0x12C: mov   r0, #0x04000000
+        //   0x130: add   lr, pc, #0          ; lr = 0x138
+        //   0x134: ldr   pc, [r0, #-4]       ; [0x03FFFFFC] = the game's handler
+        //   0x138: ldmfd sp!, {r0-r3, r12, lr}
+        //   0x13C: subs  pc, lr, #4          ; return from IRQ, restoring CPSR
         //
-        // That is all the real BIOS does, and the omissions are the point.
-        // It does **not** acknowledge IF, and it does **not** touch the
-        // IntrWait flags at 0x03007FF8 - both are the game handler's job.
-        // A stub that acknowledged IF first broke every game whose handler
-        // dispatches on `IE & IF`: Yggdra Union's IWRAM dispatcher read zero,
-        // fell through its whole chain and called the wrong handler for every
-        // interrupt, so its VBlank work - which is where DISPCNT is written -
-        // never ran at all.
-        let bios_irq_handler: [u32; 4] = [
-            0xE92D500F, // stmdb sp!, {r0-r3, r12, lr}
-            0xE3A0C301, // mov r12, #0x04000000
-            0xE51C0004, // ldr r0, [r12, #-4]        ; r0 = [0x03FFFFFC]
-            0xE12FFF30, // blx r0                    ; call game handler
+        // Copying it exactly matters twice over: handlers may rely on r0
+        // holding the I/O base, and the mGBA suite times this path to the
+        // cycle. An earlier `blx r0` stub reached the handler six cycles early.
+        // `ldr pc` does not interwork, so the handler must be ARM code - as on
+        // hardware.
+        //
+        // What the BIOS does **not** do is the point too: it neither
+        // acknowledges IF nor touches the IntrWait flags at 0x03007FF8; both
+        // are the game handler's job. A stub that acknowledged IF first broke
+        // every game whose handler dispatches on `IE & IF`: Yggdra Union's
+        // IWRAM dispatcher read zero, fell through its whole chain and called
+        // the wrong handler for every interrupt.
+        self.bios[0x18..0x1C].copy_from_slice(&0xEA00_0042u32.to_le_bytes()); // b 0x128
+        let handler: [u32; 6] = [
+            0xE92D_500F, // stmfd sp!, {r0-r3, r12, lr}
+            0xE3A0_0301, // mov r0, #0x04000000
+            0xE28F_E000, // add lr, pc, #0
+            0xE510_F004, // ldr pc, [r0, #-4]
+            0xE8BD_500F, // ldmfd sp!, {r0-r3, r12, lr}
+            0xE25E_F004, // subs pc, lr, #4
         ];
-
-        let epilogue: [u32; 2] = [
-            0xE8BD500F, // ldmia sp!, {r0-r3, r12, lr}
-            0xE25EF004, // subs pc, lr, #4
-        ];
-
-        let offset = 0x18usize;
-        let words = bios_irq_handler.iter().chain(epilogue.iter());
-        for (i, &word) in words.enumerate() {
-            let addr = offset + i * 4;
+        for (i, &word) in handler.iter().enumerate() {
+            let addr = 0x128 + i * 4;
             self.bios[addr..addr + 4].copy_from_slice(&word.to_le_bytes());
         }
     }
@@ -192,28 +193,16 @@ impl MemoryBus {
             0x0000_0000..=0x0000_3FFF => self.bios[(address & 0x3FFF) as usize],
             0x0200_0000..=0x02FF_FFFF => self.ewram[(address & 0x3_FFFF) as usize],
             0x0300_0000..=0x03FF_FFFF => self.iwram[(address & 0x7FFF) as usize],
-            0x0400_0000..=0x0400_03FE => {
-                let offset = (address & 0x3FF) as usize;
-                if offset == super::io::IO_IE {
-                    (self.io.ie & 0xFF) as u8
-                } else if offset == super::io::IO_IE + 1 {
-                    (self.io.ie >> 8) as u8
-                } else if offset == super::io::IO_IF {
-                    (self.io.if_ & 0xFF) as u8
-                } else if offset == super::io::IO_IF + 1 {
-                    (self.io.if_ >> 8) as u8
-                } else if offset == super::io::IO_IME {
-                    (self.io.ime & 0xFF) as u8
-                } else if offset == super::io::IO_IME + 1 {
-                    (self.io.ime >> 8) as u8
-                } else if offset == 0x301 {
-                    if self.io.halt {
-                        0x80
-                    } else {
-                        0
+            0x0400_0000..=0x04FF_FFFF => {
+                let offset = (address & 0xFF_FFFF) as usize;
+                if offset >= 0x400 {
+                    return self.open_bus_byte(address);
+                }
+                match super::io::read_rule(offset & !1) {
+                    super::io::IoRead::Mask(mask) => {
+                        self.io_byte(offset) & (mask >> ((offset & 1) * 8)) as u8
                     }
-                } else {
-                    self.io_regs[offset]
+                    super::io::IoRead::OpenBus => self.open_bus_byte(address),
                 }
             }
             0x0500_0000..=0x05FF_FFFF => self.palette[(address & 0x3FF) as usize],
@@ -234,8 +223,68 @@ impl MemoryBus {
             // 0x0E000000, "the databus is restricted to 8 bits, it should be
             // accessed by LDRB, LDRSB, and STRB opcodes only".
             0x0E00_0000..=0x0FFF_FFFF => self.cart.save_read(address),
-            _ => 0,
+            _ => self.open_bus_byte(address),
         }
+    }
+
+    /// An I/O register byte as the hardware latched it, write-only bits
+    /// included. This is the PPU's and APU's view; the CPU's goes through
+    /// `read8` and `io::read_rule`.
+    fn io_byte(&self, offset: usize) -> u8 {
+        match offset {
+            super::io::IO_IE => self.io.ie as u8,
+            0x201 => (self.io.ie >> 8) as u8,
+            super::io::IO_IF => self.io.if_ as u8,
+            0x203 => (self.io.if_ >> 8) as u8,
+            super::io::IO_IME => self.io.ime as u8,
+            0x209 => (self.io.ime >> 8) as u8,
+            super::io::IO_HALTCNT => {
+                if self.io.halt {
+                    0x80
+                } else {
+                    0
+                }
+            }
+            _ => self.io_regs[offset],
+        }
+    }
+
+    /// The I/O byte at `address` as latched, for the PPU and APU.
+    pub fn io_read8(&self, address: u32) -> u8 {
+        self.io_byte((address & 0x3FF) as usize)
+    }
+
+    /// The I/O halfword at `address` as latched, for the PPU and APU.
+    pub fn io_read16(&self, address: u32) -> u16 {
+        let offset = (address & 0x3FE) as usize;
+        u16::from_le_bytes([self.io_byte(offset), self.io_byte(offset + 1)])
+    }
+
+    /// GBATEK, Reading from Unused Memory: the bus still holds the most
+    /// recently prefetched opcode. In ARM state that is `[$+8]`; in THUMB it
+    /// is two halfwords whose source depends on the memory the code runs from.
+    fn open_bus(&self) -> u32 {
+        let pc = self.exec_pc;
+        if !self.exec_thumb {
+            return self.read32(pc.wrapping_add(8));
+        }
+        let half = |offset: u32| u32::from(self.read16(pc.wrapping_add(offset)));
+        let aligned = pc & 2 == 0;
+        match pc >> 24 {
+            // BIOS and OAM: a 32-bit bus fetching two opcodes at once.
+            0x00 | 0x07 if aligned => half(4) | half(6) << 16,
+            0x00 | 0x07 => half(2) | half(4) << 16,
+            // IWRAM keeps the older halfword ("OldLO/OldHI", usually [$+2]).
+            0x03 if aligned => half(4) | half(2) << 16,
+            0x03 => half(2) | half(4) << 16,
+            // 16-bit buses: the same halfword on both halves.
+            _ => half(4) * 0x0001_0001,
+        }
+    }
+
+    /// The byte of the open-bus word that a read of `address` lands on.
+    fn open_bus_byte(&self, address: u32) -> u8 {
+        (self.open_bus() >> ((address & 3) * 8)) as u8
     }
 
     /// Word load with ARM's misaligned-access semantics: the bus always
