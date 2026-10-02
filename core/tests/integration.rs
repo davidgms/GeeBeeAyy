@@ -334,3 +334,49 @@ fn io_read_masks_do_not_hide_write_only_bits_from_the_ppu() {
     gba.bus.write16(0x0400_0010, 0x0123); // BG0HOFS, write-only
     assert_eq!(gba.bus.io_read16(0x0400_0010), 0x0123);
 }
+
+/// Commercial games run from boot without the PC ever leaving mapped memory,
+/// and at a per-frame instruction count close to master's (a9d34a8, first 300
+/// frames from boot: Yggdra Union 29.9k, Mario Tennis 142.6k - it busy-waits).
+/// The BIOS IRQ stub regression of 2026-10-02 put Yggdra at ~245k a frame
+/// with the PC in open bus. The ROMs are never committed: a missing one is
+/// skipped.
+#[test]
+fn commercial_games_stay_in_mapped_memory_at_their_usual_cost() {
+    const FRAMES: u32 = 300;
+    for (name, ceiling) in [("yggdra", 40_000), ("mariotennis", 160_000)] {
+        let path = format!("{}/../temp/roms/{name}.gba", env!("CARGO_MANIFEST_DIR"));
+        let Ok(data) = std::fs::read(&path) else {
+            eprintln!("skipping '{name}': {path} not present");
+            continue;
+        };
+        let mut gba = Gba::new();
+        gba.load_rom(&data).expect("ROM should load");
+        let (mut steps, mut stray) = (0u64, None);
+        for frame in 0..FRAMES {
+            // Tap Start, then A, so the game gets past its title screens.
+            let keys = match frame % 120 {
+                0..=4 => 1 << 3,
+                61..=64 => 1,
+                _ => 0,
+            };
+            gba.bus.set_keys(keys);
+            let target = gba.cycles + 280_896;
+            while gba.cycles < target {
+                let pc = gba.cpu.registers[15];
+                let mapped = pc < 0x4000 || matches!(pc >> 24, 0x02 | 0x03 | 0x05..=0x0D);
+                if !mapped && stray.is_none() {
+                    stray = Some((frame, pc));
+                }
+                gba.step();
+                steps += 1;
+            }
+        }
+        assert_eq!(stray, None, "{name}: PC in open-bus memory (frame, pc)");
+        let per_frame = steps / u64::from(FRAMES);
+        assert!(
+            per_frame < ceiling,
+            "{name}: {per_frame} instructions a frame - something is spinning"
+        );
+    }
+}

@@ -1154,3 +1154,12 @@ Branch `fix/mgba-suite-timer-irq-io-read`. mGBA suite 3602 -> 4204/6998.
   of that model did not converge, most likely because the HLE `IntrWait` the
   test syncs on is not cycle-accurate. Not a waitstate issue: the test runs
   from IWRAM.
+- **Save states carry no BIOS memory, so the HLE BIOS layout is a save-state
+  format.** Moving the IRQ stub to 0x128 broke every quick save taken inside
+  a game IRQ handler under the old stub (LR = 0x28): the return slid through
+  zeroed BIOS into the stub forever. Yggdra Union on the device: 37 fps, 5400
+  underruns, a stack overflow before the open-bus recursion guard. Fresh
+  boots were fine, which is why the suites and host runs missed it. The old
+  epilogue now stays at 0x28/0x2C (`init_bios`); test
+  `an_irq_handler_from_an_old_save_state_still_returns_through_0x28`. Any
+  future BIOS-stub change must keep every address an old state can hold.

@@ -586,3 +586,44 @@ fn the_bios_irq_path_reaches_the_game_handler_in_twenty_cycles() {
     );
     assert_eq!(cpu.registers[14], 0x0000_0138, "BIOS return address");
 }
+
+/// Save states hold no BIOS memory. One saved by a build whose IRQ stub
+/// returned from the game handler to 0x28 (`ldmia` at 0x28, `subs pc` at
+/// 0x2C) carries LR = 0x28 whenever it was taken inside a handler, which for
+/// Yggdra Union is almost every frame boundary. When the stub moved to the
+/// real BIOS layout at 0x128, that return landed in zeroed BIOS, slid through
+/// it and re-entered the stub forever: 4x the work per frame and the PC in
+/// open-bus memory. The old epilogue has to stay where old states expect it.
+#[test]
+fn an_irq_handler_from_an_old_save_state_still_returns_through_0x28() {
+    let mut bus = MemoryBus::new();
+    bus.write32(0x0300_1000, 0xE12F_FF1E); // game handler: bx lr
+
+    let mut cpu = Cpu::new();
+    cpu.boot();
+    // Mid-handler, as the old stub left it: IRQ mode, the interrupted
+    // System-mode context in SPSR and on the IRQ stack, LR = 0x28.
+    cpu.set_cpsr(0x92);
+    cpu.spsr_irq = 0x1F;
+    let sp = 0x0300_7FA0 - 24;
+    for (i, value) in [1, 2, 3, 4, 5, BASE + 4].into_iter().enumerate() {
+        bus.write32(sp + 4 * i as u32, value); // r0-r3, r12, lr_irq
+    }
+    cpu.registers[13] = sp;
+    cpu.registers[14] = 0x28;
+    cpu.registers[15] = 0x0300_1000;
+
+    for _ in 0..8 {
+        if cpu.mode() == Mode::System {
+            break;
+        }
+        cpu.step(&mut bus);
+    }
+    assert_eq!(cpu.mode(), Mode::System, "never returned from the IRQ");
+    assert_eq!(cpu.registers[15], BASE, "returned to the wrong place");
+    assert_eq!(
+        (cpu.registers[0], cpu.registers[12]),
+        (1, 5),
+        "the interrupted registers were not restored"
+    );
+}

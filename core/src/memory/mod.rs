@@ -143,6 +143,14 @@ impl MemoryBus {
             let addr = 0x128 + i * 4;
             self.bios[addr..addr + 4].copy_from_slice(&word.to_le_bytes());
         }
+
+        // The previous stub's epilogue, kept at the address it lived at.
+        // Save states carry no BIOS memory, and one taken inside a game IRQ
+        // handler under that stub holds LR = 0x28. Without these two words
+        // the handler returned into zeroed BIOS, slid down to 0x128 and
+        // re-entered the stub forever (Yggdra Union: 4x the work per frame).
+        self.bios[0x28..0x2C].copy_from_slice(&handler[4].to_le_bytes()); // ldmfd
+        self.bios[0x2C..0x30].copy_from_slice(&handler[5].to_le_bytes()); // subs pc
     }
 
     /// VRAM mirrors in 128 KB steps, but the region is 96 KB: the upper 32 KB
