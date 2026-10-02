@@ -726,3 +726,28 @@ fn arm_writes_to_pc_pay_the_pipeline_refill() {
         assert_eq!(cpu.step(&mut bus), want, "{text}");
     }
 }
+
+/// Open bus returns the instruction the CPU prefetched, read from the PC.
+/// When the PC itself is somewhere that reads as open bus, that read must not
+/// turn into another open-bus read: it recursed until the stack overflowed and
+/// killed the app on the phone (Yggdra Union, 2026-10-02). Whatever value the
+/// hardware puts on the bus there, the emulator must survive it.
+#[test]
+fn executing_from_open_bus_does_not_recurse() {
+    for (name, pc, thumb) in [
+        ("unmapped ARM", 0x1000_0000u32, false),
+        ("unmapped THUMB", 0x1000_0000, true),
+        ("I/O past the registers, ARM", 0x0400_0800, false),
+        ("I/O past the registers, THUMB", 0x0400_0800, true),
+    ] {
+        let (mut cpu, mut bus) = setup_arm(&[]);
+        cpu.registers[15] = pc;
+        if thumb {
+            cpu.cpsr |= 0x20;
+        }
+        steps(&mut cpu, &mut bus, 4);
+        // An unmapped read while running there must also come back.
+        let _ = bus.read32(0x1000_0000);
+        let _ = name;
+    }
+}

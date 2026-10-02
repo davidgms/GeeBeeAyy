@@ -29,6 +29,10 @@ pub struct MemoryBus {
     /// `Cpu::step`, so a read of nothing can return the open bus.
     pub(crate) exec_pc: u32,
     pub(crate) exec_thumb: bool,
+    /// Set while [Self::open_bus] is fetching the prefetched opcode. That
+    /// fetch reads from the PC, and a PC that is itself in open-bus memory
+    /// would re-enter forever: it overflowed the stack on a phone.
+    open_bus_busy: std::cell::Cell<bool>,
 }
 
 impl Default for MemoryBus {
@@ -56,6 +60,7 @@ impl MemoryBus {
             io: super::io::IoHandler::new(),
             exec_pc: 0,
             exec_thumb: false,
+            open_bus_busy: std::cell::Cell::new(false),
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -264,6 +269,17 @@ impl MemoryBus {
     /// recently prefetched opcode. In ARM state that is `[$+8]`; in THUMB it
     /// is two halfwords whose source depends on the memory the code runs from.
     fn open_bus(&self) -> u32 {
+        // Running from open-bus memory: there is no fetched opcode to return,
+        // so read zero rather than recurse.
+        if self.open_bus_busy.replace(true) {
+            return 0;
+        }
+        let value = self.open_bus_fetch();
+        self.open_bus_busy.set(false);
+        value
+    }
+
+    fn open_bus_fetch(&self) -> u32 {
         let pc = self.exec_pc;
         if !self.exec_thumb {
             return self.read32(pc.wrapping_add(8));
