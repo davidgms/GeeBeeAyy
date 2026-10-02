@@ -87,12 +87,12 @@
   <div class="mermaid-box">
 <pre class="mermaid">
 flowchart TD
-  A["App in front changes<br/>(DisplayFrameSetting: homeToAppEnd)"] --> B["PowerKeeper<br/>DisplayFrameSetting.setScreenEffect(pkg, fps, cookie)<br/>per-app rule from Xiaomi cloud"]
-  B --> C["DisplayFeatureHal 'Smtfps'<br/>reads 'frame stat' about once a second"]
-  C -->|"picks a supported rate<br/>near the frame count"| D["SurfaceFlinger cap<br/>primary range [0, X]<br/>(mode override by backdoor: yes)"]
-  E["GeeBeeAyy requests<br/>Surface.setFrameRate(59.73)<br/>preferredDisplayModeId = 60 Hz"] -->|"only inside the cap"| D
+  A["App in front changes<br/>DisplayFrameSetting: homeToAppEnd"] --> B["PowerKeeper<br/>DisplayFrameSetting.setScreenEffect<br/>per-app rule from Xiaomi cloud"]
+  B --> C["DisplayFeatureHal Smtfps<br/>reads frame stat about once a second"]
+  C -- "picks a supported rate near the frame count" --> D["SurfaceFlinger cap<br/>primary range 0 to X<br/>mode override by backdoor: yes"]
+  E["GeeBeeAyy requests<br/>Surface.setFrameRate 59.73<br/>preferredDisplayModeId 60 Hz"] -- "only inside the cap" --> D
   D --> F["Panel rate"]
-  F -->|"an app cannot draw faster<br/>than the panel"| C
+  F -- "an app cannot draw faster than the panel" --> C
 </pre>
   </div>
   <p class="note">The loop from the panel back to the frame count is the trap. Once X is 50, the count can never be more than 50.</p>
@@ -210,10 +210,10 @@ D/RefreshRateConfigs: TouchBoost - choose 50.00fps</div>
       <p>When the phone is Xiaomi, a game runs, and the screen rate is not 60 or 120, show a short tip once: "Your phone lowered the screen speed. Press Home and come back for smoother play."</p>
       <p class="note">The app can read the rate (<code>Display.getRefreshRate()</code>). It cannot change MIUI.</p>
     </div>
-    <div class="card">
-      <span class="tag warn">Experiment</span>
+    <div class="card no">
+      <span class="tag bad">Tested: does not work</span>
       <h3>B. Open games as their own task</h3>
-      <p>MIUI resets when it sees a "home to app" switch. A game opened as its own task might start that reset. <strong>Not tested.</strong> It changes the Back flow and the recent-apps list, so it needs a test on the phone before any decision.</p>
+      <p>Tested on 2026-10-02: from a game stuck at 50 Hz, a second task of the app was brought to the front, then closed. The screen stayed at <strong>50 Hz</strong> the whole time, and MIUI logged no <code>homeToAppEnd</code>. MIUI resets only when the app in front <em>changes</em>, and both tasks are the same app. Dropped.</p>
     </div>
     <div class="card no">
       <span class="tag bad">No</span>
