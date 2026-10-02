@@ -91,6 +91,7 @@ fun SettingsScreen(
     var coverArt by remember { mutableStateOf(displaySettings.getDownloadCoverArt()) }
     var autoLoad by remember { mutableStateOf(displaySettings.getAutoLoadQuickSave()) }
     var showPerf by remember { mutableStateOf(displaySettings.getShowPerformance()) }
+    var rateTip by remember { mutableStateOf(displaySettings.getRateTip()) }
     var volume by remember { mutableFloatStateOf(displaySettings.getVolume()) }
     var showRaLogin by remember { mutableStateOf(false) }
     var coverCacheBytes by remember { mutableLongStateOf(CoverArt.cacheBytes(context)) }
@@ -407,12 +408,23 @@ fun SettingsScreen(
                 )
                 SettingsSwitch(
                     icon = Icons.Default.Speed,
-                    title = "Show FPS and audio underruns",
+                    title = "Show FPS, screen Hz and audio underruns",
                     subtitle = "A diagnostic, over the black above the picture",
                     checked = showPerf,
                     onCheckedChange = { checked ->
                         showPerf = checked
                         displaySettings.setShowPerformance(checked)
+                    }
+                )
+                SettingsSwitch(
+                    icon = Icons.Default.Speed,
+                    title = "Low screen rate tip",
+                    subtitle = "Tell me when the phone holds the screen below 60 Hz " +
+                        "during a game (Xiaomi phones do)",
+                    checked = rateTip,
+                    onCheckedChange = { checked ->
+                        rateTip = checked
+                        displaySettings.setRateTip(checked)
                     }
                 )
                 SettingsSwitch(

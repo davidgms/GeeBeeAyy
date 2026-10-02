@@ -1,5 +1,10 @@
 package com.geebeeayy.app.ui.screens
 
+import com.geebeeayy.app.data.DisplaySettings
+import com.geebeeayy.app.ui.RateTip
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.geebeeayy.app.ui.clampedDrag
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -371,10 +376,54 @@ fun EmulationScreen(
     }
 
     // Adaptive refresh dropped the screen to 50 Hz mid-game and hid a sixth of
-    // the frames. See [gameDisplayMode].
+    // the frames. See [gameDisplayMode]. Sent again on every resume: the
+    // request is lost when the window is torn down (RetroArch 7c65f1c).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(view, lifecycleOwner) {
+        val window = view.context.findActivity()?.window
+        var restore = window?.let(::requestGameDisplayMode)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && window != null) {
+                restore?.invoke()
+                restore = requestGameDisplayMode(window)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            restore?.invoke()
+        }
+    }
+
+    // The panel's live rate, for the readout and the low-rate tip. MIUI
+    // changes it under us, so it is listened to rather than read once
+    // (Lemuroid read it once and paced off a stale value, Lemuroid #1140).
+    var displayHz by remember { mutableFloatStateOf(0f) }
     DisposableEffect(view) {
-        val restore = view.context.findActivity()?.window?.let(::requestGameDisplayMode)
-        onDispose { restore?.invoke() }
+        val displays = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+        @Suppress("DEPRECATION") // view.display is fine; defaultDisplay keeps API 26 simple.
+        fun read() { displayHz = view.display?.refreshRate ?: 0f }
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+            override fun onDisplayChanged(displayId: Int) = read()
+        }
+        read()
+        displays?.registerDisplayListener(listener, null)
+        onDispose { displays?.unregisterDisplayListener(listener) }
+    }
+
+    // MIUI's smart refresh can trap a game at 50 Hz; Home and back is the only
+    // reset that works without root. Told once per run. See [RateTip].
+    val rateTipEnabled = remember { DisplaySettings(context).getRateTip() }
+    var rateTipMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(displayHz, rateTipEnabled) {
+        if (!rateTipEnabled || RateTip.shownThisRun || displayHz >= 58f || displayHz <= 0f) return@LaunchedEffect
+        delay(RateTip.SETTLE_MS) // cancelled if the rate changes first
+        if (RateTip.shouldShow(displayHz, rateTipEnabled, RateTip.shownThisRun, RateTip.SETTLE_MS)) {
+            RateTip.shownThisRun = true
+            rateTipMessage = RateTip.MESSAGE.format(displayHz.roundToInt())
+        }
     }
 
     // The status and navigation bars are worth about 200px on a tall phone,
@@ -896,7 +945,7 @@ fun EmulationScreen(
         // no use. Down here the strip is the one band no control wants.
         performance?.let { stats ->
             Text(
-                text = "${stats.fps} fps" +
+                text = "${stats.fps} fps  ${displayHz.roundToInt()} Hz" +
                     if (stats.underruns > 0) "  ${stats.underruns} underruns" else "",
                 color = if (stats.underruns > 0) Error else LedGreen,
                 fontSize = 11.sp,
@@ -926,6 +975,14 @@ fun EmulationScreen(
             message = stateMessage,
             onDismiss = onDismissStateMessage,
             modifier = Modifier.align(Alignment.TopCenter),
+        )
+
+        // Long enough to read a sentence and act on it.
+        StateToast(
+            message = rateTipMessage,
+            onDismiss = { rateTipMessage = null },
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 96.dp),
+            durationMs = 7_000,
         )
 
         // The same pill, one row lower, so a save message and an achievement
@@ -2184,6 +2241,7 @@ private fun StateToast(
     message: String?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    durationMs: Long = 2200,
 ) {
     // Held locally so the pill can finish fading out after the message is
     // already gone from the ViewModel.
@@ -2191,7 +2249,7 @@ private fun StateToast(
     LaunchedEffect(message) {
         if (message != null) {
             shown = message
-            delay(2200)
+            delay(durationMs)
             onDismiss()
         }
     }
