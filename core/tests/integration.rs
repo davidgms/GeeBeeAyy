@@ -267,3 +267,116 @@ fn loading_a_rom_resets_the_machine() {
     gba.run_frame();
     assert_eq!(gba.bus.read16(0x0400_0100), 0, "timer 0 is still running");
 }
+
+/// The mGBA suite's I/O read test (`src/io-read.c`): write 0xFFFF to a
+/// register, then `ldrh` it from THUMB code in ROM whose next-but-one
+/// halfword is 0xDEAD. A readable register returns only its readable bits; a
+/// write-only or unused one returns the open bus, which for THUMB code in ROM
+/// is the prefetched `[$+4]` in both halves (GBATEK, Reading from Unused
+/// Memory); a few unused ones read as zero. Expected values are the suite's,
+/// recorded on hardware, and agree with GBATEK's register descriptions.
+#[test]
+fn io_reads_return_readable_bits_and_open_bus_like_the_mgba_io_read_suite() {
+    use geebeeayy_core::cpu::Cpu;
+    use geebeeayy_core::memory::MemoryBus;
+
+    let mut data = vec![0u8; 0x200];
+    for (i, half) in [
+        0x8808u16, // ldrh r0, [r1]
+        0xE001,    // b +2, over the data
+        0xDEAD, 0xDEAD,
+    ]
+    .iter()
+    .enumerate()
+    {
+        data[i * 2..i * 2 + 2].copy_from_slice(&half.to_le_bytes());
+    }
+    let cases: [(u32, u16); 16] = [
+        (0x0400_0008, 0xDFFF), // BG0CNT: bit 13 only exists for BG2/BG3
+        (0x0400_000C, 0xFFFF), // BG2CNT
+        (0x0400_0010, 0xDEAD), // BG0HOFS: write-only
+        (0x0400_0048, 0x3F3F), // WININ
+        (0x0400_0054, 0xDEAD), // BLDY: write-only
+        (0x0400_0062, 0xFFC0), // SOUND1CNT_H: length is write-only
+        (0x0400_0064, 0x4000), // SOUND1CNT_X: only the length flag reads
+        (0x0400_0066, 0x0000), // unused, reads zero
+        (0x0400_0082, 0x770F), // SOUNDCNT_H
+        (0x0400_00A0, 0xDEAD), // FIFO_A: write-only
+        (0x0400_00B8, 0x0000), // DMA0CNT_L: write-only, reads zero
+        (0x0400_00BA, 0xF7E0), // DMA0CNT_H: no gamepak DRQ below DMA3
+        (0x0400_00DE, 0xFFE0), // DMA3CNT_H
+        (0x0400_00E0, 0xDEAD), // unused, open bus
+        (0x0400_0302, 0x0000), // unused, reads zero
+        (0x0400_100C, 0xDEAD), // past the I/O block, open bus
+    ];
+    for (address, expected) in cases {
+        let mut bus = MemoryBus::new();
+        bus.load_rom(&data);
+        let mut cpu = Cpu::new();
+        cpu.registers[15] = 0x0800_0000;
+        cpu.cpsr |= 0x20; // THUMB
+        cpu.registers[1] = address;
+        bus.write16(address, 0xFFFF);
+        cpu.step(&mut bus);
+        assert_eq!(
+            cpu.registers[0] as u16, expected,
+            "ldrh from {address:08X} after writing 0xFFFF"
+        );
+    }
+}
+
+/// The masks above are what the CPU sees, not what the hardware latched: the
+/// PPU and APU still need the write-only bits a game stored.
+#[test]
+fn io_read_masks_do_not_hide_write_only_bits_from_the_ppu() {
+    let mut gba = Gba::new();
+    gba.load_rom(&rom(&[0xEAFF_FFFE])).expect("ROM should load");
+    gba.bus.write16(0x0400_0010, 0x0123); // BG0HOFS, write-only
+    assert_eq!(gba.bus.io_read16(0x0400_0010), 0x0123);
+}
+
+/// Commercial games run from boot without the PC ever leaving mapped memory,
+/// and at a per-frame instruction count close to master's (a9d34a8, first 300
+/// frames from boot: Yggdra Union 29.9k, Mario Tennis 142.6k - it busy-waits).
+/// The BIOS IRQ stub regression of 2026-10-02 put Yggdra at ~245k a frame
+/// with the PC in open bus. The ROMs are never committed: a missing one is
+/// skipped.
+#[test]
+fn commercial_games_stay_in_mapped_memory_at_their_usual_cost() {
+    const FRAMES: u32 = 300;
+    for (name, ceiling) in [("yggdra", 40_000), ("mariotennis", 160_000)] {
+        let path = format!("{}/../temp/roms/{name}.gba", env!("CARGO_MANIFEST_DIR"));
+        let Ok(data) = std::fs::read(&path) else {
+            eprintln!("skipping '{name}': {path} not present");
+            continue;
+        };
+        let mut gba = Gba::new();
+        gba.load_rom(&data).expect("ROM should load");
+        let (mut steps, mut stray) = (0u64, None);
+        for frame in 0..FRAMES {
+            // Tap Start, then A, so the game gets past its title screens.
+            let keys = match frame % 120 {
+                0..=4 => 1 << 3,
+                61..=64 => 1,
+                _ => 0,
+            };
+            gba.bus.set_keys(keys);
+            let target = gba.cycles + 280_896;
+            while gba.cycles < target {
+                let pc = gba.cpu.registers[15];
+                let mapped = pc < 0x4000 || matches!(pc >> 24, 0x02 | 0x03 | 0x05..=0x0D);
+                if !mapped && stray.is_none() {
+                    stray = Some((frame, pc));
+                }
+                gba.step();
+                steps += 1;
+            }
+        }
+        assert_eq!(stray, None, "{name}: PC in open-bus memory (frame, pc)");
+        let per_frame = steps / u64::from(FRAMES);
+        assert!(
+            per_frame < ceiling,
+            "{name}: {per_frame} instructions a frame - something is spinning"
+        );
+    }
+}

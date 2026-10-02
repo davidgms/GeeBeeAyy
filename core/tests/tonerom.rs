@@ -49,8 +49,9 @@ fn a_psg_square_plays_the_frequency_the_rom_asked_for() {
         gba.clear_audio_buffer();
     }
 
-    // GBATEK: a square channel's tone is 131072/(2048-n) Hz.
-    let n = (gba.bus.read16(0x0400_0064) & 0x07FF) as f64;
+    // GBATEK: a square channel's tone is 131072/(2048-n) Hz. The frequency
+    // is write-only, so it comes from the latched register, not a CPU read.
+    let n = (gba.bus.io_read16(0x0400_0064) & 0x07FF) as f64;
     let want = 131_072.0 / (2048.0 - n);
 
     let crossings = samples

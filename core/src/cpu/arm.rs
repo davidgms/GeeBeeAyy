@@ -259,7 +259,12 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
         }
     }
 
-    1
+    // Writing PC costs the 1S+1N pipeline refill on top of the 1S.
+    if rd == 15 {
+        3
+    } else {
+        1
+    }
 }
 
 pub fn overflow_add(op1: u32, op2: u32, result: u32) -> bool {
@@ -553,10 +558,12 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
         cpu.set_reg(rn, offset_addr);
     }
 
-    if load {
-        3
-    } else {
-        2
+    // ARM7TDMI TRM: LDR is 1S+1N+1I, plus 1S+1N to refill the pipeline when
+    // it loads PC.
+    match (load, rd) {
+        (true, 15) => 5,
+        (true, _) => 3,
+        (false, _) => 2,
     }
 }
 
@@ -747,8 +754,10 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         cpu.set_reg(rn, new_base);
     }
 
+    // LDM is nS+1N+1I, plus the 1S+1N pipeline refill when PC is loaded.
     if load {
-        2 + reg_count
+        let refill = if reg_list & (1 << 15) != 0 { 2 } else { 0 };
+        2 + reg_count + refill
     } else {
         1 + reg_count
     }

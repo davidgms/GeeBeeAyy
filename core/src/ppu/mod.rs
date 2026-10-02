@@ -324,7 +324,7 @@ impl Ppu {
         // scanline and composing the register from the cache silently erased
         // any DISPSTAT write the game made mid-scanline - which is how Yggdra
         // Union enabled the VBlank IRQ and then waited forever for it.
-        let game_bits = bus.read16(0x0400_0004) & 0xFF38;
+        let game_bits = bus.io_read16(0x0400_0004) & 0xFF38;
         self.dispstat_vblank_ie = game_bits & 0x0008 != 0;
         self.dispstat_hblank_ie = game_bits & 0x0010 != 0;
         self.dispstat_vcount_ie = game_bits & 0x0020 != 0;
@@ -348,7 +348,7 @@ impl Ppu {
     }
 
     fn sync_from_bus(&mut self, bus: &mut super::memory::MemoryBus) {
-        self.dispcnt = bus.read16(0x0400_0000);
+        self.dispcnt = bus.io_read16(0x0400_0000);
         // Bit 7 is the only blanking control DISPCNT has. There used also to
         // be a `display_off` read from bit 15 - which is the OBJ Window
         // enable, not a blank - so any game that turned the OBJ window on had
@@ -362,20 +362,20 @@ impl Ppu {
         self.obj_enable = self.dispcnt & 0x1000 != 0;
 
         // BG control registers
-        self.bg0cnt = bus.read16(0x0400_0008);
-        self.bg1cnt = bus.read16(0x0400_000A);
-        self.bg2cnt = bus.read16(0x0400_000C);
-        self.bg3cnt = bus.read16(0x0400_000E);
+        self.bg0cnt = bus.io_read16(0x0400_0008);
+        self.bg1cnt = bus.io_read16(0x0400_000A);
+        self.bg2cnt = bus.io_read16(0x0400_000C);
+        self.bg3cnt = bus.io_read16(0x0400_000E);
 
         // BG scroll registers
-        self.bg0hofs = bus.read16(0x0400_0010);
-        self.bg0vofs = bus.read16(0x0400_0012);
-        self.bg1hofs = bus.read16(0x0400_0014);
-        self.bg1vofs = bus.read16(0x0400_0016);
-        self.bg2hofs = bus.read16(0x0400_0018);
-        self.bg2vofs = bus.read16(0x0400_001A);
-        self.bg3hofs = bus.read16(0x0400_001C);
-        self.bg3vofs = bus.read16(0x0400_001E);
+        self.bg0hofs = bus.io_read16(0x0400_0010);
+        self.bg0vofs = bus.io_read16(0x0400_0012);
+        self.bg1hofs = bus.io_read16(0x0400_0014);
+        self.bg1vofs = bus.io_read16(0x0400_0016);
+        self.bg2hofs = bus.io_read16(0x0400_0018);
+        self.bg2vofs = bus.io_read16(0x0400_001A);
+        self.bg3hofs = bus.io_read16(0x0400_001C);
+        self.bg3vofs = bus.io_read16(0x0400_001E);
 
         // Affine reference points. GBATEK, LCD I/O BG Rotation/Scaling: these
         // are 28 bits - 19 integer, 8 fractional, sign in bit 27. Taking all
@@ -386,12 +386,12 @@ impl Ppu {
             ((raw << 4) as i32) >> 4
         };
         let (bg2x, bg2y) = (
-            signed28(bus.read16(0x0400_0028), bus.read16(0x0400_002A)),
-            signed28(bus.read16(0x0400_002C), bus.read16(0x0400_002E)),
+            signed28(bus.io_read16(0x0400_0028), bus.io_read16(0x0400_002A)),
+            signed28(bus.io_read16(0x0400_002C), bus.io_read16(0x0400_002E)),
         );
         let (bg3x, bg3y) = (
-            signed28(bus.read16(0x0400_0038), bus.read16(0x0400_003A)),
-            signed28(bus.read16(0x0400_003C), bus.read16(0x0400_003E)),
+            signed28(bus.io_read16(0x0400_0038), bus.io_read16(0x0400_003A)),
+            signed28(bus.io_read16(0x0400_003C), bus.io_read16(0x0400_003E)),
         );
         // Writing BGxX or BGxY mid-frame reloads the internal accumulator on
         // hardware, which is how a game restarts an effect part-way down the
@@ -406,22 +406,22 @@ impl Ppu {
         }
 
         // Affine parameters
-        self.bg2pa = bus.read16(0x0400_0020) as i16;
-        self.bg2pb = bus.read16(0x0400_0022) as i16;
-        self.bg2pc = bus.read16(0x0400_0024) as i16;
-        self.bg2pd = bus.read16(0x0400_0026) as i16;
-        self.bg3pa = bus.read16(0x0400_0030) as i16;
-        self.bg3pb = bus.read16(0x0400_0032) as i16;
-        self.bg3pc = bus.read16(0x0400_0034) as i16;
-        self.bg3pd = bus.read16(0x0400_0036) as i16;
+        self.bg2pa = bus.io_read16(0x0400_0020) as i16;
+        self.bg2pb = bus.io_read16(0x0400_0022) as i16;
+        self.bg2pc = bus.io_read16(0x0400_0024) as i16;
+        self.bg2pd = bus.io_read16(0x0400_0026) as i16;
+        self.bg3pa = bus.io_read16(0x0400_0030) as i16;
+        self.bg3pb = bus.io_read16(0x0400_0032) as i16;
+        self.bg3pc = bus.io_read16(0x0400_0034) as i16;
+        self.bg3pd = bus.io_read16(0x0400_0036) as i16;
 
         // Color effects
-        self.bldcnt = bus.read16(0x0400_0050);
-        self.bldalpha = bus.read16(0x0400_0052);
-        self.bldy = bus.read8(0x0400_0054) & 0x1F;
+        self.bldcnt = bus.io_read16(0x0400_0050);
+        self.bldalpha = bus.io_read16(0x0400_0052);
+        self.bldy = bus.io_read8(0x0400_0054) & 0x1F;
 
         // Mosaic
-        let mosaic = bus.read16(0x0400_004C);
+        let mosaic = bus.io_read16(0x0400_004C);
         self.mosaic_bg_hsize = (mosaic & 0x000F) as u8;
         self.mosaic_bg_vsize = ((mosaic >> 4) & 0x000F) as u8;
         self.mosaic_obj_hsize = ((mosaic >> 8) & 0x000F) as u8;
@@ -430,16 +430,16 @@ impl Ppu {
         // Window registers. GBATEK, LCD I/O Window Feature: WINxH holds X1 -
         // the *left* edge - in bits 8-15 and X2 in bits 0-7, so the low byte
         // is the right edge. This used to read them the other way round.
-        self.win0h_right = bus.read8(0x0400_0040);
-        self.win0h_left = bus.read8(0x0400_0041);
-        self.win1h_right = bus.read8(0x0400_0042);
-        self.win1h_left = bus.read8(0x0400_0043);
-        self.win0v_bottom = bus.read8(0x0400_0044);
-        self.win0v_top = bus.read8(0x0400_0045);
-        self.win1v_bottom = bus.read8(0x0400_0046);
-        self.win1v_top = bus.read8(0x0400_0047);
-        self.winin = bus.read16(0x0400_0048);
-        self.winout = bus.read16(0x0400_004A);
+        self.win0h_right = bus.io_read8(0x0400_0040);
+        self.win0h_left = bus.io_read8(0x0400_0041);
+        self.win1h_right = bus.io_read8(0x0400_0042);
+        self.win1h_left = bus.io_read8(0x0400_0043);
+        self.win0v_bottom = bus.io_read8(0x0400_0044);
+        self.win0v_top = bus.io_read8(0x0400_0045);
+        self.win1v_bottom = bus.io_read8(0x0400_0046);
+        self.win1v_top = bus.io_read8(0x0400_0047);
+        self.winin = bus.io_read16(0x0400_0048);
+        self.winout = bus.io_read16(0x0400_004A);
 
         self.mode = self.bg_mode;
     }

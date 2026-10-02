@@ -157,6 +157,55 @@ pub const IO_IME: usize = 0x208;
 pub const IO_WAITCNT: usize = 0x204;
 pub const IO_HALTCNT: usize = 0x301;
 
+/// What a CPU read of an I/O halfword returns.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IoRead {
+    /// The stored value with only these bits readable; `Mask(0)` reads zero.
+    Mask(u16),
+    /// Nothing drives the bus: the CPU sees its last prefetched opcode.
+    OpenBus,
+}
+
+/// Read behaviour of the I/O halfword at `offset` (even, below 0x400).
+///
+/// GBATEK's register descriptions give the readable bits; the values are
+/// pinned by the mGBA suite's I/O read test, which records what hardware
+/// returns after writing 0xFFFF. Write-only and most unused registers read as
+/// open bus, a few unused ones as zero. Offsets not listed read back what was
+/// written, as every register did before this table existed.
+pub fn read_rule(offset: usize) -> IoRead {
+    use IoRead::{Mask, OpenBus};
+    match offset {
+        0x008 | 0x00A => Mask(0xDFFF), // BG0CNT/BG1CNT: no wraparound bit
+        // Scroll, affine, window bounds, MOSAIC, BLDY and the gaps between.
+        0x010..=0x046 | 0x04C..=0x04E | 0x054..=0x05E => OpenBus,
+        0x048 | 0x04A => Mask(0x3F3F),         // WININ, WINOUT
+        0x050 => Mask(0x3FFF),                 // BLDCNT
+        0x052 => Mask(0x1F1F),                 // BLDALPHA
+        0x060 => Mask(0x007F),                 // SOUND1CNT_L
+        0x062 | 0x068 => Mask(0xFFC0),         // duty/envelope; length is write-only
+        0x064 | 0x06C | 0x074 => Mask(0x4000), // only the length flag reads
+        0x070 => Mask(0x00E0),                 // SOUND3CNT_L
+        0x072 => Mask(0xE000),                 // SOUND3CNT_H
+        0x078 => Mask(0xFF00),                 // SOUND4CNT_L
+        0x07C => Mask(0x40FF),                 // SOUND4CNT_H
+        0x080 => Mask(0xFF77),                 // SOUNDCNT_L
+        0x082 => Mask(0x770F),                 // SOUNDCNT_H: FIFO resets are write-only
+        // SOUNDCNT_X: bits 0-3 are read-only channel status, not modelled here,
+        // so they read as "not playing" rather than echoing the write.
+        0x084 => Mask(0x0080),
+        0x066 | 0x06A | 0x06E | 0x076 | 0x07A | 0x07E | 0x086 | 0x08A => Mask(0),
+        // FIFOs, the gap after them, and every DMA source/destination address.
+        0x08C | 0x08E | 0x0A0..=0x0B6 | 0x0BC..=0x0C2 | 0x0C8..=0x0CE | 0x0D4..=0x0DA => OpenBus,
+        0x0B8 | 0x0C4 | 0x0D0 | 0x0DC => Mask(0), // DMAxCNT_L is write-only
+        0x0BA | 0x0C6 | 0x0D2 => Mask(0xF7E0),    // no gamepak DRQ below DMA3
+        0x0DE => Mask(0xFFE0),
+        0x0E0..=0x0FE => OpenBus,
+        0x136 | 0x142 | 0x15A | 0x206 | 0x20A | 0x302 => Mask(0),
+        _ => Mask(0xFFFF),
+    }
+}
+
 /// I/O register handler — decodes reads/writes to hardware registers.
 pub struct IoHandler {
     pub ie: u16,

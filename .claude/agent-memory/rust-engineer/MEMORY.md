@@ -17,3 +17,4 @@ Durable facts about the project itself go to `.claude/memory.md` or
 `docs/` instead, so every agent and every human gets them; leave a line
 here pointing at it.
 - **2026-10-02** - [Homebrew suite results and harness traps live in .claude/memory.md (2026-10-02 entry)](../../memory.md)
+- **2026-10-02** - [mGBA Timer IRQ / I/O read fixes: CPU vs latched I/O view, fitted IRQ timing (project memory)](../../memory.md)
