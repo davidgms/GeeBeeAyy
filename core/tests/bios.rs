@@ -619,7 +619,8 @@ fn soft_reset_with_the_ram_flag_jumps_to_ewram() {
 #[test]
 fn arctan_wraps_like_the_bios_at_the_edges_of_its_input() {
     // The series' intermediate products leave i32 for |tan| near 1.0 and
-    // beyond (tan = -1.0 is 0x8000 in 1.14). The BIOS is ARM code and wraps;
+    // beyond (1.14 fixed point: 0x8000 = -2.0, 0x7FFF ~ 2.0, 0xC000 = -1.0).
+    // The BIOS is ARM code and wraps;
     // the HLE used to panic in debug builds with "attempt to multiply with
     // overflow", found by the mGBA suite's BIOS-math tests. Expected values
     // are the same series evaluated with 32-bit wrapping (as mGBA's `_ArcTan`).
