@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIUI Smart Refresh</title>
+<style>
+  /* Colours from android/app/src/main/java/com/geebeeayy/app/ui/theme/Color.kt */
+  :root {
+    --night-void: #150A2B;
+    --night-panel: #221046;
+    --panel-edge: #3a2470;
+    --golden: #FACC15;
+    --amber: #A16207;
+    --mist: #FFF9C2;
+    --muted: #c9c0e8;
+    --good: #4ade80;
+    --bad: #f87171;
+    --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--night-void); color-scheme: dark; }
+  body {
+    margin: 0; background: var(--night-void); color: var(--mist);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { color: var(--golden); font-size: 2rem; margin: 0 0 4px; }
+  h2 { color: var(--golden); font-size: 1.35rem; margin: 48px 0 12px; border-bottom: 2px solid var(--panel-edge); padding-bottom: 6px; }
+  h3 { color: var(--mist); margin: 0 0 6px; font-size: 1.05rem; }
+  p { margin: 8px 0; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  code, .mono { font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; font-size: .88em; }
+  code { background: #0d061c; border: 1px solid var(--panel-edge); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+  a { color: var(--golden); }
+  .answer {
+    background: var(--night-panel); border: 2px solid var(--golden); border-radius: 12px;
+    padding: 18px 20px; margin: 16px 0 8px;
+  }
+  .answer strong { color: var(--golden); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+  .card {
+    background: var(--night-panel); border: 1px solid var(--panel-edge); border-radius: 10px;
+    padding: 14px 16px; min-width: 0;
+  }
+  .card.pick { border: 2px solid var(--good); }
+  .card.no { opacity: .92; }
+  .tag { display: inline-block; font-size: .75rem; font-weight: 700; border-radius: 999px; padding: 2px 10px; margin: 0 6px 6px 0; }
+  .tag.good { background: #14532d; color: var(--good); }
+  .tag.bad { background: #4c1d1d; color: var(--bad); }
+  .tag.warn { background: #4a3708; color: var(--warn); }
+  .tag.info { background: #2b1a5c; color: var(--muted); }
+  ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--panel-edge); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; min-width: 560px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--panel-edge); vertical-align: top; }
+  th { background: var(--night-panel); color: var(--golden); font-size: .85rem; }
+  tr:last-child td { border-bottom: none; }
+  .hz { font-weight: 700; white-space: nowrap; }
+  .ok { color: var(--good); } .ko { color: var(--bad); } .meh { color: var(--warn); }
+  .mermaid-box { background: var(--night-panel); border: 1px solid var(--panel-edge); border-radius: 10px; padding: 12px; overflow-x: auto; }
+  .mermaid { min-width: 520px; }
+  .log { background: #0d061c; border: 1px solid var(--panel-edge); border-radius: 8px; padding: 10px 12px; overflow-x: auto; white-space: pre; font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: var(--muted); }
+  .log b { color: var(--golden); font-weight: 600; }
+  .frames { display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0; }
+  .f { width: 26px; height: 26px; border-radius: 4px; background: var(--golden); display: grid; place-items: center; color: var(--night-void); font-size: .7rem; font-weight: 700; }
+  .f.drop { background: transparent; border: 2px dashed var(--bad); color: var(--bad); }
+  .f.hold { background: var(--amber); color: var(--mist); }
+  .note { color: var(--muted); font-size: .9rem; }
+  footer { margin-top: 48px; color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MIUI Smart Refresh and GeeBeeAyy</h1>
+  <p class="sub">Research on the Mi 10T Pro (MIUI 14, Android 12), 2026-10-01. Measured on the phone, plus public source code of MIUI mods.</p>
+
+  <div class="answer">
+    <p><strong>Short answer.</strong> The 144 Hz setting is only a top limit. A MIUI system app called <strong>Battery &amp; performance</strong> (<code>com.miui.powerkeeper</code>) picks a rate for whichever app is in front. It counts how many frames the app draws each second and picks the nearest screen rate.</p>
+    <p><strong>The trap.</strong> While you sit on the ROM list, the app draws almost nothing, and MIUI drops the screen to <strong>50 Hz</strong>. Then you open a game. The game wants 60, but a screen at 50 Hz can only show 50. So MIUI counts 50, keeps 50, and never goes back up.</p>
+    <p><strong>What works today, no root:</strong> in a game, press <strong>Home</strong> and come back. MIUI starts again from 144, counts about 60, and settles at <strong>60 Hz</strong>. This worked 3 times out of 3.</p>
+  </div>
+
+  <h2>How MIUI picks the rate</h2>
+  <p>Every app request goes through one cap. Standard Android requests (the ones GeeBeeAyy now sends) can only pick a rate <em>under</em> that cap.</p>
+  <div class="mermaid-box">
+<pre class="mermaid">
+flowchart TD
+  A["App in front changes<br/>(DisplayFrameSetting: homeToAppEnd)"] --> B["PowerKeeper<br/>DisplayFrameSetting.setScreenEffect(pkg, fps, cookie)<br/>per-app rule from Xiaomi cloud"]
+  B --> C["DisplayFeatureHal 'Smtfps'<br/>reads 'frame stat' about once a second"]
+  C -->|"picks a supported rate<br/>near the frame count"| D["SurfaceFlinger cap<br/>primary range [0, X]<br/>(mode override by backdoor: yes)"]
+  E["GeeBeeAyy requests<br/>Surface.setFrameRate(59.73)<br/>preferredDisplayModeId = 60 Hz"] -->|"only inside the cap"| D
+  D --> F["Panel rate"]
+  F -->|"an app cannot draw faster<br/>than the panel"| C
+</pre>
+  </div>
+  <p class="note">The loop from the panel back to the frame count is the trap. Once X is 50, the count can never be more than 50.</p>
+
+  <h2>The trap, step by step</h2>
+  <div class="mermaid-box">
+<pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  [*] --> Launcher144: phone home screen
+  Launcher144 --> Game60: open the game from Home<br/>count 62, then 60
+  Game60 --> List50: back to the ROM list<br/>idle, cap drops to 50
+  List50 --> Game50: open a game<br/>count stays 50
+  Game50 --> Game50: count 49-50 forever
+  Game50 --> Launcher144: press Home
+  Game50 --> Game50: open and close the in-game menu (no effect)
+</pre>
+  </div>
+
+  <h2>What I measured</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Moment</th><th>Cap (SurfaceFlinger)</th><th>Panel</th><th>How it was read</th></tr></thead>
+    <tbody>
+      <tr><td>Phone launcher</td><td class="mono">[0, 144]</td><td class="hz ok">144 Hz</td><td><code>dumpsys SurfaceFlinger</code></td></tr>
+      <tr><td>Game, entered from Home</td><td class="mono">[0, 60]</td><td class="hz ok">60 Hz</td><td>log: <code>Smtfps app set input_fps(120)</code>, then <code>(60)</code>; 615 frames in 10 s</td></tr>
+      <tr><td>ROM list, about 5 s idle</td><td class="mono">[0, 50]</td><td class="hz ko">50 Hz</td><td>log: <code>get frame stat: 50</code>, <code>really set fps(50)</code>; the app drew 0 frames in 10 s</td></tr>
+      <tr><td>Game, entered from the ROM list</td><td class="mono">[0, 50]</td><td class="hz ko">50 Hz</td><td>log: <code>get frame stat: 49</code> / <code>50</code> every second</td></tr>
+      <tr><td>Same game, after Home and back</td><td class="mono">[0, 60]</td><td class="hz ok">60 Hz</td><td>3 tries, 3 times 60</td></tr>
+      <tr><td>Thermal limit during all of this</td><td colspan="2" class="mono">limited_fps(144 144 ...)</td><td>Heat was not the cause</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The log lines, as the phone printed them:</p>
+<div class="log">I/DisplayFrameSetting: homeToAppEnd pkg=com.geebeeayy.app
+I/DisplayFeatureHal: HandleFpsSwitch: <b>Smtfps app set input_fps(120)</b> cookie(256)
+E/DisplayFeatureHal: get frame stat: 62
+I/DisplayFeatureHal: HandleFpsSwitch: <b>Smtfps app set input_fps(60)</b> cookie(256)
+...  (back to the ROM list, idle)
+E/DisplayFeatureHal: get frame stat: 50
+I/DisplayFeatureHal: HandleFpsSwitch: <b>really set fps(50)</b>
+D/RefreshRateConfigs: TouchBoost - choose 50.00fps</div>
+  <p class="note">Even a finger on the screen cannot help. Android's "touch boost" asks for the highest rate allowed, and the highest rate allowed is now 50.</p>
+
+  <h2>Does the rate hurt the picture?</h2>
+  <p>A GBA makes 59.73 frames a second. The best screen rate shows every frame for the same amount of time. Android never tears the picture. A bad rate shows as <strong>judder</strong>: uneven or missing frames.</p>
+  <div class="grid">
+    <div class="card">
+      <h3><span class="ko">50 Hz</span> - what you had</h3>
+      <div class="frames"><span class="f">1</span><span class="f">2</span><span class="f">3</span><span class="f">4</span><span class="f">5</span><span class="f drop">6</span><span class="f">7</span><span class="f">8</span></div>
+      <p>1 frame in 6 is never shown. Scrolling and fast motion skip a little.</p>
+    </div>
+    <div class="card pick">
+      <h3><span class="ok">60 Hz</span> - the target</h3>
+      <div class="frames"><span class="f">1</span><span class="f">2</span><span class="f">3</span><span class="f">4</span><span class="f">5</span><span class="f">6</span><span class="f">7</span><span class="f">8</span></div>
+      <p>Every frame, once each, for the same time. Lowest battery cost of the good rates.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ok">120 Hz</span> - also good</h3>
+      <div class="frames"><span class="f">1</span><span class="f">1</span><span class="f">2</span><span class="f">2</span><span class="f">3</span><span class="f">3</span><span class="f">4</span><span class="f">4</span></div>
+      <p>Every frame shown twice. Smooth, but the screen works twice as hard for no visible gain.</p>
+    </div>
+    <div class="card">
+      <h3><span class="meh">90 or 144 Hz</span> - uneven</h3>
+      <div class="frames"><span class="f">1</span><span class="f hold">1</span><span class="f">2</span><span class="f">3</span><span class="f hold">3</span><span class="f">4</span><span class="f hold">4</span><span class="f hold">4</span></div>
+      <p>144 / 59.73 = 2.41, so frames stay on screen for 2 or 3 refreshes. Motion looks a little uneven, and battery use is highest.</p>
+    </div>
+  </div>
+  <p class="note">This is why <code>gameDisplayMode</code> in <code>ui/DisplayRate.kt</code> asks for 60 or 120 and nothing else.</p>
+
+  <h2>Ways around it</h2>
+  <div class="grid">
+    <div class="card pick">
+      <span class="tag good">No root</span><span class="tag good">Tested</span>
+      <h3>1. Home, then back to the game</h3>
+      <p>MIUI starts again from 144 and settles at 60.</p>
+      <ul><li>Safe. Nothing changes on the phone.</li><li>Lasts until you go back to the ROM list and wait.</li></ul>
+    </div>
+    <div class="card">
+      <span class="tag good">No root</span><span class="tag info">Only shows</span>
+      <h3>2. Developer options: "Show refresh rate"</h3>
+      <p>A number in the corner shows the live Hz. It does not change the rate. Use it to check the trick above.</p>
+    </div>
+    <div class="card">
+      <span class="tag warn">adb, no root</span><span class="tag warn">Not tested here</span>
+      <h3>3. Turn off "Battery &amp; performance"</h3>
+      <p><code>adb shell pm disable-user com.miui.powerkeeper</code><br>Users report that the per-app limits stop. Undo with <code>pm enable</code>.</p>
+      <ul><li>The same app also runs MIUI battery saver, limits on apps in the background, and battery stats. Expect more battery use.</li><li>A MIUI update can turn it back on.</li></ul>
+    </div>
+    <div class="card no">
+      <span class="tag bad">Root + LSPosed</span>
+      <h3>4. Hook modules</h3>
+      <p>MIUI Performance Saver, HyperCeiler "Lock max FPS" and MIUIForceFPS. All three block <code>DisplayFrameSetting.setScreenEffect</code> inside PowerKeeper.</p>
+      <ul><li>Needs an unlocked bootloader and root. Banking apps and Play Integrity can stop working.</li><li>One author warns that "DC dimming + high refresh rate" can change screen colours.</li></ul>
+    </div>
+    <div class="card no">
+      <span class="tag bad">Root</span>
+      <h3>5. SurfaceFlinger "backdoor" 1035</h3>
+      <p><code>service call SurfaceFlinger 1035 i32 &lt;mode&gt;</code> forces one mode.</p>
+      <ul><li>This is a debug door, and MIUI already uses it ("mode override by backdoor: yes"). The two would fight over it.</li><li>Not for players.</li></ul>
+    </div>
+    <div class="card">
+      <span class="tag good">In the app now</span>
+      <h3>6. What GeeBeeAyy already sends</h3>
+      <p><code>Surface.setFrameRate(59.73, FIXED_SOURCE)</code> on the game surface, plus <code>preferredDisplayModeId</code> for 60 Hz on the window.</p>
+      <ul><li>This is the correct Android API. It should work on Pixel, Samsung and other phones that follow it.</li><li>On MIUI it reaches SurfaceFlinger (both requests show in <code>dumpsys</code>), but the cap is above it.</li></ul>
+    </div>
+  </div>
+
+  <h2>What the app can do next</h2>
+  <div class="grid">
+    <div class="card pick">
+      <span class="tag good">Small, safe</span>
+      <h3>A. A one-time tip on MIUI</h3>
+      <p>When the phone is Xiaomi, a game runs, and the screen rate is not 60 or 120, show a short tip once: "Your phone lowered the screen speed. Press Home and come back for smoother play."</p>
+      <p class="note">The app can read the rate (<code>Display.getRefreshRate()</code>). It cannot change MIUI.</p>
+    </div>
+    <div class="card">
+      <span class="tag warn">Experiment</span>
+      <h3>B. Open games as their own task</h3>
+      <p>MIUI resets when it sees a "home to app" switch. A game opened as its own task might start that reset. <strong>Not tested.</strong> It changes the Back flow and the recent-apps list, so it needs a test on the phone before any decision.</p>
+    </div>
+    <div class="card no">
+      <span class="tag bad">No</span>
+      <h3>C. Keep the ROM list drawing all the time</h3>
+      <p>This would stop MIUI from dropping to 50, but it would burn battery on a still screen to fool a battery feature. Rejected.</p>
+    </div>
+  </div>
+
+  <footer>
+    <h2>Sources</h2>
+    <ul>
+      <li>Phone measurements: <code>dumpsys SurfaceFlinger</code>, <code>dumpsys display</code>, <code>logcat</code> (tags <code>DisplayFeatureHal</code>, <code>DisplayFrameSetting</code>, <code>RefreshRateConfigs</code>). Raw dumps in each developer's <code>temp/</code>.</li>
+      <li>Hook sources that name the PowerKeeper method: <a href="https://github.com/rdtoy/MIUIPerfSaver">rdtoy/MIUIPerfSaver</a> (<code>PowerKeeperHook.kt</code>), <a href="https://github.com/yujincheng08/MIUIForceFPS">yujincheng08/MIUIForceFPS</a>, <a href="https://github.com/ReChronoRain/HyperCeiler">ReChronoRain/HyperCeiler</a> (<code>LockMaxFps.kt</code>)</li>
+      <li><a href="https://modules.lsposed.org/module/com.rdstory.miuiperfsaver/">MIUI Performance Saver module page</a>: PowerKeeper caps per-app frame rate from cloud config; the DC dimming warning</li>
+      <li><a href="https://gerrit.omnirom.org/plugins/gitiles/android_frameworks_native/+/34392f7249cc09342c59ee95b37d72105625bd7d%5E%21">SurfaceFlinger: add a backdoor to override display config</a> (code 1035)</li>
+      <li><a href="https://developer.android.com/media/optimize/performance/frame-rate">Android: Frame rate guide</a> and <a href="https://android-developers.googleblog.com/2020/04/high-refresh-rate-rendering-on-android.html">High refresh rate rendering on Android</a></li>
+      <li><a href="https://www.mi.com/in/mi-10t-pro/">Mi 10T Pro product page</a> and <a href="https://www.xda-developers.com/xiaomi-mi-10t-pro-performance-gaming-review/">XDA review</a>: 7 rates from 30 to 144 Hz, chosen by content</li>
+      <li>XDA and xiaomi.eu threads on disabling adaptive refresh (could not be fetched; cited from search summaries only): <a href="https://xdaforums.com/t/disable-adaptive-refresh-rate-miui.4349617/">Disable "Adaptive refresh rate" MIUI</a>, <a href="https://xdaforums.com/t/adaptive-refresh-rate-apps-stuck-in-60hz.4339281/">apps stuck in 60 Hz</a></li>
+    </ul>
+  </footer>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: false, theme: "dark", securityLevel: "strict",
+    themeVariables: {
+      background: "#221046", primaryColor: "#2b1a5c", primaryTextColor: "#FFF9C2",
+      primaryBorderColor: "#FACC15", lineColor: "#FACC15", fontFamily: "system-ui, sans-serif",
+    },
+  });
+  const run = () => mermaid.run({ nodes: document.querySelectorAll(".mermaid") }).catch((e) => console.error(e));
+  if (document.readyState === "complete") run(); else window.addEventListener("load", run, { once: true });
+</script>
+</body>
+</html>
