@@ -981,8 +981,9 @@ fun EmulationScreen(
         StateToast(
             message = rateTipMessage,
             onDismiss = { rateTipMessage = null },
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 96.dp),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 96.dp, start = 16.dp, end = 16.dp),
             durationMs = 7_000,
+            icon = Icons.Default.Info,
         )
 
         // The same pill, one row lower, so a save message and an achievement
@@ -2242,6 +2243,7 @@ private fun StateToast(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     durationMs: Long = 2200,
+    icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.CheckCircle,
 ) {
     // Held locally so the pill can finish fading out after the message is
     // already gone from the ViewModel.
@@ -2269,7 +2271,7 @@ private fun StateToast(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                Icons.Default.CheckCircle,
+                icon,
                 contentDescription = null,
                 tint = GoldenSaplight,
                 modifier = Modifier.size(16.dp),
