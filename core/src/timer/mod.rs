@@ -61,6 +61,21 @@ impl Timer {
             self.start_delay[i] -= skip;
             let mut elapsed = skip;
             let prescaler = self.prescaler[i];
+            // Fast path, same result as the loop below: no overflow in this
+            // slice means only the counter and the accumulator move. This
+            // runs for every timer on every instruction.
+            // Prescalers are powers of two (`PRESCALER_TABLE`, and a save
+            // state is rejected otherwise), so shift and mask, not divide.
+            let pending = self.tick_counters[i];
+            if pending < prescaler && prescaler.is_power_of_two() {
+                let total = pending + (cycles - skip);
+                let counts = total >> prescaler.trailing_zeros();
+                if self.counters[i].saturating_add(counts) < 0x10000 {
+                    self.counters[i] += counts;
+                    self.tick_counters[i] = total & (prescaler - 1);
+                    continue;
+                }
+            }
             loop {
                 // Saturating: a prescaler lowered on a running timer can leave
                 // the accumulator past it, and then the next count is due now.

@@ -380,3 +380,50 @@ fn commercial_games_stay_in_mapped_memory_at_their_usual_cost() {
         );
     }
 }
+
+/// `read16` and `read32` take work RAM and cartridge ROM straight from the
+/// backing array instead of composing `read8` byte by byte. Whatever the
+/// shortcut covers has to read exactly what the byte path does: mirrors, the
+/// last bytes of an odd-sized ROM, past its end, and the region boundaries.
+#[test]
+fn wide_reads_match_the_byte_path() {
+    use geebeeayy_core::memory::MemoryBus;
+    let mut bus = MemoryBus::new();
+    let rom: Vec<u8> = (0..0x1003u32).map(|i| (i * 7 + 3) as u8).collect();
+    bus.load_rom(&rom);
+    for i in 0..0x400u32 {
+        bus.write8(0x0200_0000 + i * 97, (i * 13) as u8);
+        bus.write8(0x0203_FF00 + i % 0x100, (i * 5) as u8);
+        bus.write8(0x0300_0000 + i * 31, (i * 11) as u8);
+        bus.write8(0x0300_7F00 + i % 0x100, (i * 3) as u8);
+    }
+    let bases = [
+        0x0000_0000u32,
+        0x0200_0000,
+        0x0203_FFF0,
+        0x0207_FFF0, // EWRAM mirror
+        0x0300_0000,
+        0x0300_7FF0,
+        0x03FF_FFE0, // IWRAM mirror, top
+        0x0800_0FF0, // ROM end, odd size
+        0x0A00_0000,
+        0x0C00_0FF8,
+        0x0CFF_FFF0,
+        0x0D00_0000,
+        0x0DFF_FFE0,
+    ];
+    let byte = |a: u32| u32::from(bus.read8(a));
+    for base in bases {
+        for a in base..base + 0x20 {
+            let h = a & !1;
+            assert_eq!(
+                u32::from(bus.read16(a)),
+                byte(h) | byte(h + 1) << 8,
+                "read16 {a:08X}"
+            );
+            let w = a & !3;
+            let want = byte(w) | byte(w + 1) << 8 | byte(w + 2) << 16 | byte(w + 3) << 24;
+            assert_eq!(bus.read32(a), want, "read32 {a:08X}");
+        }
+    }
+}
