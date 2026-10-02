@@ -598,6 +598,28 @@ and the app holds its frame rate and audio over a long session on a phone.
 
 ---
 
+## Phase 4.5 - Learn from other emulators
+
+Phase 4 hit problems mature emulators have already met: MIUI holding the
+panel at 50 Hz, frame pacing, audio as the clock. Eleven open-source
+emulators (GBA, NDS, 3DS, GC/Wii, PSP, libretro) were read from their code
+and their PR and issue history.
+
+- [x] **Research** - per-emulator notes in `temp/emulators-research/`,
+      conclusions in [`docs/research/emulators-research.md`](docs/research/emulators-research.md).
+      Key result: no emulator has a MIUI workaround; audio as the master
+      clock is the right call for us.
+- [ ] **Never block emulation on the draw** - guard it with a test.
+- [ ] **`appCategory="game"` and `isGame`**, tested on the phone.
+- [ ] **Re-apply the display mode in `onResume`.**
+- [ ] **One-time MIUI tip** when a game runs below 60 Hz.
+- [ ] **Audio-driven render frameskip, audio watchdog, Android's own buffer
+      size and sample rate, Performance Hint API.**
+
+**Exit criterion:** each action is done, or recorded as declined with a reason.
+
+---
+
 ## Phase 5 - Security and privacy
 
 The app now reads files the player owns, holds a RetroAchievements login token,
