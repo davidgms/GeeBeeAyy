@@ -667,3 +667,39 @@ fn arm_stm_without_writeback_stores_the_original_base() {
         "no writeback, so the base stored must be the original, not base + 8"
     );
 }
+
+/// THUMB format 4 `lsl/lsr/asr/ror Rd, Rs` with `Rs & 0xFF == 0`: the value is
+/// unchanged and so is C, but N and Z are still set from the result (GBATEK,
+/// THUMB.4: "C unchanged for zero shift amount" - N and Z are always
+/// affected). The decoder used to skip the flag update entirely, which every
+/// FuzzARM THUMB failure traced back to.
+#[test]
+fn thumb_register_shift_by_zero_still_sets_n_and_z() {
+    // op field of format 4: LSL 0010, LSR 0011, ASR 0100, ROR 0111.
+    for (name, op) in [("lsl", 0x2u16), ("lsr", 0x3), ("asr", 0x4), ("ror", 0x7)] {
+        let shift_r0_by_r1 = 0x4000 | (op << 6) | (1 << 3); // <op> r0, r1
+        let shift_r4_by_r1 = 0x4000 | (op << 6) | (1 << 3) | 4; // <op> r4, r1
+
+        // Negative result: N must come back on after an instruction cleared it.
+        // mov r1,#0 ; mvn r0,r1 (r0 = FFFFFFFF) ; mov r2,#1 (N=0 Z=0) ; <op> r0,r1
+        let (mut cpu, mut bus) = setup_thumb(&[0x2100, 0x43C8, 0x2201, shift_r0_by_r1]);
+        steps(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.registers[0], 0xFFFF_FFFF,
+            "{name}: value must not change"
+        );
+        assert!(
+            cpu.flag_n(),
+            "{name} by 0: N not set from a negative result"
+        );
+        assert!(!cpu.flag_z(), "{name} by 0: Z set on a non-zero result");
+
+        // Zero result: Z must come back on.
+        // mov r1,#0 ; mov r4,#0 ; mov r2,#1 (Z=0) ; <op> r4,r1
+        let (mut cpu, mut bus) = setup_thumb(&[0x2100, 0x2400, 0x2201, shift_r4_by_r1]);
+        steps(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.registers[4], 0, "{name}: value must not change");
+        assert!(cpu.flag_z(), "{name} by 0: Z not set from a zero result");
+        assert!(!cpu.flag_n(), "{name} by 0: N set on a zero result");
+    }
+}

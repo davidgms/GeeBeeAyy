@@ -464,7 +464,9 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             // LSL
             let shift = rs_val & 0xFF;
             if shift == 0 {
+                // C unchanged, but N and Z are always set (GBATEK THUMB.4).
                 result = rd_val;
+                cpu.set_flag_nz(result);
                 cpu.set_reg(rd, result);
             } else if shift < 32 {
                 let carry = (rd_val >> (32 - shift)) & 1 == 1;
@@ -483,7 +485,9 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             // LSR
             let shift = rs_val & 0xFF;
             if shift == 0 {
+                // C unchanged, but N and Z are always set (GBATEK THUMB.4).
                 result = rd_val;
+                cpu.set_flag_nz(result);
                 cpu.set_reg(rd, result);
             } else if shift < 32 {
                 let carry = (rd_val >> (shift - 1)) & 1 == 1;
@@ -502,7 +506,9 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             // ASR
             let shift = rs_val & 0xFF;
             if shift == 0 {
+                // C unchanged, but N and Z are always set (GBATEK THUMB.4).
                 result = rd_val;
+                cpu.set_flag_nz(result);
                 cpu.set_reg(rd, result);
             } else if shift < 32 {
                 let carry = (rd_val >> (shift - 1)) & 1 == 1;
@@ -538,7 +544,9 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             // ROR
             let shift = rs_val & 0xFF;
             if shift == 0 {
+                // C unchanged, but N and Z are always set (GBATEK THUMB.4).
                 result = rd_val;
+                cpu.set_flag_nz(result);
                 cpu.set_reg(rd, result);
             } else if shift.is_multiple_of(32) {
                 cpu.set_flag_nz_data(rd_val, rd_val >> 31 == 1);
