@@ -634,9 +634,9 @@ and their PR and issue history.
 - [ ] **Timer count-up 729/936** - every failure is a prescaled timer (64,
       256, 1024); cause not found.
 - [ ] **BIOS math 305/615, SIO, Timing** - Timing needs per-access wait states.
-- [ ] **Per-instruction cost rose ~10% in #60** (Mario Tennis on the host,
-      same instruction count). Still 60 fps on the Mi 10T Pro; profile before
-      it matters on slower phones.
+- [x] **Per-instruction cost rose ~10% in #60** - won back and more in #62:
+      Mario Tennis 9.40 -> 7.64 ms per frame on the host (8.54 before #60);
+      on the Mi 10T Pro CPU fell from 121-135% to 106-110% of a core.
 
 **Exit criterion:** each action is done, or recorded as declined with a reason.
 
