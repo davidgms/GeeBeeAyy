@@ -211,6 +211,11 @@ impl Gba {
     /// `write_control` had no caller at all until now: nothing could reach
     /// both halves.
     fn apply_dma_writes(&mut self) {
+        // Runs every step and is almost always empty; draining an empty Vec
+        // is not free.
+        if self.bus.dma_writes.is_empty() {
+            return;
+        }
         for ch in self.bus.drain_dma_writes() {
             let base = 0xB0 + ch * 12;
             let regs = self.bus.io_regs_data();
@@ -255,6 +260,9 @@ impl Gba {
     /// Hand the timer register writes the bus queued to the timer unit.
     /// A write to `TMxCNT_L` is a reload, one to `TMxCNT_H` is control.
     fn apply_timer_writes(&mut self) {
+        if self.bus.timer_writes.is_empty() {
+            return;
+        }
         for (timer, is_control, value) in self.bus.drain_timer_writes() {
             if is_control {
                 let was_enabled = self.timer.enabled[timer];
@@ -302,16 +310,16 @@ impl Gba {
         // TMxCNT_L reads the live counter, not the reload the game wrote
         // there. Nothing published it before, so a game polling a timer saw
         // its own reload value forever.
-        for (i, &c) in self.timer.counters().iter().enumerate() {
-            let base = 0x100 + i * 4;
-            let regs = self.bus.io_regs_data_mut();
-            regs[base] = c as u8;
-            regs[base + 1] = (c >> 8) as u8;
+        let counters = self.timer.counters();
+        let regs = &mut self.bus.io_regs_data_mut()[0x100..0x110];
+        for (reg, c) in regs.chunks_exact_mut(4).zip(counters) {
+            reg[..2].copy_from_slice(&c.to_le_bytes());
         }
 
-        let writes = self.bus.drain_sound_writes();
-        for (offset, value) in writes {
-            self.apu_sound_write(offset, value);
+        if !self.bus.sound_writes.is_empty() {
+            for (offset, value) in self.bus.drain_sound_writes() {
+                self.apu_sound_write(offset, value);
+            }
         }
 
         self.route_ppu_interrupts();

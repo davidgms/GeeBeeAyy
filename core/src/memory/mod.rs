@@ -18,12 +18,12 @@ pub struct MemoryBus {
     /// The bus cannot apply them itself: an immediate transfer runs inside
     /// `Dma::write_control` and needs `&mut MemoryBus`, which is the borrow
     /// the store is already holding. Same shape as `sound_writes`.
-    dma_writes: Vec<usize>,
+    pub(crate) dma_writes: Vec<usize>,
     /// Timer register writes, same shape again. `Timer::set_control` and
     /// `set_reload` had no caller outside the tests for the project's whole
     /// history, so no timer a game started ever ran: no timer interrupt, and
     /// no DMA sound, which is driven entirely by timer overflows.
-    timer_writes: Vec<(usize, bool, u16)>,
+    pub(crate) timer_writes: Vec<(usize, bool, u16)>,
     pub io: super::io::IoHandler,
     /// Address and state of the instruction executing now, set by
     /// `Cpu::step`, so a read of nothing can return the open bus.
@@ -198,10 +198,9 @@ impl MemoryBus {
         // poll read the ROM mirror underneath instead: at 0x0DFFFF00 that is
         // 0xFF80, bit 0 clear, so the game waited for a chip that was never
         // going to answer and gave up with "Save failed!". Programming here
-        // is instant, so the chip is always ready.
-        if self.is_eeprom_region(address) {
-            return 1;
-        }
+        // is instant, so the chip is always ready. The check sits in the
+        // cartridge arm below, where the window lives, to keep it off every
+        // other read.
         match address {
             0x0000_0000..=0x0000_3FFF => self.bios[(address & 0x3FFF) as usize],
             0x0200_0000..=0x02FF_FFFF => self.ewram[(address & 0x3_FFFF) as usize],
@@ -225,6 +224,10 @@ impl MemoryBus {
             // 0x08 (WS0), 0x0A (WS1) and 0x0C (WS2). Same data, different
             // access timing.
             0x0800_0000..=0x0DFF_FFFF => {
+                // `eeprom_window_start` is never below 0x0D000000.
+                if address >= 0x0D00_0000 && self.is_eeprom_region(address) {
+                    return 1;
+                }
                 let addr = (address & 0x01FF_FFFF) as usize;
                 if addr < self.rom.len() {
                     self.rom[addr]
@@ -354,6 +357,21 @@ impl MemoryBus {
         self.read16(address)
     }
 
+    /// The bytes of an aligned `width`-byte read from memory with no side
+    /// effects and no per-byte rules - work RAM and cartridge ROM below the
+    /// EEPROM window - so instruction fetches skip `read8`'s dispatch once per
+    /// byte. `None` (anything else, or a read past the ROM's end) sends the
+    /// read down the byte path, which stays the reference.
+    fn plain(&self, address: u32, width: usize) -> Option<&[u8]> {
+        let (mem, offset) = match address >> 24 {
+            0x02 => (&self.ewram, (address & 0x3_FFFF) as usize),
+            0x03 => (&self.iwram, (address & 0x7FFF) as usize),
+            0x08..=0x0C => (&self.rom, (address & 0x01FF_FFFF) as usize),
+            _ => return None,
+        };
+        mem.get(offset..offset + width)
+    }
+
     pub fn read16(&self, address: u32) -> u16 {
         // An 8-bit databus cannot deliver two distinct bytes, so a halfword
         // read of the backup region returns the one byte replicated. Reading
@@ -364,6 +382,9 @@ impl MemoryBus {
             return byte | (byte << 8);
         }
         let address = address & !1;
+        if let Some(b) = self.plain(address, 2) {
+            return u16::from_le_bytes([b[0], b[1]]);
+        }
         let lo = self.read8(address) as u16;
         let hi = self.read8(address + 1) as u16;
         lo | (hi << 8)
@@ -375,6 +396,9 @@ impl MemoryBus {
             return byte * 0x0101_0101;
         }
         let address = address & !3;
+        if let Some(b) = self.plain(address, 4) {
+            return u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        }
         let b0 = self.read8(address) as u32;
         let b1 = self.read8(address + 1) as u32;
         let b2 = self.read8(address + 2) as u32;

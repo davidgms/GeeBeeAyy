@@ -1163,3 +1163,26 @@ Branch `fix/mgba-suite-timer-irq-io-read`. mGBA suite 3602 -> 4204/6998.
   epilogue now stays at 0x28/0x2C (`init_bios`); test
   `an_irq_handler_from_an_old_save_state_still_returns_through_0x28`. Any
   future BIOS-stub change must keep every address an old state can hold.
+
+## 2026-10-02 - Per-step cost after the timer fix (branch perf/core-after-timer-fix)
+
+- **The PR #60 slowdown was the per-step timer work, not the I/O masks or
+  open bus.** Sampled profile of Mario Tennis (142.7k steps/frame): publishing
+  `TMxCNT_L` one count ahead (`Timer::counters` -> `counter_after_one_cycle`,
+  every step) ~4%, the count-by-count `Timer::tick` loop ~9%, `Gba::step`
+  self +3 points. `read_rule`/open bus did not register. Fixed by a no-overflow
+  fast-forward in `Timer::tick`, a RAM/ROM fast path for `read16`/`read32`
+  (`MemoryBus::plain`), and skipping empty write queues. Host, interleaved,
+  median: Mario Tennis 8.54 (a9d34a8) / 9.40 (master) / 7.64 ms per frame;
+  Yggdra 4.94 / 4.84 / 4.50. Equivalence tests:
+  `ticking_a_slice_at_once_matches_ticking_it_cycle_by_cycle`,
+  `wide_reads_match_the_byte_path`.
+- **`Timer::tick`'s first-IRQ offset is the lowest-numbered timer's, not the
+  earliest.** Timers are processed one after another over the whole slice, so
+  when two timers raise IRQs in one instruction the IRQ delay is timed from
+  the lower index. Only matters for slices long enough to hold two overflows;
+  left as is (behaviour-preserving branch). The equivalence test documents it.
+- **Still per step and inherent to the design:** the four-timer publish into
+  `io_regs` (the bus cannot see the timer, so a read cannot compute it
+  lazily), `apu.tick`, `ppu.tick`. Moving the timer into the bus would make
+  `TMxCNT_L` reads lazy; not worth it for ~3%.

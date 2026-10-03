@@ -242,3 +242,77 @@ fn lowering_the_prescaler_of_a_running_timer_keeps_counting() {
     timer.tick(3, &mut bus);
     assert_eq!(timer.counter(0), 3);
 }
+
+/// `Timer::tick` skips straight to the end of a slice when no overflow falls
+/// in it. That shortcut must be invisible: ticking a slice in one call has to
+/// leave every counter, overflow count and IF bit exactly where ticking it one
+/// cycle at a time does, and report the first IRQ at the same cycle. Random
+/// reloads near 0xFFFF, every prescaler, cascades, start delays and
+/// prescalers changed on running timers, from a fixed seed.
+#[test]
+fn ticking_a_slice_at_once_matches_ticking_it_cycle_by_cycle() {
+    let mut seed = 0x2545_F491_4F6C_DD1Du64;
+    let mut rand = move |n: u32| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % u64::from(n)) as u32
+    };
+    for round in 0..200 {
+        let (mut bus_a, mut bus_b) = (MemoryBus::new(), MemoryBus::new());
+        let (mut bulk, mut stepped) = (Timer::new(), Timer::new());
+        let configure =
+            |bulk: &mut Timer, stepped: &mut Timer, rand: &mut dyn FnMut(u32) -> u32| {
+                let i = rand(4) as usize;
+                let reload = 0xFFFF - rand(300) as u16;
+                let mut control = ENABLE | rand(4) as u16;
+                if rand(2) == 0 {
+                    control |= IRQ;
+                }
+                if i > 0 && rand(3) == 0 {
+                    control |= CASCADE;
+                }
+                for t in [&mut *bulk, &mut *stepped] {
+                    t.set_reload(i, reload);
+                    t.set_control(i, control);
+                }
+                if rand(2) == 0 {
+                    let delay = rand(3);
+                    bulk.delay_start(i, delay);
+                    stepped.delay_start(i, delay);
+                }
+            };
+        for _ in 0..4 {
+            configure(&mut bulk, &mut stepped, &mut rand);
+        }
+        for slice in 0..300 {
+            if rand(40) == 0 {
+                configure(&mut bulk, &mut stepped, &mut rand);
+            }
+            let long = rand(10) == 0;
+            let cycles = 1 + rand(if long { 2000 } else { 12 });
+            let want_irq = bulk.tick(cycles, &mut bus_a);
+            let mut got_irq = None;
+            for c in 1..=cycles {
+                if stepped.tick(1, &mut bus_b).is_some() && got_irq.is_none() {
+                    got_irq = Some(c);
+                }
+            }
+            let at = format!("round {round}, slice {slice} ({cycles} cycles)");
+            // `tick` reports the IRQ of the lowest-numbered timer that raised
+            // one, which is not always the earliest when two timers fire in
+            // one slice, so only the stepped run's earliest is a lower bound.
+            assert_eq!(want_irq.is_some(), got_irq.is_some(), "{at}: IRQ raised");
+            assert!(want_irq >= got_irq, "{at}: IRQ before the first one");
+            assert_eq!(bulk.counters(), stepped.counters(), "{at}: counters");
+            let raw = |t: &Timer| [0, 1, 2, 3].map(|i| t.counter(i));
+            assert_eq!(raw(&bulk), raw(&stepped), "{at}: raw counters");
+            assert_eq!(
+                bulk.drain_overflows(),
+                stepped.drain_overflows(),
+                "{at}: overflows"
+            );
+            assert_eq!(bus_a.read16(IF), bus_b.read16(IF), "{at}: IF");
+        }
+    }
+}

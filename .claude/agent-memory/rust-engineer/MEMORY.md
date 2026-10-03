@@ -18,3 +18,5 @@ Durable facts about the project itself go to `.claude/memory.md` or
 here pointing at it.
 - **2026-10-02** - [Homebrew suite results and harness traps live in .claude/memory.md (2026-10-02 entry)](../../memory.md)
 - **2026-10-02** - [mGBA Timer IRQ / I/O read fixes: CPU vs latched I/O view, fitted IRQ timing (project memory)](../../memory.md)
+- **2026-10-02** - [Profiling without perf: SIGPROF sampler + addr2line; samply refused; inlining read8 was slower](2026-10-02-profiling-without-perf.md)
+- **2026-10-02** - [PR #60 slowdown was per-step timer work; first-IRQ-offset quirk (project memory)](../../memory.md)
