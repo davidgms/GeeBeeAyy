@@ -1114,10 +1114,9 @@ from `temp/roms/` (fetch commands in its header). Results on 2026-10-02:
   The timing numbers are expected for an interpreter without per-access
   waitstates. (Timer IRQ and I/O read were fixed to 90/90 and 130/130 on
   2026-10-02 - see the entry below.)
-- **`bios::arc_tan` panics in debug builds** ("attempt to multiply with
-  overflow", `core/src/bios.rs` ~line 206) on inputs the mGBA BIOS-math suite
-  feeds it. Release wraps silently. The BIOS math is 32-bit wrapping, so the
-  fix is `wrapping_mul`, with a test.
+- `bios::arc_tan` panicked in debug builds on the suite's inputs; fixed with
+  32-bit wrapping arithmetic. (Its coefficients were also wrong - see the
+  2026-10-04 BIOS math entry.)
 
 Two harness traps, so nobody rediscovers them: FuzzARM writes its EWRAM dump
 marker *first* and the rest between slow text draws, so reading on the marker
@@ -1236,7 +1235,43 @@ Memory 1346 -> 1462 from the same fixes); no other sub-suite moved.
 - Save-state v8 appends the four latches; v6/v7 load with latches 0. The tail
   layout is now save_len, cycles, chip (18), latches (16) - `tests/saves.rs`
   hard-codes that offset.
-- **Left in Memory tests**: ROM out-of-bounds reads (CPU and DMA) should
-  return `(address >> 1) & 0xFFFF` per halfword, the bus returns 0; BIOS
-  reads from outside the BIOS should return the last fetched BIOS opcode.
-  Both are bus rules, not DMA ones.
+- The Memory leftovers this left were fixed the same day - see the next
+  entry.
+
+## 2026-10-04 - BIOS math 615/615, multiply long 72/72, Memory 1552/1552
+
+Branch `fix/mgba-suite-bios-mul-memory`. mGBA suite 4715 -> 5135/6998; no
+other sub-suite moved. The fail lists come from the suite's SRAM log.
+
+- **The HLE ArcTan had three wrong coefficients** (0xFB60, 0x16C9, 0x3B10
+  where the BIOS has 0xFB6, 0x16AA, 0x3651; the 0x390 and 0x2081 terms were
+  right). The "series diverges past PI/4, reproduce it" belief came from that
+  bug: hardware returns 0x2000 for tan = 1.0, not 0x59B3. Also: ArcTan uses
+  the whole of r0 (0x0000C000 is +3.0, not -1.0) and returns a sign-extended
+  halfword; the BIOS leaves r1 = `a` and r3 = `b` (series terms), ArcTan2
+  leaves r1 = `a` (or y on an axis) and r3 = 0x170, Div leaves r3 =
+  |quotient|, and x / 0 returns sign(x), r1 = x, r3 = 1 (hangs on hardware
+  for |x| > 1; the HLE does not). `tests/bios.rs` embeds the suite's whole
+  123-row hardware table.
+- **Multiply C is the Booth array's carry, and mGBA does not model it**
+  (its MULL leaves C alone; it fails these 20 suite rows too). The model is
+  zaydlang's bit-level simulation of the multiplier array
+  (github.com/zaydlang/multiplication-algorithm, zlib), translated in
+  `cpu/arm.rs` `booth_carry`, with the zlib notice there and in
+  `THIRD_PARTY_NOTICES.md`. **Never port from NanoBoyAdvance**: its code
+  (including its version of this model) is GPL-3.0, which cannot enter this
+  MIT project. The model covers MUL/MLA and THUMB MUL as well, which no
+  hardware table here checks. V is unchanged.
+  Multiply cycle counts (`mI`) are still the fixed 4/5 approximation.
+- **BIOS read protection is a latch in the bus** (`MemoryBus::bios_latch`):
+  `Cpu::step` refreshes it from the prefetch whenever PC < 0x4000, the HLE
+  SWI path sets 0xE3A02004 (after SWI) / 0xE129F000 (SoftReset), and the IRQ
+  stub's real return prefetch word 0xE55EC002 now sits at 0x144. Not in save
+  states (refreshed by the next SWI/IRQ). This also makes gba-suite's
+  `bios.gba` pass, so `gba_suite_bios` is no longer ignored.
+- **CpuSet/CpuFastSet copy nothing from a source below 0x02000000**, and
+  16-bit CpuSet from an odd source stores the `ldrh`-rotated halfword.
+- **ROM past its end reads `(address >> 1) & 0xFFFF` per halfword**, CPU and
+  DMA alike (the DMA reads through the bus). An unaligned `ldr` from SRAM
+  reads the addressed byte replicated (`read32_rotated` skips the align for
+  the 8-bit save bus).

@@ -33,7 +33,21 @@ pub struct MemoryBus {
     /// fetch reads from the PC, and a PC that is itself in open-bus memory
     /// would re-enter forever: it overflowed the stack on a phone.
     open_bus_busy: std::cell::Cell<bool>,
+    /// The most recent opcode the CPU fetched from the BIOS, which is what a
+    /// BIOS read returns while the CPU runs anywhere else (GBATEK, BIOS ROM
+    /// read protection). `Cpu::step` refreshes it whenever it executes in
+    /// the BIOS, and the HLE SWI path sets the value a real SWI leaves.
+    // ponytail: not in save states; the next SWI or IRQ (every frame in a
+    // game) restores it. Save it if a game is found reading the BIOS.
+    pub(crate) bios_latch: u32,
 }
+
+/// The BIOS read latch after boot or SoftReset: the opcode at [0x0DC+8].
+pub(crate) const BIOS_AFTER_BOOT: u32 = 0xE129_F000;
+/// ... after a SWI returns: [0x188+8].
+pub(crate) const BIOS_AFTER_SWI: u32 = 0xE3A0_2004;
+/// ... after an IRQ returns: [0x13C+8].
+const BIOS_AFTER_IRQ: u32 = 0xE55E_C002;
 
 impl Default for MemoryBus {
     fn default() -> Self {
@@ -61,6 +75,7 @@ impl MemoryBus {
             exec_pc: 0,
             exec_thumb: false,
             open_bus_busy: std::cell::Cell::new(false),
+            bios_latch: 0,
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -151,6 +166,12 @@ impl MemoryBus {
         // re-entered the stub forever (Yggdra Union: 4x the work per frame).
         self.bios[0x28..0x2C].copy_from_slice(&handler[4].to_le_bytes()); // ldmfd
         self.bios[0x2C..0x30].copy_from_slice(&handler[5].to_le_bytes()); // subs pc
+
+        // The real BIOS word at 0x144, never executed here: it is the
+        // prefetch of `subs pc` at 0x13C, so the BIOS read latch holds it
+        // after every IRQ (GBATEK, BIOS ROM: "[013Ch+8] after IRQ").
+        self.bios[0x144..0x148].copy_from_slice(&BIOS_AFTER_IRQ.to_le_bytes());
+        self.bios_latch = BIOS_AFTER_BOOT;
     }
 
     /// VRAM mirrors in 128 KB steps, but the region is 96 KB: the upper 32 KB
@@ -202,7 +223,10 @@ impl MemoryBus {
         // cartridge arm below, where the window lives, to keep it off every
         // other read.
         match address {
-            0x0000_0000..=0x0000_3FFF => self.bios[(address & 0x3FFF) as usize],
+            0x0000_0000..=0x0000_3FFF if self.exec_pc < 0x4000 => {
+                self.bios[(address & 0x3FFF) as usize]
+            }
+            0x0000_0000..=0x0000_3FFF => (self.bios_latch >> ((address & 3) * 8)) as u8,
             0x0200_0000..=0x02FF_FFFF => self.ewram[(address & 0x3_FFFF) as usize],
             0x0300_0000..=0x03FF_FFFF => self.iwram[(address & 0x7FFF) as usize],
             0x0400_0000..=0x04FF_FFFF => {
@@ -232,7 +256,10 @@ impl MemoryBus {
                 if addr < self.rom.len() {
                     self.rom[addr]
                 } else {
-                    0
+                    // Past the end of the cartridge each halfword reads as
+                    // its own address / 2 (GBATEK, Reading from Unused
+                    // Memory; the mGBA suite's ROM out-of-bounds values).
+                    (address >> 1 >> ((address & 1) * 8)) as u8
                 }
             }
             // Cartridge backup. GBATEK, GBA Cart Backup SRAM/FRAM: mapped at
@@ -309,6 +336,11 @@ impl MemoryBus {
         }
     }
 
+    /// Record the opcode the CPU is prefetching while it runs in the BIOS.
+    pub(crate) fn latch_bios_prefetch(&mut self) {
+        self.bios_latch = self.open_bus();
+    }
+
     /// The byte of the open-bus word that a read of `address` lands on.
     fn open_bus_byte(&self, address: u32) -> u8 {
         (self.open_bus() >> ((address & 3) * 8)) as u8
@@ -319,6 +351,11 @@ impl MemoryBus {
     /// offset. Reading the unaligned bytes directly and then rotating gives a
     /// different, wrong answer.
     pub fn read32_rotated(&self, address: u32) -> u32 {
+        // The 8-bit save bus returns the addressed byte on every lane, so
+        // there is no aligned word to rotate.
+        if Self::is_save_region(address) {
+            return self.read32(address);
+        }
         self.read32(address & !3).rotate_right((address & 3) * 8)
     }
 

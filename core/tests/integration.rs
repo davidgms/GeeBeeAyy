@@ -406,6 +406,7 @@ fn wide_reads_match_the_byte_path() {
         0x0300_7FF0,
         0x03FF_FFE0, // IWRAM mirror, top
         0x0800_0FF0, // ROM end, odd size
+        0x0924_68A0, // past the ROM: address-halfword reads
         0x0A00_0000,
         0x0C00_0FF8,
         0x0CFF_FFF0,
@@ -426,4 +427,107 @@ fn wide_reads_match_the_byte_path() {
             assert_eq!(bus.read32(a), want, "read32 {a:08X}");
         }
     }
+}
+
+/// GBATEK, Reading from Unused Memory (and the mGBA suite's "ROM
+/// out-of-bounds load" hardware values): past the end of the cartridge, each
+/// halfword reads as its own address / 2, "the lower 16bit of the address
+/// (shifted right by 1)". It used to read 0.
+#[test]
+fn rom_reads_past_the_end_return_the_address_halfword() {
+    use geebeeayy_core::memory::MemoryBus;
+    let mut bus = MemoryBus::new();
+    bus.load_rom(&[0xAA; 0x100]);
+    // The suite's address: 0x092468AC / 2 = 0x04923456.
+    assert_eq!(bus.read8(0x0924_68AC), 0x56);
+    assert_eq!(bus.read8(0x0924_68AD), 0x34);
+    assert_eq!(bus.read16(0x0924_68AC), 0x3456);
+    assert_eq!(bus.read32(0x0924_68AC), 0x3457_3456);
+    // Same rule in every wait-state mirror, and right at the end of the data.
+    assert_eq!(bus.read16(0x0D24_68AC), 0x3456);
+    assert_eq!(bus.read16(0x0800_0100), 0x0080);
+    assert_eq!(bus.read16(0x0800_00FE), 0xAAAA);
+}
+
+/// The DMA reads the cartridge through the same bus, so the rule reaches it
+/// too (suite "ROM out-of-bounds load", DMA1-3).
+#[test]
+fn a_dma_from_past_the_end_of_rom_reads_the_address_halfword() {
+    let mut gba = Gba::new();
+    let mut rom = vec![0u8; 0x200];
+    rom[..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
+    gba.load_rom(&rom).expect("ROM should load");
+    // DMA3, immediate, one word, 0x092468AC -> IWRAM.
+    gba.bus.write32(0x0400_00D4, 0x0924_68AC);
+    gba.bus.write32(0x0400_00D8, 0x0300_0000);
+    gba.bus.write16(0x0400_00DC, 1);
+    gba.bus.write16(0x0400_00DE, 0x8400);
+    gba.step();
+    assert_eq!(gba.bus.read32(0x0300_0000), 0x3457_3456);
+}
+
+/// GBATEK, BIOS ROM: "the BIOS memory is read-protected ... reading from
+/// BIOS memory is possible only while executing code inside the BIOS".
+/// Outside it the read returns the last opcode the CPU fetched from the
+/// BIOS: 0xE129F000 after boot, 0xE3A02004 after a SWI, 0xE55EC002 after an
+/// IRQ. The suite's "BIOS load" expects 0xE3A02004 right after
+/// VBlankIntrWait.
+#[test]
+fn the_bios_reads_as_its_last_fetched_opcode_from_outside() {
+    use geebeeayy_core::cpu::Cpu;
+    use geebeeayy_core::memory::MemoryBus;
+    let mut bus = MemoryBus::new();
+    let code = [
+        0xE591_0000u32, // ldr r0, [r1]
+        0xEF06_0000,    // swi 0x06 (Div)
+        0xE591_0000,    // ldr r0, [r1]
+        0xE1D1_00B2,    // ldrh r0, [r1, #2]
+        0xE5D1_0001,    // ldrb r0, [r1, #1]
+    ];
+    for (i, &word) in code.iter().enumerate() {
+        bus.write32(0x0300_0000 + i as u32 * 4, word);
+    }
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = 0x0300_0000;
+    cpu.registers[1] = 0;
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], 0xE129_F000, "after boot");
+    cpu.registers[0] = 10;
+    cpu.registers[1] = 3;
+    cpu.step(&mut bus); // swi: r1 = 10 % 3 = 1, so point it back at 0
+    cpu.registers[1] = 0;
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], 0xE3A0_2004, "after a SWI");
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], 0xE3A0, "halfword at 2");
+    cpu.step(&mut bus);
+    assert_eq!(cpu.registers[0], 0x20, "byte at 1");
+}
+
+/// The IRQ path runs the HLE stub from BIOS memory, so the latch follows
+/// its prefetch: after `subs pc, lr, #4` at 0x13C it holds [0x144].
+#[test]
+fn the_bios_latch_after_an_irq_is_the_irq_return_prefetch() {
+    let mut gba = Gba::new();
+    let mut rom = vec![0u8; 0x200];
+    let code: [u32; 5] = [
+        0xEAFF_FFFE, // 0x08000000: b .
+        // The game's IRQ handler; the BIOS leaves r0 = 0x04000000.
+        0xE280_1C02, // add r1, r0, #0x200
+        0xE3A0_2001, // mov r2, #1
+        0xE1C1_20B2, // strh r2, [r1, #2]   ; acknowledge VBlank in IF
+        0xE12F_FF1E, // bx lr
+    ];
+    for (i, &word) in code.iter().enumerate() {
+        rom[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    gba.load_rom(&rom).expect("ROM should load");
+    gba.bus.write32(0x0300_7FFC, 0x0800_0004);
+    gba.bus.write16(0x0400_0004, 0x0008); // DISPSTAT: VBlank IRQ
+    gba.bus.write16(0x0400_0200, 0x0001); // IE: VBlank
+    gba.bus.write16(0x0400_0208, 1); // IME
+    gba.cpu.cpsr &= !0x80; // I clear
+    gba.run_frame();
+    gba.run_frame();
+    assert_eq!(gba.bus.read32(0), 0xE55E_C002);
 }

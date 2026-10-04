@@ -775,3 +775,49 @@ fn bios_math_matches_the_mgba_suite_hardware_table() {
         )
     );
 }
+
+// ---------------------------------------------------------------------------
+// SWI 0x0B / 0x0C: CpuSet / CpuFastSet source rules (mGBA suite, Memory)
+// ---------------------------------------------------------------------------
+
+/// The BIOS refuses to copy from below EWRAM - its own ROM, and the unmapped
+/// space after it - and leaves the destination untouched (suite "BIOS load"
+/// and "Out-of-bounds load" expect 0 for every `swi B`/`swi C` case; mGBA's
+/// HLE has the same guard).
+#[test]
+fn cpu_set_and_cpu_fast_set_ignore_a_source_below_ewram() {
+    for swi in [0x0B, 0x0C] {
+        for src in [0x0000_0000u32, 0x0000_4000, 0x0100_0000, 0x01FF_FFFC] {
+            let mut bus = MemoryBus::new();
+            bus.write32(BASE, arm_swi(swi));
+            // What open bus would return out there: the prefetch at $+8.
+            bus.write32(BASE + 8, 0xDEAD_BEEF);
+            let mut cpu = Cpu::new();
+            cpu.registers[15] = BASE;
+            cpu.registers[..3].copy_from_slice(&[src, DEST, 8 | 1 << 26]);
+            cpu.step(&mut bus);
+            for i in 0..8 {
+                assert_eq!(
+                    bus.read32(DEST + i * 4),
+                    0,
+                    "swi {swi:#x} copied word {i} from {src:#010x}"
+                );
+            }
+        }
+    }
+}
+
+/// The 16-bit CpuSet loop is `ldrh`/`strh`, and an `ldrh` from an odd
+/// address returns the aligned halfword rotated right by 8: the suite's
+/// "swi B 16 (unaligned)" reads 0x00FE00FA from 0xFEEDFACE.
+#[test]
+fn cpu_set_halfwords_from_an_odd_source_are_rotated() {
+    let mut bus = MemoryBus::new();
+    bus.write32(DATA, 0xFEED_FACE);
+    bus.write32(BASE, arm_swi(0x0B));
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[..3].copy_from_slice(&[DATA + 1, DEST, 2]);
+    cpu.step(&mut bus);
+    assert_eq!(bus.read32(DEST), 0x00FE_00FA);
+}

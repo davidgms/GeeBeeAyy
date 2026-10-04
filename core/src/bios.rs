@@ -282,6 +282,12 @@ fn arc_tan2(x: i32, y: i32) -> (u32, Option<u32>) {
     ((angle as u32) & 0xFFFF, Some(a as u32))
 }
 
+/// CpuSet and CpuFastSet copy nothing from below EWRAM: the BIOS protects
+/// its own ROM, and the unmapped space after it goes with it (mGBA suite,
+/// Memory "swi B"/"swi C" expect the destination untouched; mGBA's HLE
+/// refuses the same range).
+const BIOS_COPY_MIN_SOURCE: u32 = 0x0200_0000;
+
 /// SWI 0x0B: CpuSet(r0 = src, r1 = dst, r2 = length/mode).
 ///
 /// GBATEK, BIOS Memory Copy: bits 0-20 are the (half)word count, bit 24 fixes
@@ -291,6 +297,9 @@ fn handle_cpu_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
     let cnt = cpu.reg(2);
+    if src < BIOS_COPY_MIN_SOURCE {
+        return true;
+    }
     let count = cnt & 0x001F_FFFF;
     let fill = cnt & 0x0100_0000 != 0;
     let is_32bit = cnt & 0x0400_0000 != 0;
@@ -303,7 +312,9 @@ fn handle_cpu_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     } else {
         for i in 0..count {
             let src_addr = if fill { src } else { src.wrapping_add(i * 2) };
-            let val = bus.read16(src_addr);
+            // The BIOS loop is `ldrh`, which rotates an odd address's
+            // halfword right by 8; only the low half reaches `strh`.
+            let val = bus.read16(src_addr) >> ((src_addr & 1) * 8);
             bus.write16(dst.wrapping_add(i * 2), val);
         }
     }
@@ -319,6 +330,9 @@ fn handle_cpu_fast_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
     let cnt = cpu.reg(2);
+    if src < BIOS_COPY_MIN_SOURCE {
+        return true;
+    }
     let count = (cnt & 0x001F_FFFF).wrapping_add(7) & !7;
     let fill = cnt & 0x0100_0000 != 0;
     for i in 0..count {

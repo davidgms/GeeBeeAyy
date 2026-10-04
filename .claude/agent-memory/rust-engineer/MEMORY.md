@@ -5,7 +5,7 @@ Newest last. Each line points at the file holding the detail.
 
 - **2026-08-28** - [SUPERSEDED: crate is rustfmt-clean now; clippy -D warnings needed a toolchain lint sweep](2026-08-28-cargo-fmt-reformats-the-whole-crate-this-repo-is-not-rustfmt.md)
 - **2026-08-28** - [Proving "the test comes first" after the fact](2026-08-28-proving-the-test-comes-first-after-the-fact.md)
-- **2026-08-28** - [The BIOS arctan series is deliberately inaccurate past PI/4](2026-08-28-the-bios-arctan-series-is-deliberately-inaccurate-past-pi-4.md)
+- **2026-08-28** - [WRONG, corrected 2026-10-04: the arctan "divergence" was our own bad coefficients](2026-08-28-the-bios-arctan-series-is-deliberately-inaccurate-past-pi-4.md)
 - **2026-08-30** - [DMA was the sixth "complete but unwired" subsystem, and it hid two decode bugs](2026-08-30-dma-was-the-sixth-complete-but-unwired-subsystem-and-it-hid-.md)
 - **2026-08-30** - [The bus cannot own a DMA write, and the reason is the borrow](2026-08-30-the-bus-cannot-own-a-dma-write-and-the-reason-is-the-borrow.md)
 - **2026-08-30** - [`git checkout <file>` is blocked by the sandbox classifier](2026-08-30-git-checkout-file-is-blocked-by-the-sandbox-classifier.md)
@@ -24,3 +24,5 @@ here pointing at it.
 - **2026-10-03** - [Timer count-up root causes: HALT wake granularity, prescaler alignment, IntrWait cost (project memory)](../../memory.md)
 - **2026-10-04** - [mGBA suite FAIL list is in SRAM; git-archive A/B bench](2026-10-04-mgba-suite-fail-list-is-in-sram.md)
 - **2026-10-04** - [DMA latch, ROM-increment, alignment rules (project memory)](../../memory.md)
+- **2026-10-04** - [Licence check before porting (NBA is GPL, mGBA MPL); source without auth; suite table -> test](2026-10-04-reference-sources-and-hardware-tables.md)
+- **2026-10-04** - [BIOS math coefficients, multiply carry model, BIOS read latch (project memory)](../../memory.md)
