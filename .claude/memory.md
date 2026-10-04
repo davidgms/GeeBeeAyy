@@ -55,7 +55,13 @@ Answer hardware questions from these rather than from memory:
 - TONC - https://www.coranac.com/tonc/text/toc.htm - the programmer's view.
 - ARM7TDMI TRM - https://developer.arm.com/documentation/ddi0029/
 - mGBA, SkyEmu, NanoBoyAdvance - reference implementations worth reading when
-  a behaviour is ambiguous.
+  a behaviour is ambiguous. **Read them for behaviour, never copy or translate
+  their code**: GeeBeeAyy is MIT, mGBA is MPL-2.0 (file-level copyleft) and
+  NanoBoyAdvance GPL-3.0. Derive code from GBATEK and hardware test tables;
+  port only permissively licensed originals, with their notice in the source
+  and in `THIRD_PARTY_NOTICES.md`. On 2026-10-04 the multiply-carry model
+  (ported from NBA) and the HLE Div/ArcTan/ArcTan2 (shaped after mGBA's
+  `bios.c`) were both rewritten for this reason before merge.
 
 ## Discoveries
 
