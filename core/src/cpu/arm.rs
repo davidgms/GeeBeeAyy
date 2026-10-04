@@ -29,10 +29,10 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         return branch_link_exchange_rm(instruction, cpu);
     }
 
-    // Software Breakpoint (BLX_imm) — bits [27:24]=1001, bits [7:4]=0011
+    // Software Breakpoint (BLX_imm) - bits [27:24]=1001, bits [7:4]=0011
     // Treat as NOP for now
 
-    // Multiply Long / Multiply — bits [27:21] = 000_01xx to 000_00xx, bits [7:4] = 1001
+    // Multiply Long / Multiply - bits [27:21] = 000_01xx to 000_00xx, bits [7:4] = 1001
     if (instruction >> 4) & 0xF == 0x9 {
         let opcode_bits = (instruction >> 20) & 0xFF;
         match opcode_bits {
@@ -46,7 +46,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
     }
 
-    // Halfword / signed Data Transfer — bits [27:25]=000, bit [7]=1, bit [4]=1,
+    // Halfword / signed Data Transfer - bits [27:25]=000, bit [7]=1, bit [4]=1,
     // SH != 00 (SH == 00 is SWP, handled above).
     // Must be tested before PSR Transfer: a pre-indexed, down-counting STRH has
     // the same bits [24:23]=10 / bit [20]=0 pattern that MSR matches on.
@@ -58,7 +58,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         return halfword_data_transfer(instruction, cpu, bus);
     }
 
-    // PSR Transfer — bits [27:26]=00, bits [24:23]=10, bit [20]=0
+    // PSR Transfer - bits [27:26]=00, bits [24:23]=10, bit [20]=0
     if (instruction >> 26) & 0x3 == 0b00
         && (instruction >> 23) & 0x3 == 0b10
         && (instruction >> 20) & 1 == 0
@@ -71,7 +71,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         }
     }
 
-    // Data Processing — bits [27:26]=00, and not one of the multiply, swap or
+    // Data Processing - bits [27:26]=00, and not one of the multiply, swap or
     // halfword encodings, which are the only [27:26]=00 forms with both bit 7
     // and bit 4 set. Those were all matched above.
     //
@@ -89,12 +89,12 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         return data_processing(instruction, cpu);
     }
 
-    // Single Data Transfer — bits [27:26]=01
+    // Single Data Transfer - bits [27:26]=01
     if (instruction >> 26) & 0x3 == 0b01 {
         return single_data_transfer(instruction, cpu, bus);
     }
 
-    // Undefined instruction — bits [27:25]=01, bit [4]=1, bit [7]=1
+    // Undefined instruction - bits [27:25]=01, bit [4]=1, bit [7]=1
     if (instruction >> 25) & 0x7 == 0b011
         && (instruction >> 4) & 1 == 1
         && (instruction >> 7) & 1 == 1
@@ -103,12 +103,12 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         return 1;
     }
 
-    // Block Data Transfer — bits [27:25]=100
+    // Block Data Transfer - bits [27:25]=100
     if (instruction >> 25) & 0x7 == 0b100 {
         return block_data_transfer(instruction, cpu, bus);
     }
 
-    // Branch — bits [27:25]=101
+    // Branch - bits [27:25]=101
     if (instruction >> 25) & 0x7 == 0b101 {
         return branch(instruction, cpu);
     }

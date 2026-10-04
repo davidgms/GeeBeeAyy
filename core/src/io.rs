@@ -206,7 +206,7 @@ pub fn read_rule(offset: usize) -> IoRead {
     }
 }
 
-/// I/O register handler — decodes reads/writes to hardware registers.
+/// I/O register handler - decodes reads/writes to hardware registers.
 pub struct IoHandler {
     pub ie: u16,
     pub if_: u16,
