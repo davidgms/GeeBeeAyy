@@ -22,3 +22,5 @@ here pointing at it.
 - **2026-10-02** - [PR #60 slowdown was per-step timer work; first-IRQ-offset quirk (project memory)](../../memory.md)
 - **2026-10-03** - [Replaying a test ROM's own code (dispatcher included) in a ROM-free test](2026-10-03-replaying-a-test-rom-s-own-code-in-a-unit-test.md)
 - **2026-10-03** - [Timer count-up root causes: HALT wake granularity, prescaler alignment, IntrWait cost (project memory)](../../memory.md)
+- **2026-10-04** - [mGBA suite FAIL list is in SRAM; git-archive A/B bench](2026-10-04-mgba-suite-fail-list-is-in-sram.md)
+- **2026-10-04** - [DMA latch, ROM-increment, alignment rules (project memory)](../../memory.md)

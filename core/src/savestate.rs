@@ -14,7 +14,13 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// v7 appended the save chip's command state (Flash state machine, bank and
 /// ID mode; EEPROM serial phase and address). v6 still loads, leaving the
 /// chip as it was.
-const SAVE_VERSION: u32 = 7;
+/// v8 appended the four DMA channel latches (what a DMA read of the BIOS
+/// returns). v6 and v7 still load, with the latches cleared.
+const SAVE_VERSION: u32 = 8;
+
+/// Bytes the v8 DMA latch block takes at the end of a state.
+#[cfg(test)]
+const DMA_LATCHES_LEN: usize = 16;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -142,6 +148,10 @@ impl SaveState {
         write_u64(&mut buf, gba.cycles);
 
         buf.extend_from_slice(&gba.bus.cart.chip_state());
+
+        for ch in &gba.dma.channels {
+            write_u32(&mut buf, ch.latch);
+        }
 
         SaveState { data: buf }
     }
@@ -315,6 +325,14 @@ impl SaveState {
                 .cart
                 .restore_chip_state(&chip)
                 .map_err(SaveStateError::Corrupt)?;
+        }
+
+        for ch in &mut gba.dma.channels {
+            ch.latch = if version >= 8 {
+                read_u32(&mut cursor)?
+            } else {
+                0
+            };
         }
 
         Ok(())
@@ -555,7 +573,8 @@ mod tests {
     fn a_hostile_chip_state_is_rejected() {
         let mut state = SaveState::create(&machine_with(b"EEPROM_V124"));
         let len = state.data.len();
-        let chip = &mut state.data[len - crate::cart::CHIP_STATE_LEN..];
+        let chip_at = len - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
+        let chip = &mut state.data[chip_at..];
         chip[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes()); // EEPROM block
         let mut target = machine_with(b"EEPROM_V124");
         assert!(matches!(
@@ -565,13 +584,44 @@ mod tests {
         target.run_frame();
     }
 
+    /// A DMA reading the BIOS returns its channel's last value, so the four
+    /// latches are machine state.
+    #[test]
+    fn the_dma_latches_survive_a_save_state() {
+        let state = state_with(|gba| {
+            for (i, ch) in gba.dma.channels.iter_mut().enumerate() {
+                ch.latch = 0x1111_1111 * (i as u32 + 1);
+            }
+        });
+        let mut target = Gba::new();
+        state.restore(&mut target).expect("state should load");
+        let latches: Vec<u32> = target.dma.channels.iter().map(|c| c.latch).collect();
+        assert_eq!(
+            latches,
+            [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444]
+        );
+    }
+
+    /// v7 had no DMA latches. It still loads, and does not keep the latches
+    /// of whatever the machine was running before.
+    #[test]
+    fn a_version_7_state_still_loads_with_clear_latches() {
+        let mut state = SaveState::create(&Gba::new());
+        state.data.truncate(state.data.len() - DMA_LATCHES_LEN);
+        state.data[4..8].copy_from_slice(&7u32.to_le_bytes());
+        let mut target = Gba::new();
+        target.dma.channels[1].latch = 0xDEAD_BEEF;
+        state.restore(&mut target).expect("v7 state should load");
+        assert_eq!(target.dma.channels[1].latch, 0);
+    }
+
     /// v6 had no chip block. It still loads.
     #[test]
     fn a_version_6_state_still_loads() {
         let mut state = SaveState::create(&machine_with(b"FLASH1M_V103"));
         state
             .data
-            .truncate(state.data.len() - crate::cart::CHIP_STATE_LEN);
+            .truncate(state.data.len() - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN);
         state.data[4..8].copy_from_slice(&6u32.to_le_bytes());
         assert!(state.restore(&mut machine_with(b"FLASH1M_V103")).is_ok());
     }

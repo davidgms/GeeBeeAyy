@@ -1,6 +1,7 @@
 /// DMAxCNT_H offsets from 0x04000000, one per channel.
 const DMA_CNT_H: [usize; 4] = [0x0BA, 0x0C6, 0x0D2, 0x0DE];
 
+#[derive(Default)]
 pub struct DmaChannel {
     pub source: u32,
     pub dest: u32,
@@ -18,6 +19,44 @@ pub struct DmaChannel {
     pub src_fixed: bool,
     pub dst_fixed: bool,
     pub dst_reload: bool,
+    /// The last unit this channel moved, halfwords on both halves. A read the
+    /// DMA cannot make returns it (see [`DmaChannel::fetch`]).
+    pub latch: u32,
+}
+
+impl DmaChannel {
+    /// Read one unit from the source into [`Self::latch`] and advance the
+    /// source. Two rules from the mGBA suite's hardware results (src/dma.c),
+    /// neither spelled out by GBATEK:
+    ///
+    /// - A source below EWRAM - the BIOS, unmapped 0x00004000-0x01FFFFFF, and
+    ///   for DMA0 any ROM address, which its 27-bit mask folds down there - is
+    ///   not read at all: the latch keeps the channel's previous value. The
+    ///   BIOS read protection GBATEK describes is the CPU's, not the DMA's.
+    /// - A gamepak ROM source (0x08000000-0x0DFFFFFF) always increments,
+    ///   whatever bits 7-8 say.
+    fn fetch(&mut self, bus: &mut super::memory::MemoryBus, word: bool) {
+        let source = self.source;
+        if source >= 0x0200_0000 {
+            self.latch = if word {
+                bus.read32(source)
+            } else {
+                // `read16_mut` so an EEPROM read advances its state machine.
+                // DMA is the only way a game reaches EEPROM at all.
+                u32::from(bus.read16_mut(source)) * 0x0001_0001
+            };
+        }
+        let width = if word { 4 } else { 2 };
+        let in_rom = (0x0800_0000..0x0E00_0000).contains(&source);
+        // 0 = increment, 1 = decrement, 2 = fixed, 3 = prohibited (acts as
+        // increment).
+        self.source = match self.src_adj {
+            _ if in_rom => source.wrapping_add(width),
+            1 => source.wrapping_sub(width),
+            2 => source,
+            _ => source.wrapping_add(width),
+        };
+    }
 }
 
 pub struct Dma {
@@ -34,80 +73,7 @@ impl Default for Dma {
 impl Dma {
     pub fn new() -> Self {
         Self {
-            channels: [
-                DmaChannel {
-                    source: 0,
-                    dest: 0,
-                    count: 0,
-                    control: 0,
-                    enabled: false,
-                    word_count: 0,
-                    src_adj: 0,
-                    dst_adj: 0,
-                    repeat: false,
-                    transfer_type: false,
-                    timing: 0,
-                    irq_on_end: false,
-                    enable: false,
-                    src_fixed: false,
-                    dst_fixed: false,
-                    dst_reload: false,
-                },
-                DmaChannel {
-                    source: 0,
-                    dest: 0,
-                    count: 0,
-                    control: 0,
-                    enabled: false,
-                    word_count: 0,
-                    src_adj: 0,
-                    dst_adj: 0,
-                    repeat: false,
-                    transfer_type: false,
-                    timing: 0,
-                    irq_on_end: false,
-                    enable: false,
-                    src_fixed: false,
-                    dst_fixed: false,
-                    dst_reload: false,
-                },
-                DmaChannel {
-                    source: 0,
-                    dest: 0,
-                    count: 0,
-                    control: 0,
-                    enabled: false,
-                    word_count: 0,
-                    src_adj: 0,
-                    dst_adj: 0,
-                    repeat: false,
-                    transfer_type: false,
-                    timing: 0,
-                    irq_on_end: false,
-                    enable: false,
-                    src_fixed: false,
-                    dst_fixed: false,
-                    dst_reload: false,
-                },
-                DmaChannel {
-                    source: 0,
-                    dest: 0,
-                    count: 0,
-                    control: 0,
-                    enabled: false,
-                    word_count: 0,
-                    src_adj: 0,
-                    dst_adj: 0,
-                    repeat: false,
-                    transfer_type: false,
-                    timing: 0,
-                    irq_on_end: false,
-                    enable: false,
-                    src_fixed: false,
-                    dst_fixed: false,
-                    dst_reload: false,
-                },
-            ],
+            channels: Default::default(),
             hblank_fired: false,
         }
     }
@@ -211,37 +177,29 @@ impl Dma {
             ch.count as u32
         };
         let word_size = ch.word_count;
-        let src_adj = ch.src_adj;
+        let word = word_size == 4;
         let dst_adj = ch.dst_adj;
         let dst_save = ch.dest;
-        let source = ch.source;
-        let dest = ch.dest;
 
         // EEPROM reads the command's address width off the transfer length,
         // so it has to be told before the first bit is clocked. Either end of
         // the transfer can be the chip: a write DMAs into it, a read out of
         // it.
-        bus.eeprom_begin_dma(dest, count as usize);
-        bus.eeprom_begin_dma(source, count as usize);
+        bus.eeprom_begin_dma(ch.dest, count as usize);
+        bus.eeprom_begin_dma(ch.source, count as usize);
 
         for _ in 0..count {
-            if word_size == 4 {
-                let val = bus.read32(ch.source);
-                bus.write32(ch.dest, val);
+            ch.fetch(bus, word);
+            if word {
+                bus.write32(ch.dest, ch.latch);
             } else {
-                // `read16_mut` so an EEPROM read advances its state machine.
-                // DMA is the only way a game reaches EEPROM at all.
-                let val = bus.read16_mut(ch.source);
-                bus.write16(ch.dest, val);
+                // A halfword store of the 32-bit latch drives the lane its
+                // address selects. Only a word latched before a halfword read
+                // it could not make tells the two halves apart.
+                bus.write16(ch.dest, (ch.latch >> (8 * (ch.dest & 2))) as u16);
             }
 
-            // 0 = increment, 1 = decrement, 2 = fixed, 3 = increment/reload
-            // (destination only; prohibited on the source).
-            match src_adj {
-                1 => ch.source = ch.source.wrapping_sub(word_size),
-                2 => {}
-                _ => ch.source = ch.source.wrapping_add(word_size),
-            }
+            // 0 = increment, 1 = decrement, 2 = fixed, 3 = increment/reload.
             match dst_adj {
                 1 => ch.dest = ch.dest.wrapping_sub(word_size),
                 2 => {}
@@ -343,16 +301,10 @@ impl Dma {
 
         let mut data = Vec::with_capacity(16);
         for _ in 0..4 {
-            let val = bus.read32(ch.source);
-            data.extend_from_slice(&val.to_le_bytes());
-            // src_adj, not an unconditional increment: DMACNT bits 7-8 pick
-            // increment / decrement / fixed for the source the same way they
-            // do for an ordinary transfer.
-            ch.source = match ch.src_adj {
-                1 => ch.source.wrapping_sub(4),
-                2 => ch.source,
-                _ => ch.source.wrapping_add(4),
-            };
+            // The same source rules as an ordinary transfer: bits 7-8 pick
+            // the direction, except in ROM, and the latch is updated.
+            ch.fetch(bus, true);
+            data.extend_from_slice(&ch.latch.to_le_bytes());
         }
 
         // FIFO DMA is the only path this function serves, and it never raised

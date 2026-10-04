@@ -246,3 +246,160 @@ fn sound_dma_raises_its_interrupt_when_the_channel_asked_for_one() {
         "a FIFO transfer with IRQ enabled never set IF bit 9"
     );
 }
+
+// --- Source rules from the mGBA suite's DMA tests (src/dma.c) ----------------
+//
+// Its hardware-recorded expectations settle two things GBATEK does not spell
+// out: a gamepak ROM source always increments, and a DMA read of the BIOS or
+// of anything below EWRAM returns the channel's own last transferred value.
+
+const ENABLE: u16 = 0x8000;
+const WORD: u16 = 0x0400;
+const SRC_DEC: u16 = 1 << 7;
+const SRC_FIXED: u16 = 2 << 7;
+const DST_FIXED: u16 = 2 << 5;
+
+/// The suite's `srcR` table, 0xDEADBEEC.. 0xDEADBEF2, at ROM offset 0x100.
+const ROM_TABLE: u32 = 0x0800_0100;
+
+/// A spinning machine whose ROM carries `srcR` at [`ROM_TABLE`].
+fn gba_with_rom_table() -> Gba {
+    let mut data = rom(&[0xEAFF_FFFE]);
+    for i in 0..7u32 {
+        let at = 0x100 + i as usize * 4;
+        data[at..at + 4].copy_from_slice(&(0xDEAD_BEEC + i).to_le_bytes());
+    }
+    let mut gba = Gba::new();
+    gba.load_rom(&data).expect("ROM should load");
+    gba
+}
+
+/// Configure a channel and let the next step start it.
+fn transfer(gba: &mut Gba, ch: usize, src: u32, dst: u32, count: u16, control: u16) {
+    configure(gba, ch, src, dst, count, control);
+    gba.step();
+}
+
+/// Suite "N Imm W =ROM/=IWRAM" and "N Imm W -ROM/=IWRAM": four words from
+/// `&srcR[3]` into one fixed word end on 0xDEADBEF2 - the source walked up
+/// through the table whatever its address control said.
+#[test]
+fn a_rom_source_increments_even_when_fixed_or_decrementing() {
+    for ch in 1..4 {
+        for (mode, name) in [(SRC_FIXED, "fixed"), (SRC_DEC, "decrementing")] {
+            let mut gba = gba_with_rom_table();
+            let control = ENABLE | WORD | mode | DST_FIXED;
+            transfer(&mut gba, ch, ROM_TABLE + 12, 0x0300_0000, 4, control);
+            assert_eq!(
+                gba.bus.read32(0x0300_0000),
+                0xDEAD_BEF2,
+                "DMA{ch}, {name} ROM source: the address did not increment"
+            );
+        }
+    }
+}
+
+/// Suite "N Imm H =ROM/=IWRAM": halfwords BEEF, DEAD, BEF0, DEAD.
+#[test]
+fn a_fixed_rom_source_increments_in_halfwords_too() {
+    let mut gba = gba_with_rom_table();
+    transfer(
+        &mut gba,
+        3,
+        ROM_TABLE + 12,
+        0x0300_0000,
+        4,
+        ENABLE | SRC_FIXED | DST_FIXED,
+    );
+    assert_eq!(gba.bus.read16(0x0300_0000), 0xDEAD);
+}
+
+/// Suite "N Imm H/W =BIOS/...", "R+0x10": a DMA cannot read the BIOS (nor
+/// anything else below EWRAM) and gets its last transferred value instead.
+/// A halfword is latched on both halves. GBATEK's BIOS read protection
+/// ("the most recent successfully fetched BIOS opcode") describes the CPU;
+/// the suite shows a DMA sees its own latch.
+#[test]
+fn a_dma_read_below_ewram_returns_the_channels_last_value() {
+    for src in [0x0000_000C, 0x0000_0010, 0x0000_4000, 0x0100_0000] {
+        let mut gba = spinning_gba();
+        gba.bus.write16(0x0200_0000, 0xBABE);
+        transfer(&mut gba, 3, 0x0200_0000, 0x0200_0100, 1, ENABLE);
+
+        transfer(&mut gba, 3, src, 0x0200_0200, 2, ENABLE | WORD);
+        assert_eq!(
+            gba.bus.read32(0x0200_0200),
+            0xBABE_BABE,
+            "word from {src:#X}"
+        );
+        assert_eq!(
+            gba.bus.read32(0x0200_0204),
+            0xBABE_BABE,
+            "word from {src:#X}"
+        );
+
+        transfer(&mut gba, 3, src, 0x0200_0300, 1, ENABLE);
+        assert_eq!(
+            gba.bus.read16(0x0200_0300),
+            0xBABE,
+            "halfword from {src:#X}"
+        );
+    }
+}
+
+/// Suite "0 Imm W =ROM/...": DMA0's source is 27 bits, so a ROM address
+/// lands below EWRAM and the channel reads its latch.
+#[test]
+fn dma0_cannot_read_rom_and_returns_its_latch() {
+    let mut gba = gba_with_rom_table();
+    gba.bus.write16(0x0300_0000, 0xCAFE);
+    transfer(&mut gba, 0, 0x0300_0000, 0x0300_0100, 1, ENABLE);
+    transfer(&mut gba, 0, ROM_TABLE, 0x0300_0200, 1, ENABLE | WORD);
+    assert_eq!(gba.bus.read32(0x0300_0200), 0xCAFE_CAFE);
+}
+
+/// The suite skips "0 Imm W R+0x10" because "DMA 0 R+0x10 would latch based
+/// on the last DMA 0 test": the latch belongs to the channel, not the bus.
+#[test]
+fn each_channel_keeps_its_own_latch() {
+    let mut gba = spinning_gba();
+    gba.bus.write16(0x0200_0000, 0x1111);
+    gba.bus.write16(0x0200_0002, 0x2222);
+    transfer(&mut gba, 1, 0x0200_0000, 0x0200_0100, 1, ENABLE);
+    transfer(&mut gba, 2, 0x0200_0002, 0x0200_0100, 1, ENABLE);
+    transfer(&mut gba, 1, 0x0000_0010, 0x0200_0200, 1, ENABLE | WORD);
+    assert_eq!(gba.bus.read32(0x0200_0200), 0x1111_1111);
+}
+
+/// A halfword written from a word latch takes the lane its destination sits
+/// on, as a 16-bit store of the 32-bit bus value does.
+#[test]
+fn a_halfword_from_a_word_latch_takes_the_destination_lane() {
+    let mut gba = gba_with_rom_table();
+    transfer(&mut gba, 3, ROM_TABLE + 24, 0x0200_0000, 1, ENABLE | WORD);
+    transfer(&mut gba, 3, 0x0000_0010, 0x0200_0100, 2, ENABLE);
+    assert_eq!(gba.bus.read16(0x0200_0100), 0xBEF2);
+    assert_eq!(gba.bus.read16(0x0200_0102), 0xDEAD);
+}
+
+/// mGBA suite, Memory tests "SRAM load/store | DMAn 32 (unaligned k)": a DMA
+/// drops the low address bits its unit width cannot address. Only the 8-bit
+/// SRAM bus shows it, because there the CPU's own wide access keeps them.
+#[test]
+fn a_dma_aligns_its_addresses_to_the_unit_width() {
+    let mut data = rom(&[0xEAFF_FFFE]);
+    data[0x100..0x109].copy_from_slice(b"SRAM_V113");
+    let mut gba = Gba::new();
+    gba.load_rom(&data).expect("ROM should load");
+    gba.bus.write8(0x0E00_0000, 0x47);
+    gba.bus.write8(0x0E00_0001, 0x61);
+
+    transfer(&mut gba, 3, 0x0E00_0001, 0x0200_0000, 1, ENABLE | WORD);
+    assert_eq!(gba.bus.read32(0x0200_0000), 0x4747_4747, "word source");
+    transfer(&mut gba, 3, 0x0E00_0001, 0x0200_0100, 1, ENABLE);
+    assert_eq!(gba.bus.read16(0x0200_0100), 0x4747, "halfword source");
+
+    gba.bus.write32(0x0200_0200, 0x0000_66D8);
+    transfer(&mut gba, 3, 0x0200_0200, 0x0E00_0011, 1, ENABLE | WORD);
+    assert_eq!(gba.bus.read8(0x0E00_0010), 0xD8, "word destination");
+}
