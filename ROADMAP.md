@@ -635,7 +635,14 @@ and their PR and issue history.
       wakes on the timer overflow instead of the next PPU event, prescaled
       timers count on global prescaler edges, and the HLE `IntrWait` pays the
       BIOS's return path after a wake.
-- [ ] **BIOS math 305/615, SIO, Timing** - Timing needs per-access wait states.
+- [x] **DMA 1056/1244 -> 1244/1244, Memory 1346 -> 1462** (#65; total 4715).
+      Per-channel DMA latch, ROM sources always increment, unit alignment.
+      Save state version 8; v6 and v7 still load.
+- [ ] **Memory 1462/1552** - out-of-bounds ROM reads should return
+      `(address >> 1) & 0xFFFF`; CPU reads of the BIOS from outside it should
+      return the last BIOS opcode.
+- [ ] **BIOS math 305/615, Multiply long 52/72, SIO, Timing** - Timing needs
+      per-access wait states.
 - [x] **Per-instruction cost rose ~10% in #60** - won back and more in #62:
       Mario Tennis 9.40 -> 7.64 ms per frame on the host (8.54 before #60);
       on the Mi 10T Pro CPU fell from 121-135% to 106-110% of a core.
