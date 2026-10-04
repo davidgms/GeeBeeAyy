@@ -1,3 +1,13 @@
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SioMode {
+    Normal8,
+    Normal32,
+    Multi,
+    Uart,
+    Gpio,
+    Joy,
+}
+
 pub struct MemoryBus {
     ewram: Vec<u8>,
     iwram: Vec<u8>,
@@ -288,8 +298,73 @@ impl MemoryBus {
                     0
                 }
             }
+            // SIOCNT's read-only status bits, with no link cable attached
+            // (GBATEK, GBA Communication Ports): normal mode reads SI high,
+            // multiplayer reads SI and SD high, UART reads "receive FIFO
+            // empty". Values from the mGBA suite's SIO register table.
+            0x128 => {
+                self.io_regs[0x128]
+                    | match self.sio_mode() {
+                        SioMode::Normal8 | SioMode::Normal32 => 0x04,
+                        SioMode::Multi => 0x0C,
+                        SioMode::Uart => 0x20,
+                        SioMode::Gpio | SioMode::Joy => 0,
+                    }
+            }
+            // UART's SIODATA8 is the receive FIFO, and it is empty.
+            0x12A | 0x12B if self.sio_mode() == SioMode::Uart => 0,
+            // RCNT bits 0-3 are the SC/SD/SI/SO pin levels. Only general
+            // purpose mode drives them from the register; otherwise they
+            // are what the idle port shows: normal mode SC and SI high and SO
+            // from SIOCNT bit 3, JOY bus SI and SO high, the rest all high.
+            0x134 => {
+                let stored = self.io_regs[0x134];
+                let pins = match self.sio_mode() {
+                    SioMode::Gpio => stored & 0x0F,
+                    SioMode::Normal8 | SioMode::Normal32 => 0x05 | (self.io_regs[0x128] & 0x08),
+                    SioMode::Joy => 0x0C,
+                    SioMode::Multi | SioMode::Uart => 0x0F,
+                };
+                (stored & 0xF0) | pins
+            }
             _ => self.io_regs[offset],
         }
+    }
+
+    /// The serial port mode RCNT bits 14-15 and SIOCNT bits 12-13 select.
+    fn sio_mode(&self) -> SioMode {
+        match (self.io_regs[0x135] >> 6, (self.io_regs[0x129] >> 4) & 3) {
+            (2, _) => SioMode::Gpio,
+            (3, _) => SioMode::Joy,
+            (_, 0) => SioMode::Normal8,
+            (_, 1) => SioMode::Normal32,
+            (_, 2) => SioMode::Multi,
+            _ => SioMode::Uart,
+        }
+    }
+
+    /// A store to the serial registers, 0x120-0x15F, with the writable bits
+    /// the mGBA suite's hardware table shows. False leaves the byte to the
+    /// plain `io_regs` store.
+    fn sio_store(&mut self, offset: usize, value: u8) -> bool {
+        let stored = match offset {
+            // SIODATA32 is writable in 32-bit normal mode only; in the other
+            // modes these are the received SIOMULTI0/1, as SIOMULTI2/3 are
+            // in every mode.
+            0x120..=0x123 if self.sio_mode() == SioMode::Normal32 => value,
+            0x120..=0x127 => return true,
+            0x128 => value & 0x8F,
+            0x129 => value & 0x7F,
+            0x135 => value & 0xC1,
+            // JOYCNT: bits 0-2 are acknowledged by writing 1, bit 6 is R/W.
+            0x140 => (self.io_regs[0x140] & 0x07 & !value) | (value & 0x40),
+            0x141 => 0,
+            // JOY_RECV and JOY_TRANS read zero without a JOY bus host.
+            0x150..=0x157 => return true,
+            _ => return false,
+        };
+        self.io_regs[offset] = stored;
+        true
     }
 
     /// The I/O byte at `address` as latched, for the PPU and APU.
@@ -511,6 +586,8 @@ impl MemoryBus {
                     self.waitcnt = (self.waitcnt & 0xFF00) | (value as u16);
                 } else if offset == 0x205 {
                     self.waitcnt = (self.waitcnt & 0x00FF) | ((value as u16) << 8);
+                } else if (0x120..0x160).contains(&offset) && self.sio_store(offset, value) {
+                    return;
                 }
                 self.io_regs[offset] = value;
                 match offset {
