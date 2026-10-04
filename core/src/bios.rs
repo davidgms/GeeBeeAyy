@@ -165,37 +165,37 @@ fn handle_vblank_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     handle_intr_wait(cpu, bus)
 }
 
+/// SWI 06h: Div(r0 = numerator, r1 = denominator).
 fn handle_div(cpu: &mut Cpu) -> bool {
-    let numerator = cpu.reg(0) as i32;
-    let denominator = cpu.reg(1) as i32;
-    if denominator == 0 {
-        cpu.set_reg(0, 0);
-        cpu.set_reg(1, 0);
-    } else {
-        // `wrapping_*`, not `/` and `%`: the ARM7TDMI BIOS returns
-        // 0x80000000 for INT_MIN / -1, where Rust's `i32::div` panics with
-        // "attempt to divide with overflow" in release as well as debug -
-        // which aborts the whole process through JNI.
-        cpu.set_reg(0, numerator.wrapping_div(denominator) as u32);
-        cpu.set_reg(1, numerator.wrapping_rem(denominator) as u32);
-    }
-    true
+    div(cpu, cpu.reg(0) as i32, cpu.reg(1) as i32)
 }
 
+/// SWI 07h: DivArm, the same with the operands swapped.
 fn handle_div_arm(cpu: &mut Cpu) -> bool {
-    let denominator = cpu.reg(0) as i32;
-    let numerator = cpu.reg(1) as i32;
-    if denominator == 0 {
-        cpu.set_reg(0, 0);
-        cpu.set_reg(1, 0);
+    div(cpu, cpu.reg(1) as i32, cpu.reg(0) as i32)
+}
+
+/// GBATEK, Div: r0 = number DIV denom, r1 = number MOD denom, r3 =
+/// ABS(number DIV denom). GBATEK leaves the edge cases open; the mGBA suite's
+/// hardware table settles them:
+/// - INT_MIN / -1 wraps: r0 = r3 = 0x80000000, r1 = 0.
+/// - x / 0 for x in {0, 1, -1} returns r0 = 1, 1, -1, with r1 = x and r3 = 1.
+///   For larger |x| the real BIOS never returns; the HLE extends the observed
+///   pattern (sign of x, never 0) instead of hanging the machine.
+fn div(cpu: &mut Cpu, numerator: i32, denominator: i32) -> bool {
+    let (quotient, remainder) = if denominator == 0 {
+        (numerator.signum() | 1, numerator)
     } else {
-        // `wrapping_*`, not `/` and `%`: the ARM7TDMI BIOS returns
-        // 0x80000000 for INT_MIN / -1, where Rust's `i32::div` panics with
-        // "attempt to divide with overflow" in release as well as debug -
-        // which aborts the whole process through JNI.
-        cpu.set_reg(0, numerator.wrapping_div(denominator) as u32);
-        cpu.set_reg(1, numerator.wrapping_rem(denominator) as u32);
-    }
+        // `wrapping_*`: Rust's `/` panics on INT_MIN / -1 even in release,
+        // which would abort the whole process through JNI.
+        (
+            numerator.wrapping_div(denominator),
+            numerator.wrapping_rem(denominator),
+        )
+    };
+    cpu.set_reg(0, quotient as u32);
+    cpu.set_reg(1, remainder as u32);
+    cpu.set_reg(3, quotient.wrapping_abs() as u32);
     true
 }
 
@@ -206,74 +206,80 @@ fn handle_sqrt(cpu: &mut Cpu) -> bool {
     true
 }
 
-/// The BIOS arc tangent polynomial.
+/// The BIOS ArcTan polynomial's constants, highest order first, 1.14 fixed
+/// point. GBATEK documents the interface only; these are constants of the
+/// BIOS ROM's routine, and every ArcTan/ArcTan2 row of the mGBA suite's
+/// hardware table (`bios_math_matches_the_mgba_suite_hardware_table`) checks
+/// them - changing any one of them fails rows.
+const ARCTAN_COEFFICIENTS: [i32; 8] = [0xA9, 0x390, 0x91C, 0xFB6, 0x16AA, 0x2081, 0x3651, 0xA2F9];
+
+/// The arc tangent of a 1.14 fixed-point `tan`, as `(angle, a, b)`.
 ///
-/// GBATEK, BIOS Arithmetic Functions: the argument is a 16bit fixed point tan
-/// (1 sign bit, 1 integral bit, 14 fractional bits) and the result covers
-/// -PI/2..PI/2 as C000h..4000h, i.e. a full turn is 10000h. GBATEK also warns
-/// that "there is a problem in accuracy with THETA<-PI/4, PI/4<THETA": the
-/// series below genuinely diverges past tan = 1.0, and that inaccuracy is part
-/// of the observable hardware behaviour, so it is reproduced rather than fixed.
-/// The coefficients are the ones in the BIOS ROM (cross-checked against mGBA's
-/// `_ArcTan`); GBATEK documents only the interface, not the series.
-fn arc_tan(tan: i32) -> i32 {
-    // 32-bit wrapping throughout, as the BIOS's ARM code computes it: near
-    // |tan| = 1.0 the products leave i32, and a checked multiply panicked.
+/// GBATEK, ArcTan: the result covers -PI/2..PI/2 as C000h..4000h. The BIOS
+/// evaluates an odd polynomial: `a = -(tan^2)`, `b` = the coefficients in
+/// Horner form over `a`, angle = `tan * b >> 16`. `a` and `b` are what the
+/// hardware table shows left in r1 and r3. Everything is 32-bit wrapping, as
+/// ARM code computes it, and the whole of r0 is the input (the table reads
+/// 0x0000C000 as +3.0, not -1.0).
+fn arc_tan(tan: i32) -> (i32, i32, i32) {
     let a = (tan.wrapping_mul(tan) >> 14).wrapping_neg();
-    let mut b = (0xA9i32.wrapping_mul(a) >> 14).wrapping_add(0x390);
-    for c in [0x91C, 0xFB60, 0x16C9, 0x2081, 0x3B10, 0xA2F9] {
-        b = (b.wrapping_mul(a) >> 14).wrapping_add(c);
-    }
-    tan.wrapping_mul(b) >> 16
+    let b = ARCTAN_COEFFICIENTS[1..]
+        .iter()
+        .fold(ARCTAN_COEFFICIENTS[0], |b, &c| {
+            (b.wrapping_mul(a) >> 14).wrapping_add(c)
+        });
+    (tan.wrapping_mul(b) >> 16, a, b)
 }
 
-/// SWI 0x09: ArcTan(r0 = tan) -> r0 = angle in C000h..4000h.
+/// SWI 09h: ArcTan(r0 = tan) -> r0 = angle (sign-extended halfword),
+/// r1 = a, r3 = b.
 fn handle_arc_tan(cpu: &mut Cpu) -> bool {
-    let tan = cpu.reg(0) as i16 as i32;
-    cpu.set_reg(0, arc_tan(tan) as u32);
+    let (angle, a, b) = arc_tan(cpu.reg(0) as i32);
+    cpu.set_reg(0, angle as i16 as u32);
+    cpu.set_reg(1, a as u32);
+    cpu.set_reg(3, b as u32);
     true
 }
 
-/// SWI 0x0A: ArcTan2(r0 = x, r1 = y) -> r0 = 0000h..FFFFh for 0 <= THETA < 2PI.
-///
-/// GBATEK gives the interface only. The quadrant folding below is the BIOS
-/// algorithm: it always feeds `arc_tan` the smaller of |y/x| and |x/y| so the
-/// series stays inside its accurate range, then rotates the result into the
-/// right quadrant.
+/// SWI 0Ah: ArcTan2(r0 = x, r1 = y) -> r0 = 0000h..FFFFh for 0 <= THETA < 2PI
+/// (GBATEK). r1 is the `a` of the series call, left alone (= y) when the point
+/// lies on an axis; r3 is 0x170, a BIOS address, in every row of the
+/// hardware table.
 fn handle_arc_tan2(cpu: &mut Cpu) -> bool {
-    let x = cpu.reg(0) as i16 as i32;
-    let y = cpu.reg(1) as i16 as i32;
-    let result = arc_tan2(x, y);
-    cpu.set_reg(0, (result as u32) & 0xFFFF);
+    let x = cpu.reg(0) as i32;
+    let y = cpu.reg(1) as i32;
+    let (angle, a) = arc_tan2(x, y);
+    cpu.set_reg(0, angle);
+    if let Some(a) = a {
+        cpu.set_reg(1, a);
+    }
+    cpu.set_reg(3, 0x170);
     true
 }
 
-fn arc_tan2(x: i32, y: i32) -> i32 {
+/// The series is only accurate for |tan| <= 1, so the angle is measured from
+/// the nearer axis: from the x axis with tan = y/x when |y| <= |x|, otherwise
+/// from the y axis with tan = x/y, which runs the other way and is
+/// subtracted. The series result is a halfword; the sum wraps to 16 bits.
+fn arc_tan2(x: i32, y: i32) -> (u32, Option<u32>) {
     if y == 0 {
-        return if x >= 0 { 0x0000 } else { 0x8000 };
+        return (if x >= 0 { 0 } else { 0x8000 }, None);
     }
     if x == 0 {
-        return if y >= 0 { 0x4000 } else { 0xC000 };
+        return (if y > 0 { 0x4000 } else { 0xC000 }, None);
     }
-    if y >= 0 {
-        if x >= 0 {
-            if x >= y {
-                return arc_tan((y << 14) / x);
-            }
-        } else if -x >= y {
-            return arc_tan((y << 14) / x) + 0x8000;
-        }
-        0x4000 - arc_tan((x << 14) / y)
+    let series = |n: i32, d: i32| {
+        let (angle, a, _) = arc_tan((n << 14).wrapping_div(d));
+        (i32::from(angle as i16), a)
+    };
+    let (angle, a) = if y.unsigned_abs() <= x.unsigned_abs() {
+        let (angle, a) = series(y, x);
+        (if x > 0 { 0 } else { 0x8000 } + angle, a)
     } else {
-        if x <= 0 {
-            if -x > -y {
-                return arc_tan((y << 14) / x) + 0x8000;
-            }
-        } else if x >= -y {
-            return arc_tan((y << 14) / x) + 0x10000;
-        }
-        0xC000 - arc_tan((x << 14) / y)
-    }
+        let (angle, a) = series(x, y);
+        (if y > 0 { 0x4000 } else { 0xC000 } - angle, a)
+    };
+    ((angle as u32) & 0xFFFF, Some(a as u32))
 }
 
 /// SWI 0x0B: CpuSet(r0 = src, r1 = dst, r2 = length/mode).
