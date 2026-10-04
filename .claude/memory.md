@@ -1148,12 +1148,8 @@ Branch `fix/mgba-suite-timer-irq-io-read`. mGBA suite 3602 -> 4204/6998.
   (`b 0x128` ... `ldr pc, [r0, #-4]`, so r0 = 0x04000000 and the user handler
   must be ARM, as on hardware); exception entry costs 3 cycles; ARM writes to
   PC pay the 2-cycle refill.
-- **Left open**: Timer count-up 729/936. Every prescaler-1 case passes; all
-  207 failures are prescaler 64/256/1024. mGBA aligns prescaled timers to the
-  global clock (`src/gba/timer.c`, `currentTime &= ~tickMask`); a phase sweep
-  of that model did not converge, most likely because the HLE `IntrWait` the
-  test syncs on is not cycle-accurate. Not a waitstate issue: the test runs
-  from IWRAM.
+- **Left open**: Timer count-up 729/936. (Fixed to 936/936 on 2026-10-03,
+  branch `fix/timer-count-up-prescaler` - see the entry below.)
 - **Save states carry no BIOS memory, so the HLE BIOS layout is a save-state
   format.** Moving the IRQ stub to 0x128 broke every quick save taken inside
   a game IRQ handler under the old stub (LR = 0x28): the return slid through
@@ -1186,3 +1182,33 @@ Branch `fix/mgba-suite-timer-irq-io-read`. mGBA suite 3602 -> 4204/6998.
   `io_regs` (the bus cannot see the timer, so a read cannot compute it
   lazily), `apu.tick`, `ppu.tick`. Moving the timer into the bus would make
   `TMxCNT_L` reads lazy; not worth it for ~3%.
+
+## 2026-10-03 - Timer count-up 936/936: three causes, only one of them fitted
+
+Branch `fix/timer-count-up-prescaler`. mGBA suite 4204 -> 4411/6998; no
+other sub-suite moved.
+
+- **Why the earlier phase sweep never converged: HALT woke on PPU events
+  only.** The halted path advanced straight to the next HBlank/line end, so a
+  timer IRQ while halted woke the CPU up to ~1000 cycles late, at a point set
+  by where in the scanline the overflow fell. `Gba::step` now also stops at
+  `Timer::cycles_to_irq()`. Test `a_timer_irq_ends_halt_on_the_overflow_cycle`.
+- **Prescaled timers count on global prescaler edges** (`Timer::align_start`,
+  mGBA's `currentTime &= ~tickMask`). Evidence in the suite's hardware table:
+  15 extra delay cycles cost 6 loop passes at prescaler 64 but gain 2 at
+  256/1024 - only a free-running divider explains that. GBATEK does not say
+  either way. Test `a_prescaled_timer_counts_on_the_global_prescaler_edges`.
+- **HLE `IntrWait` returned ~45 cycles too early after a wake**
+  (`bios::INTR_WAIT_RETURN_CYCLES`, charged through `Cpu::entry_cycles`). The
+  real BIOS runs its flag check and SWI epilogue there; mGBA's cycle-padded
+  HLE BIOS tail costs 39 cycles on our CPU. 45 is fitted, but the fit is sharp
+  (44: 16 fails, 45: 0, 46: 18). Only the after-a-wake return is charged; an
+  `IntrWait` satisfied immediately, `Halt` and every other SWI still cost 3.
+- `timer_count_up_matches_the_mgba_suite` replays the suite's own code (test
+  body, libgba `IntrMain`, `testIrq`) copied out of IWRAM of a running suite,
+  against hardware values. A hand-written handler would not reproduce them:
+  the dispatcher's length is part of the result.
+- Cost: Mario Tennis +~3% per frame on the host (5.92 -> 6.10 ms, interleaved
+  medians). About 1 point is code layout; the rest follows the alignment,
+  which changes the game's execution (same 142.7k steps a frame, different PC
+  trace), not the per-step work.

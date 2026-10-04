@@ -631,8 +631,10 @@ and their PR and issue history.
       suites could not: old quick saves taken inside an IRQ handler returned
       into a moved BIOS stub (Yggdra at 37 fps). The old return address is
       kept; save states carry no BIOS, so the stub layout is part of the format.
-- [ ] **Timer count-up 729/936** - every failure is a prescaled timer (64,
-      256, 1024); cause not found.
+- [x] **Timer count-up 729/936 -> 936/936** (total 4204 -> 4411). HALT now
+      wakes on the timer overflow instead of the next PPU event, prescaled
+      timers count on global prescaler edges, and the HLE `IntrWait` pays the
+      BIOS's return path after a wake.
 - [ ] **BIOS math 305/615, SIO, Timing** - Timing needs per-access wait states.
 - [x] **Per-instruction cost rose ~10% in #60** - won back and more in #62:
       Mario Tennis 9.40 -> 7.64 ms per frame on the host (8.54 before #60);

@@ -316,3 +316,233 @@ fn ticking_a_slice_at_once_matches_ticking_it_cycle_by_cycle() {
         }
     }
 }
+
+/// A machine with `code` (ARM words) in IWRAM and the CPU about to run it.
+fn iwram_machine(code: &[u32]) -> geebeeayy_core::Gba {
+    const CODE: u32 = 0x0300_0000;
+    let mut gba = geebeeayy_core::Gba::new();
+    gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
+    for (i, &w) in code.iter().enumerate() {
+        gba.bus.write32(CODE + 4 * i as u32, w);
+    }
+    gba.cpu.registers[1] = 0x0400_0100;
+    gba.cpu.registers[15] = CODE;
+    gba
+}
+
+/// A timer IRQ ends HALT on the cycle the timer overflows. The halted path
+/// used to advance straight to the next PPU event, so the CPU woke up to a
+/// thousand cycles late, at a point that depended on where in the scanline
+/// the overflow fell. The mGBA suite's count-up test syncs on exactly such a
+/// wake (`IntrWait` on a timer IRQ), and that jitter alone made its prescaled
+/// cases impossible to match.
+#[test]
+fn a_timer_irq_ends_halt_on_the_overflow_cycle() {
+    let mut gba = iwram_machine(&[
+        0xE581_3000, // str r3, [r1]   ; TM0CNT = 0xF000, prescaler 1, IRQ, enable
+        0xEF02_0000, // swi 0x02       ; Halt
+        0xEAFF_FFFE, // b .
+    ]);
+    gba.cpu.registers[3] = u32::from(ENABLE | IRQ) << 16 | 0xF000;
+    gba.bus.write16(0x0400_0200, 0x0008); // IE: timer 0. IME stays 0.
+
+    gba.step(); // str
+                // The timer counts from one cycle after the store: 0x1000 counts later
+                // it overflows. Not on a PPU event: those fall at 960 and 1232 cycles
+                // into each 1232-cycle scanline.
+    let overflow = gba.cycles + 1 + 0x1000;
+    assert_ne!(overflow % 1232, 960);
+    assert_ne!(overflow % 1232, 0);
+    gba.step(); // swi
+    assert!(gba.bus.io.halt, "SWI 2 should halt");
+    while gba.bus.io.halt || gba.cpu.halted {
+        gba.step();
+    }
+    assert_eq!(gba.cycles, overflow, "HALT ended off the overflow cycle");
+}
+
+/// A prescaled timer counts on the edges of a free-running prescaler, not on
+/// a divider restarted by the enable. Starting it a few cycles later moves its
+/// first count only when that crosses a prescaler edge. mGBA models it this
+/// way (`src/gba/timer.c`, `currentTime &= ~tickMask`), and the mGBA suite's
+/// count-up results recorded on hardware need it: 15 extra cycles before the
+/// start lose six loop passes at prescaler 64 but gain two at 256 and 1024.
+#[test]
+fn a_prescaled_timer_counts_on_the_global_prescaler_edges() {
+    let mut overflows = Vec::new();
+    for lead in 0..70 {
+        let mut code = vec![0xE1A0_0000; lead]; // mov r0, r0: one cycle each
+        code.push(0xE581_3000); // str r3, [r1]   ; TM0CNT = 0xFFFF, prescaler 64, IRQ (IE stays 0)
+        code.extend([0xE1A0_0000; 200]);
+        code.push(0xEAFF_FFFE); // b .
+        let mut gba = iwram_machine(&code);
+        gba.cpu.registers[3] = u32::from(ENABLE | IRQ | 1) << 16 | 0xFFFF;
+        while gba.bus.io.if_ & 0x0008 == 0 {
+            gba.step();
+        }
+        overflows.push(gba.cycles);
+    }
+    let phase = overflows[0] % 64;
+    for (lead, at) in overflows.iter().enumerate() {
+        assert_eq!(
+            at % 64,
+            phase,
+            "{lead} cycles of lead: overflow at {at} is off the 64-cycle grid"
+        );
+    }
+}
+
+/// One case of the mGBA suite's timer count-up test (`src/timers.c`, `runTest`,
+/// the tight-loop half), instruction for instruction, with the ROM's own
+/// libgba IRQ dispatcher and `testIrq` handler.
+///
+/// Sync on a prescaler-1024 timer IRQ through `IntrWait`, spin `delay` passes
+/// of a delay loop, start timer 0 with `control_reload` and count passes of
+/// `add; ldr; tst; bne` until the IRQ handler stops it. Returns the pass count
+/// and the counter it read last.
+fn count_up_case(control_reload: u32, delay: u32) -> (u32, u16) {
+    const IRQ_COUNTER: u32 = 0x0300_0200;
+    const RESULT: u32 = 0x0300_0300;
+    const DISPATCHER: u32 = 0x0300_2D88;
+    const IRQ_TABLE: u32 = 0x0300_3358;
+    const TEST_IRQ: u32 = 0x0300_0100;
+
+    let mut gba = iwram_machine(&[
+        0xE3A0_0000, // mov r0, #0
+        0xE1C3_00B0, // strh r0, [r3]
+        0xE584_5000, // str r5, [r4]       ; sync timer: 0xFFFE, prescaler 1024, IRQ
+        0xE3A0_0001, // mov r0, #1
+        0xE586_0000, // str r0, [r6]       ; irqCounter = 1
+        0xE3A0_1008, // mov r1, #8
+        0xEF04_0000, // swi 0x04           ; IntrWait(1, timer 0)
+        0xE586_9000, // str r9, [r6]       ; irqCounter = irqs
+        0xE3A0_0001, // mov r0, #1
+        0xE150_000B, // cmp r0, r11        ; delay loop
+        0x1280_0001, // addne r0, r0, #1
+        0x1AFF_FFFC, // bne cmp
+        0xE3A0_0000, // mov r0, #0
+        0xE584_8000, // str r8, [r4]       ; start the timer under test
+        0xE280_0001, // add r0, r0, #1
+        0xE594_2000, // ldr r2, [r4]
+        0xE312_0502, // tst r2, #0x800000  ; still enabled?
+        0x1AFF_FFFB, // bne add
+        0xE58C_0000, // str r0, [r12]
+        0xE1CC_20B8, // strh r2, [r12, #8]
+        0xEAFF_FFFE, // b .
+    ]);
+    // libgba's IntrMain as the suite ROM installs it.
+    let dispatcher: [u32; 46] = [
+        0xE3A0_3301,
+        0xE593_2200,
+        0xE593_1208,
+        0xE583_3208,
+        0xE14F_0000,
+        0xE92D_400B,
+        0xE002_1822,
+        0xE153_20B8,
+        0xE182_2001,
+        0xE143_20B8,
+        0xE59F_2084,
+        0xE283_3C02,
+        0xE592_0004,
+        0xE350_0000,
+        0x0A00_0003,
+        0xE010_0001,
+        0x1A00_0005,
+        0xE282_2008,
+        0xEAFF_FFF8,
+        0xE1C3_10B2,
+        0xE8BD_400B,
+        0xE583_1208,
+        0xE1A0_F00E,
+        0xE592_2000,
+        0xE352_0000,
+        0x0AFF_FFF8,
+        0xE10F_1000,
+        0xE3C1_10DF,
+        0xE381_101F,
+        0xE129_F001,
+        0xE1C3_00B2,
+        0xE52D_E004,
+        0xE28F_E000,
+        0xE12F_FF12,
+        0xE49D_E004,
+        0xE3A0_3301,
+        0xE583_3208,
+        0xE10F_3000,
+        0xE3C3_30DF,
+        0xE383_3092,
+        0xE129_F003,
+        0xE8BD_400B,
+        0xE583_1208,
+        0xE169_F000,
+        0xE1A0_F00E,
+        IRQ_TABLE,
+    ];
+    for (i, &w) in dispatcher.iter().enumerate() {
+        gba.bus.write32(DISPATCHER + 4 * i as u32, w);
+    }
+    // testIrq, THUMB: if (!--irqCounter) TM0CNT_H = 0;
+    let test_irq: [u16; 10] = [
+        0x4A04, 0x6813, 0x3B01, 0x6013, 0x2B00, 0xD101, 0x4A02, 0x8013, 0x4770, 0x46C0,
+    ];
+    for (i, &h) in test_irq.iter().enumerate() {
+        gba.bus.write16(TEST_IRQ + 2 * i as u32, h);
+    }
+    gba.bus.write32(TEST_IRQ + 20, IRQ_COUNTER);
+    gba.bus.write32(TEST_IRQ + 24, 0x0400_0102);
+    // IntrTable: { handler, mask }, zero-terminated.
+    gba.bus.write32(IRQ_TABLE, TEST_IRQ | 1);
+    gba.bus.write32(IRQ_TABLE + 4, 0x0008);
+    gba.bus.write32(IRQ_TABLE + 8, 0);
+    gba.bus.write32(IRQ_TABLE + 12, 0);
+    gba.bus.write32(0x0300_7FFC, DISPATCHER);
+    gba.bus.write16(0x0400_0200, 0x0008); // IE: timer 0
+    gba.bus.write16(0x0400_0208, 1); // IME
+
+    gba.cpu.set_cpsr(0x1F); // System mode, IRQs on, as the suite runs
+    gba.cpu.registers[13] = 0x0300_7F00;
+    gba.cpu.registers[3] = 0x0300_0400; // activeTestInfo, a scratch halfword
+    gba.cpu.registers[4] = 0x0400_0100;
+    gba.cpu.registers[5] = 0x00C3_FFFE;
+    gba.cpu.registers[6] = IRQ_COUNTER;
+    gba.cpu.registers[8] = control_reload;
+    gba.cpu.registers[9] = 1; // one IRQ
+    gba.cpu.registers[11] = delay;
+    gba.cpu.registers[12] = RESULT;
+    gba.bus.write32(RESULT, 0xDEAD_BEEF);
+    for _ in 0..200_000 {
+        gba.step();
+        if gba.bus.read32(RESULT) != 0xDEAD_BEEF && gba.cpu.registers[15] == 0x0300_0050 {
+            break;
+        }
+    }
+    (gba.bus.read32(RESULT), gba.bus.read16(RESULT + 8))
+}
+
+/// Hardware's results for the mGBA suite's count-up test, "1d 1i" and "4d 1i"
+/// of the prescaled rows, plus one prescaler-1 row that always passed. Fifteen
+/// cycles of extra delay cost six loop passes at prescaler 64 but gain two at
+/// 256 and 1024: the start moved across a global prescaler edge in the first
+/// case only. Matching all of them needs three things at once - prescaler
+/// edges on the global clock, HALT ending on the overflow cycle, and
+/// `IntrWait` taking as long to return as the BIOS code it stands for.
+#[test]
+fn timer_count_up_matches_the_mgba_suite() {
+    let cases = [
+        (0x00C0_FFC0, 1, 0x00A, 0xFFDC),
+        (0x00C1_FFF0, 1, 0x07B, 0xFFF1),
+        (0x00C1_FFF0, 4, 0x081, 0xFFF1),
+        (0x00C2_FFF0, 1, 0x1EB, 0xFFF0),
+        (0x00C2_FFF0, 4, 0x1E9, 0xFFF0),
+        (0x00C3_FFF0, 1, 0x7EB, 0xFFF0),
+        (0x00C3_FFF0, 4, 0x7E9, 0xFFF0),
+    ];
+    for (timer, delay, passes, value) in cases {
+        assert_eq!(
+            count_up_case(timer, delay),
+            (passes, value),
+            "timer {timer:06X}, delay {delay}: (loop passes, counter)"
+        );
+    }
+}
