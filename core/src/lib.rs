@@ -116,7 +116,14 @@ impl Gba {
             // scanline in one tick steps over HBlank, so a game halted with
             // the HBlank IRQ enabled - and that is most of every frame - was
             // getting one interrupt a frame instead of 228.
-            let step = self.ppu.cycles_to_next_event();
+            //
+            // A timer IRQ is an event too: stepping over it woke the CPU at
+            // the PPU event after the overflow instead of on it.
+            let step = self
+                .timer
+                .cycles_to_irq()
+                .unwrap_or(u32::MAX)
+                .min(self.ppu.cycles_to_next_event());
             self.apply_dma_writes();
             self.apply_timer_writes();
             self.ppu.tick(step, &mut self.bus, &mut self.dma);
@@ -269,6 +276,7 @@ impl Gba {
                 self.timer.set_control(timer, value);
                 if !was_enabled && self.timer.enabled[timer] {
                     self.timer.delay_start(timer, 1);
+                    self.timer.align_start(timer, self.cycles);
                 }
             } else {
                 self.timer.set_reload(timer, value);

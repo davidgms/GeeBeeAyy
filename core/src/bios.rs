@@ -99,6 +99,21 @@ fn handle_halt(_cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     true
 }
 
+/// Cycles the BIOS spends between an IRQ handler returning into `IntrWait`'s
+/// halt loop and the caller's next instruction, beyond the 3 this HLE charges
+/// for re-running the SWI.
+///
+/// The real BIOS runs code there: the flag check (IME off, `ldrh`, `ands`,
+/// `eorne`, `strneh`, IME on, `beq`) and the SWI dispatcher's epilogue
+/// (`ldmfd`, `msr`, `ldmfd`, `msr`, `ldmfd`, `movs pc, lr`). mGBA's
+/// cycle-padded HLE BIOS tail (`src/gba/hle-bios.s`, from the halt loop's `1:`
+/// to `movs pc, lr`) costs 39 cycles on this CPU; the real BIOS calls its
+/// check as a subroutine, which adds a `bl`/`bx lr` pair. The value is fitted
+/// to the mGBA suite's count-up test, whose results were recorded on hardware
+/// and resolve it to the cycle: 44 fails 16 of 936 checks, 45 none, 46 18
+/// (`timer_count_up_matches_the_mgba_suite`).
+const INTR_WAIT_RETURN_CYCLES: u32 = 45;
+
 /// SWI 0x04: IntrWait(r1=discardOldFlags, r2=IEFlags)
 /// SWI 04h. GBATEK: "Continues to wait in Halt state until one (or more) of
 /// the specified interrupt(s) do occur. **The function forcefully sets
@@ -124,6 +139,9 @@ fn handle_intr_wait(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let flags = bus.read16(BIOS_INTR_FLAGS);
     if flags & wanted != 0 {
         bus.write16(BIOS_INTR_FLAGS, flags & !wanted);
+        if bus.io.intr_wait_active {
+            cpu.entry_cycles += INTR_WAIT_RETURN_CYCLES;
+        }
         bus.io.intr_wait_active = false;
         return true;
     }

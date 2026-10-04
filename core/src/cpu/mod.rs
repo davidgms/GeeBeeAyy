@@ -37,8 +37,9 @@ pub struct Cpu {
     pub halted: bool,
     /// Set when an instruction writes R15, so `step` knows not to advance PC itself.
     branched: bool,
-    /// Cycles owed by an exception entry, charged to the next `step`.
-    entry_cycles: u32,
+    /// Cycles owed by an exception entry, or by HLE BIOS code that ran in no
+    /// time, charged to the next `step`.
+    pub(crate) entry_cycles: u32,
 }
 
 pub struct BarrelShiftResult {

@@ -107,6 +107,41 @@ impl Timer {
         }
     }
 
+    /// Put a just-started timer's prescaler on the global prescaler edges.
+    ///
+    /// The prescaler is a free-running divider of the system clock, not one
+    /// the enable restarts: a timer started `now` makes its first count on the
+    /// next multiple of its prescaler (after `delay_start`), wherever in that
+    /// period the start fell. mGBA does the same (`src/gba/timer.c`,
+    /// `currentTime &= ~tickMask`). The mGBA suite's count-up results show it
+    /// on hardware: 15 more cycles before the start cost six loop passes at
+    /// prescaler 64 - the start crossed an edge - but gain two at 256 and 1024.
+    pub fn align_start(&mut self, timer: usize, now: u64) {
+        if timer < 4 {
+            let mask = u64::from(self.prescaler[timer] - 1);
+            self.tick_counters[timer] = ((now + u64::from(self.start_delay[timer])) & mask) as u32;
+        }
+    }
+
+    /// Cycles until the next overflow that can end a HALT, or `None`.
+    ///
+    /// The halted CPU skips ahead to the next event; a timer IRQ is one. A
+    /// timer qualifies when it raises an IRQ itself or feeds a cascade, whose
+    /// target may.
+    pub fn cycles_to_irq(&self) -> Option<u32> {
+        (0..4)
+            .filter(|&i| self.enabled[i] && !(self.cascaded[i] && i > 0))
+            .filter(|&i| {
+                self.irq_enabled[i] || (i < 3 && self.cascaded[i + 1] && self.enabled[i + 1])
+            })
+            .map(|i| {
+                let prescaler = self.prescaler[i];
+                let first = prescaler.saturating_sub(self.tick_counters[i]).max(1);
+                self.start_delay[i] + first + (0xFFFF - self.counters[i].min(0xFFFF)) * prescaler
+            })
+            .min()
+    }
+
     /// The counter as it will read one cycle from now.
     ///
     /// A load samples an I/O register in its second cycle, not its first, and
