@@ -112,12 +112,10 @@ fn gba_suite_save_none() {
     run_suite("none");
 }
 
-/// Exercises the HLE BIOS. Expect this to disagree with a real BIOS in places,
-/// because its first check reads the BIOS ROM itself, which high-level
-/// emulation does not reproduce. Read a failure here as "which test number",
-/// not as a simple pass/fail.
+/// Exercises the HLE BIOS. Its first check reads the BIOS ROM from outside
+/// it, which failed until the bus returned the last fetched BIOS opcode
+/// (`MemoryBus::bios_latch`) instead of the stub's bytes.
 #[test]
-#[ignore = "HLE BIOS cannot satisfy tests that read the BIOS ROM itself"]
 fn gba_suite_bios() {
     run_suite("bios");
 }

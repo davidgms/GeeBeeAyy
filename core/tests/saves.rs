@@ -861,3 +861,21 @@ fn a_512_byte_eeprom_game_keeps_a_512_byte_save() {
     }
     assert_eq!(gba.cartridge().save_data().map(|d| d.len()), Some(512));
 }
+
+/// An unaligned `ldr` from the 8-bit save bus reads the byte at the address
+/// it was given, replicated - the bus never sees the aligned word the ARM
+/// would rotate (mGBA suite "SRAM load | 32 (unaligned n)").
+#[test]
+fn an_unaligned_word_load_from_sram_reads_the_addressed_byte() {
+    let mut gba = gba_with("SRAM_V100");
+    for (i, &b) in b"Game".iter().enumerate() {
+        gba.bus.write8(SAVE_BASE + i as u32, b);
+    }
+    for (offset, b) in [(1u32, b'a'), (2, b'm'), (3, b'e')] {
+        assert_eq!(
+            gba.bus.read32_rotated(SAVE_BASE + offset),
+            u32::from(b) * 0x0101_0101,
+            "ldr from SRAM + {offset}"
+        );
+    }
+}

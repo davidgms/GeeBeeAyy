@@ -162,6 +162,9 @@ impl Cpu {
         let entry = std::mem::take(&mut self.entry_cycles);
         bus.exec_pc = pc;
         bus.exec_thumb = is_thumb;
+        if pc < 0x4000 {
+            bus.latch_bios_prefetch();
+        }
 
         // R15 reads as the address of the instruction plus two fetches while it
         // executes: +8 in ARM, +4 in THUMB.
@@ -526,6 +529,13 @@ impl Cpu {
     pub fn swi(&mut self, comment: u32, bus: &mut super::memory::MemoryBus) {
         // Software interrupt: call BIOS HLE
         super::bios::handle_swi(comment, self, bus);
+        // What the real BIOS's SWI epilogue (or SoftReset) leaves in the
+        // BIOS read latch; the HLE runs no BIOS code to fetch it.
+        bus.bios_latch = if comment == 0 {
+            super::memory::BIOS_AFTER_BOOT
+        } else {
+            super::memory::BIOS_AFTER_SWI
+        };
     }
 
     /// Handle IRQ exception.

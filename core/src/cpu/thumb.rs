@@ -596,7 +596,9 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             // MUL
             result = rd_val.wrapping_mul(rs_val);
             cpu.set_reg(rd, result);
-            cpu.set_flag_nz(result);
+            // Rd is the multiplier the Booth array steps through.
+            let c = crate::cpu::arm::multiply_carry(rs_val, rd_val, 0);
+            cpu.set_flags(result >> 31 == 1, result == 0, c, cpu.flag_v());
         }
         0b1110 => {
             // BIC

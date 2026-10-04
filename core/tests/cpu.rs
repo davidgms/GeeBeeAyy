@@ -751,3 +751,112 @@ fn executing_from_open_bus_does_not_recurse() {
         let _ = name;
     }
 }
+
+type MullRow = (&'static str, u32, u32, u32, u32, u32, u32, u32, u32);
+
+/// The mGBA suite's multiply-long table (github.com/mgba-emu/suite,
+/// `src/multiply-long.c`, MIT), recorded on hardware: `(name, rm, rs,
+/// smull hi, lo, cpsr, umull hi, lo, cpsr)`. The suite clears NZCV first, so
+/// the C bit in each cpsr is what the multiplier array leaves behind.
+#[rustfmt::skip]
+const MGBA_SUITE_MULL: &[MullRow] = &[
+    ("  0 *   0", 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  1 *   0", 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    (" -1 *   0", 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("$7F *   0", 0x7FFFFFFF, 0x00000000, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("$80 *   0", 0x80000000, 0x00000000, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("$81 *   0", 0x80000001, 0x00000000, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  0 *   1", 0x00000000, 0x00000001, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  1 *   1", 0x00000001, 0x00000001, 0x00000000, 0x00000001, 0x0000001F, 0x00000000, 0x00000001, 0x0000001F),
+    (" -1 *   1", 0xFFFFFFFF, 0x00000001, 0xFFFFFFFF, 0xFFFFFFFF, 0x8000001F, 0x00000000, 0xFFFFFFFF, 0x0000001F),
+    ("$7F *   1", 0x7FFFFFFF, 0x00000001, 0x00000000, 0x7FFFFFFF, 0x0000001F, 0x00000000, 0x7FFFFFFF, 0x0000001F),
+    ("$80 *   1", 0x80000000, 0x00000001, 0xFFFFFFFF, 0x80000000, 0x8000001F, 0x00000000, 0x80000000, 0x0000001F),
+    ("$81 *   1", 0x80000001, 0x00000001, 0xFFFFFFFF, 0x80000001, 0x8000001F, 0x00000000, 0x80000001, 0x0000001F),
+    ("  0 *  -1", 0x00000000, 0xFFFFFFFF, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  1 *  -1", 0x00000001, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x8000001F, 0x00000000, 0xFFFFFFFF, 0x0000001F),
+    (" -1 *  -1", 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0x00000001, 0x0000001F, 0xFFFFFFFE, 0x00000001, 0xA000001F),
+    ("$7F *  -1", 0x7FFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x80000001, 0x8000001F, 0x7FFFFFFE, 0x80000001, 0x2000001F),
+    ("$80 *  -1", 0x80000000, 0xFFFFFFFF, 0x00000000, 0x80000000, 0x0000001F, 0x7FFFFFFF, 0x80000000, 0x0000001F),
+    ("$81 *  -1", 0x80000001, 0xFFFFFFFF, 0x00000000, 0x7FFFFFFF, 0x0000001F, 0x80000000, 0x7FFFFFFF, 0x8000001F),
+    ("  0 * $7F", 0x00000000, 0x7FFFFFFF, 0x00000000, 0x00000000, 0x4000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  1 * $7F", 0x00000001, 0x7FFFFFFF, 0x00000000, 0x7FFFFFFF, 0x0000001F, 0x00000000, 0x7FFFFFFF, 0x0000001F),
+    (" -1 * $7F", 0xFFFFFFFF, 0x7FFFFFFF, 0xFFFFFFFF, 0x80000001, 0xA000001F, 0x7FFFFFFE, 0x80000001, 0x2000001F),
+    ("$7F * $7F", 0x7FFFFFFF, 0x7FFFFFFF, 0x3FFFFFFF, 0x00000001, 0x0000001F, 0x3FFFFFFF, 0x00000001, 0x0000001F),
+    ("$80 * $7F", 0x80000000, 0x7FFFFFFF, 0xC0000000, 0x80000000, 0xA000001F, 0x3FFFFFFF, 0x80000000, 0x2000001F),
+    ("$81 * $7F", 0x80000001, 0x7FFFFFFF, 0xC0000000, 0xFFFFFFFF, 0xA000001F, 0x3FFFFFFF, 0xFFFFFFFF, 0x2000001F),
+    ("  0 * $80", 0x00000000, 0x80000000, 0x00000000, 0x00000000, 0x6000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  1 * $80", 0x00000001, 0x80000000, 0xFFFFFFFF, 0x80000000, 0xA000001F, 0x00000000, 0x80000000, 0x0000001F),
+    (" -1 * $80", 0xFFFFFFFF, 0x80000000, 0x00000000, 0x80000000, 0x0000001F, 0x7FFFFFFF, 0x80000000, 0x2000001F),
+    ("$7F * $80", 0x7FFFFFFF, 0x80000000, 0xC0000000, 0x80000000, 0xA000001F, 0x3FFFFFFF, 0x80000000, 0x0000001F),
+    ("$80 * $80", 0x80000000, 0x80000000, 0x40000000, 0x00000000, 0x0000001F, 0x40000000, 0x00000000, 0x2000001F),
+    ("$81 * $80", 0x80000001, 0x80000000, 0x3FFFFFFF, 0x80000000, 0x0000001F, 0x40000000, 0x80000000, 0x2000001F),
+    ("  0 * $81", 0x00000000, 0x80000001, 0x00000000, 0x00000000, 0x6000001F, 0x00000000, 0x00000000, 0x4000001F),
+    ("  1 * $81", 0x00000001, 0x80000001, 0xFFFFFFFF, 0x80000001, 0xA000001F, 0x00000000, 0x80000001, 0x0000001F),
+    (" -1 * $81", 0xFFFFFFFF, 0x80000001, 0x00000000, 0x7FFFFFFF, 0x0000001F, 0x80000000, 0x7FFFFFFF, 0xA000001F),
+    ("$7F * $81", 0x7FFFFFFF, 0x80000001, 0xC0000000, 0xFFFFFFFF, 0xA000001F, 0x3FFFFFFF, 0xFFFFFFFF, 0x0000001F),
+    ("$80 * $81", 0x80000000, 0x80000001, 0x3FFFFFFF, 0x80000000, 0x0000001F, 0x40000000, 0x80000000, 0x2000001F),
+    ("$81 * $81", 0x80000001, 0x80000001, 0x3FFFFFFF, 0x00000001, 0x0000001F, 0x40000001, 0x00000001, 0x2000001F),
+];
+
+#[test]
+fn long_multiply_flags_match_the_mgba_suite_hardware_table() {
+    let mut failures = Vec::new();
+    for &(name, rm, rs, s_hi, s_lo, s_psr, u_hi, u_lo, u_psr) in MGBA_SUITE_MULL {
+        // smulls r9, r8, r0, r1 / umulls r9, r8, r0, r1
+        for (op, opcode, hi, lo, psr) in [
+            ("smulls", 0xE0D8_9190, s_hi, s_lo, s_psr),
+            ("umulls", 0xE098_9190, u_hi, u_lo, u_psr),
+        ] {
+            let (mut cpu, mut bus) = setup_arm(&[opcode]);
+            cpu.registers[0] = rm;
+            cpu.registers[1] = rs;
+            cpu.step(&mut bus);
+            let got = (cpu.registers[8], cpu.registers[9], cpu.cpsr >> 28);
+            if got != (hi, lo, psr >> 28) {
+                failures.push(format!(
+                    "{name} {op}: got {:08X}:{:08X} NZCV {:X}, hardware {hi:08X}:{lo:08X} {:X}",
+                    got.0,
+                    got.1,
+                    got.2,
+                    psr >> 28
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn muls_sets_carry_from_the_last_booth_digit() {
+    // No hardware table covers MUL/MLA; this pins the same multiplier-array
+    // model the long forms are verified with. A multiplier with a non-zero,
+    // non-0xFF top byte runs all four Booth steps, and C is the last
+    // injected Booth carry: set only when the top two bits are 10.
+    for (rs, carry) in [
+        (0x8000_0000u32, true),
+        (0xC000_0000, false),
+        (0x4000_0000, false),
+    ] {
+        // muls r2, r0, r1
+        let (mut cpu, mut bus) = setup_arm(&[0xE012_0190]);
+        cpu.registers[0] = 1;
+        cpu.registers[1] = rs;
+        cpu.cpsr |= 1 << 29; // C set beforehand, so a clear is visible
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers[2], rs);
+        assert_eq!(cpu.cpsr & (1 << 29) != 0, carry, "ARM muls by {rs:#010x}");
+
+        // THUMB mul r0, r1: Rd (r0) is the multiplier.
+        let (mut cpu, mut bus) = setup_thumb(&[0x4348]);
+        cpu.registers[0] = rs;
+        cpu.registers[1] = 1;
+        cpu.cpsr |= 1 << 29;
+        cpu.step(&mut bus);
+        assert_eq!(cpu.cpsr & (1 << 29) != 0, carry, "THUMB mul by {rs:#010x}");
+    }
+}
