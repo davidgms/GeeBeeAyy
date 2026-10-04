@@ -1212,3 +1212,31 @@ other sub-suite moved.
   medians). About 1 point is code layout; the rest follows the alignment,
   which changes the game's execution (same 142.7k steps a frame, different PC
   trace), not the per-step work.
+
+## 2026-10-04 - DMA tests 1244/1244: the DMA reads its own latch, and ROM always increments
+
+Branch `fix/mgba-suite-dma`. mGBA suite 4411 -> 4715/6998 (DMA 1056 -> 1244,
+Memory 1346 -> 1462 from the same fixes); no other sub-suite moved.
+
+- **A DMA read below EWRAM returns that channel's last transferred value**
+  (`DmaChannel::latch`, halfwords latched on both halves, `dma.rs` `fetch`).
+  That covers the BIOS, unmapped 0x00004000-0x01FFFFFF, and DMA0 reading ROM
+  (its 27-bit source mask folds 0x08xxxxxx to 0x00xxxxxx). 152 of the 188
+  failures. GBATEK's BIOS read protection describes the CPU; the suite's
+  hardware values show a DMA never sees the BIOS opcode. The latch is per
+  channel (the suite skips "0 R+0x10" because it "would latch based on the
+  last DMA 0 test"). A halfword written from a word latch takes the lane of
+  `dest & 2`.
+- **A gamepak ROM source (0x08-0x0D) always increments**, fixed and
+  decrement included. The other 36. GBATEK does not say so; mGBA and the
+  suite agree.
+- **DMA drops the address bits below its unit width at the enable edge**
+  (`Gba::apply_dma_writes`). Only visible on the 8-bit SRAM bus, which keeps
+  the low bits for a CPU access.
+- Save-state v8 appends the four latches; v6/v7 load with latches 0. The tail
+  layout is now save_len, cycles, chip (18), latches (16) - `tests/saves.rs`
+  hard-codes that offset.
+- **Left in Memory tests**: ROM out-of-bounds reads (CPU and DMA) should
+  return `(address >> 1) & 0xFFFF` per halfword, the bus returns 0; BIOS
+  reads from outside the BIOS should return the last fetched BIOS opcode.
+  Both are bus rules, not DMA ones.

@@ -240,8 +240,12 @@ impl Gba {
                 // DMA3's destination reaches the gamepak (28 bits).
                 let src_mask = if ch == 0 { 0x07FF_FFFF } else { 0x0FFF_FFFF };
                 let dst_mask = if ch == 3 { 0x0FFF_FFFF } else { 0x07FF_FFFF };
-                self.dma.write_sad(ch, sad & src_mask);
-                self.dma.write_dad(ch, dad & dst_mask);
+                // The low bits a unit cannot address are dropped (mGBA suite,
+                // Memory tests, unaligned SRAM DMA; the 8-bit SRAM bus is the
+                // only place the bus would otherwise still see them).
+                let align = if control & 0x0400 != 0 { !3 } else { !1 };
+                self.dma.write_sad(ch, sad & src_mask & align);
+                self.dma.write_dad(ch, dad & dst_mask & align);
                 self.dma.write_count(ch, count);
             }
             self.dma.write_control(ch, control, &mut self.bus);
