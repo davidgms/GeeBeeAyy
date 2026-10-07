@@ -1281,3 +1281,39 @@ other sub-suite moved. The fail lists come from the suite's SRAM log.
   DMA alike (the DMA reads through the bus). An unaligned `ldr` from SRAM
   reads the addressed byte replicated (`read32_rotated` skips the align for
   the 8-bit save bus).
+
+## 2026-10-07 - SIO R/W 90/90, SIO timing 4/4, Misc. edge cases 6/12
+
+Branch `fix/mgba-suite-sio-misc`. mGBA suite 5135 -> 5208/6998; no other
+sub-suite moved. Suite source (MIT): codeload.github.com/mgba-emu/suite.
+
+- **The misc-edge suite's SRAM log has got/expected swapped**: its
+  `runMiscEdgeSuite` calls `doResult(name, test, expected, actual)`, so
+  "Got X vs Y" there means X = hardware, Y = ours. Every other sub-suite
+  logs the right way round.
+- **SIO registers** (`MemoryBus::sio_store`/`io_byte`/`sio_mode`): the mode
+  is RCNT bits 14-15 (GP/JOY) else SIOCNT bits 12-13. SIODATA32 is writable
+  only in 32-bit normal mode, 0x124-0x127 never; SIOCNT stores `& 0x7F8F` and
+  reads the idle pins (normal SI = 0x04, multi SI|SD = 0x0C, UART receive
+  empty = 0x20); UART SIODATA8 reads 0; RCNT stores `& 0xC1FF` and its bits
+  0-3 read the idle pins (normal 0x5 | SIOCNT bit 3, JOY 0xC, multi/UART 0xF,
+  GP the stored bits); JOYCNT bits 0-2 are write-1-to-clear, bit 6 R/W;
+  JOY_RECV/JOY_TRANS read 0. Test `tests/sio.rs` embeds the 90-row table.
+- **Only a normal-mode internal-clock transfer completes without a cable**
+  (`MemoryBus::apply_sio_write`/`tick_sio`): bits x 64 cycles (256 KHz) or
+  x 8 (2 MHz), then start bit clears, data becomes all ones (SI high), IRQ 7.
+  Multiplayer, UART and external clock never finish (hardware times out too).
+  `sio_cycles` is in save state v9.
+- **HLE `Halt` charges `bios::HALT_RETURN_CYCLES = 30` after the wake** (the
+  BIOS epilogue the HLE skips; IntrWait's equivalent is 45). Fitted to the
+  four SIO timing rows, sharp (29 and 31 fail all four). That test cannot
+  separate a halt return cost from a transfer start latency.
+- **DMA repeat reloads the count from DMAxCNT_L**, not the enable-edge latch.
+- **DISPSTAT's H-Blank flag rises at line cycle 1006** (GBATEK states it);
+  the IRQ, HBlank DMA and line draw stay at 960.
+- **Left**: "DMA Prefetch" (2) needs an open-bus read to return the last DMA
+  value when the DMA lands inside the load, and a cycle-exact ROM loop to
+  hit the hardware break address. "H-blank bit" Hblank/Flip 1-3 (4): Flip 1
+  wants the wake ~35 cycles later (an HBlank IRQ near cycle 995-1002, as
+  mGBA has it, would do it but moves DMA/render timing too), and the
+  1235-vs-1232 delta between two identical halts has no explanation yet.

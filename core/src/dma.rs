@@ -223,7 +223,17 @@ impl Dma {
             bus.io.request_interrupt(1 << (8 + channel));
         }
 
-        if !ch.repeat {
+        if ch.repeat {
+            // A repeat reloads the unit count from DMAxCNT_L, so a count the
+            // game wrote after the enable edge applies from the next
+            // transfer (mGBA suite, Misc. edge cases, "DMA count latching",
+            // hardware values; GBATEK: "the Word Count ... reloaded" on
+            // repeat).
+            let at = DMA_CNT_H[channel] - 2;
+            let regs = bus.io_regs_data();
+            let mask = if channel == 3 { 0xFFFF } else { 0x3FFF };
+            ch.count = u16::from_le_bytes([regs[at], regs[at + 1]]) & mask;
+        } else {
             ch.enabled = false;
             ch.control &= !0x8000;
             // Clear the enable bit in the register the game actually reads.
