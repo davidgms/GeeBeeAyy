@@ -142,20 +142,24 @@ impl Timer {
             .min()
     }
 
-    /// The counter as it will read one cycle from now.
+    /// The counter as it will read `cycles` from now.
     ///
-    /// A load samples an I/O register in its second cycle, not its first, and
-    /// this interpreter executes the whole instruction before ticking the
-    /// timers. Publishing the counter one count ahead is what a load sees.
-    fn counter_after_one_cycle(&self, i: usize) -> u16 {
-        let counts = self.enabled[i]
-            && !(self.cascaded[i] && i > 0)
-            && self.start_delay[i] == 0
-            && self.tick_counters[i] + 1 >= self.prescaler[i];
-        match (counts, self.counters[i] + 1) {
-            (false, _) => self.counters[i] as u16,
-            (true, 0x10000) => self.reloads[i] as u16,
-            (true, next) => next as u16,
+    /// A load samples an I/O register after its opcode fetch, not at the
+    /// start of the instruction, and this interpreter executes the whole
+    /// instruction before ticking the timers. Publishing the counter that
+    /// far ahead is what a load sees. In IWRAM the fetch is one cycle, which
+    /// is what the timer fits were measured with.
+    fn counter_after(&self, i: usize, cycles: u32) -> u16 {
+        if !self.enabled[i] || (self.cascaded[i] && i > 0) {
+            return self.counters[i] as u16;
+        }
+        let run = cycles.saturating_sub(self.start_delay[i]);
+        let next = self.counters[i] + (self.tick_counters[i] + run) / self.prescaler[i];
+        // ponytail: one wrap at most; a reload that overflows again within
+        // one opcode fetch reads off by its period.
+        match next {
+            0..=0xFFFF => next as u16,
+            _ => (self.reloads[i] + next - 0x10000) as u16,
         }
     }
 
@@ -236,9 +240,10 @@ impl Timer {
         std::mem::take(&mut self.overflow_flags)
     }
 
-    /// The counter of each timer as a load reads it, for writing back into
-    /// `TMxCNT_L`; see `counter_after_one_cycle`.
-    pub fn counters(&self) -> [u16; 4] {
-        std::array::from_fn(|i| self.counter_after_one_cycle(i))
+    /// The counter of each timer as a load reads it, `fetch` cycles into the
+    /// next instruction, for writing back into `TMxCNT_L`; see
+    /// `counter_after`.
+    pub fn counters(&self, fetch: u32) -> [u16; 4] {
+        std::array::from_fn(|i| self.counter_after(i, fetch))
     }
 }

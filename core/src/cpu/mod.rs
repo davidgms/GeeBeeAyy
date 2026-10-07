@@ -1,6 +1,8 @@
 pub mod arm;
 pub mod thumb;
 
+use crate::memory::MemoryBus;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
     User = 0b10000,
@@ -40,6 +42,12 @@ pub struct Cpu {
     /// Cycles owed by an exception entry, or by HLE BIOS code that ran in no
     /// time, charged to the next `step`.
     pub(crate) entry_cycles: u32,
+    /// The next opcode fetch is non-sequential: the instruction before it
+    /// made a data access, which takes the bus off the code, or (GBATEK,
+    /// prefetch disable bug) ran internal cycles in ROM with the GamePak
+    /// prefetch buffer off. Only ROM, where N and S differ, can tell.
+    /// Transient, like `branched`, so not part of a save state.
+    pub(crate) fetch_n: bool,
 }
 
 pub struct BarrelShiftResult {
@@ -73,6 +81,7 @@ impl Cpu {
             halted: false,
             branched: false,
             entry_cycles: 0,
+            fetch_n: false,
         }
     }
 
@@ -172,15 +181,15 @@ impl Cpu {
         // accesses and internal cycles cost. Returned rather than added to a
         // field as they go: a running total in memory measured ~7% slower
         // per frame on Mario Tennis.
+        let seq = !std::mem::take(&mut self.fetch_n);
         let mut cycles = if is_thumb {
             let instruction = bus.read16(pc);
             self.registers[15] = pc.wrapping_add(4);
-            bus.access_cycles(pc.wrapping_add(4), false, true)
-                + self.execute_thumb(instruction, bus)
+            bus.access_cycles(pc.wrapping_add(4), false, seq) + self.execute_thumb(instruction, bus)
         } else {
             let instruction = bus.read32(pc);
             self.registers[15] = pc.wrapping_add(8);
-            bus.access_cycles(pc.wrapping_add(8), true, true) + self.execute_arm(instruction, bus)
+            bus.access_cycles(pc.wrapping_add(8), true, seq) + self.execute_arm(instruction, bus)
         };
 
         // Only advance to the next instruction when the instruction itself did
@@ -200,9 +209,45 @@ impl Cpu {
             let (target, word) = (self.registers[15], self.cpsr & 0x20 == 0);
             cycles +=
                 bus.access_cycles(target, word, false) + bus.access_cycles(target, word, true);
+            self.fetch_n = false;
         }
 
         cycles + entry
+    }
+
+    /// What the next instruction's opcode fetch will cost, for a read that
+    /// happens after it (see `Timer::counters`).
+    pub(crate) fn next_fetch_cycles(&self, bus: &MemoryBus) -> u32 {
+        let thumb = self.cpsr & 0x20 != 0;
+        let prefetch = self.registers[15].wrapping_add(if thumb { 4 } else { 8 });
+        bus.access_cycles(prefetch, !thumb, !self.fetch_n)
+    }
+
+    /// Cycles of a data access, which also leaves the next opcode fetch
+    /// non-sequential.
+    #[inline]
+    pub(crate) fn data_cycles(
+        &mut self,
+        bus: &MemoryBus,
+        address: u32,
+        word: bool,
+        seq: bool,
+    ) -> u32 {
+        self.fetch_n = true;
+        bus.access_cycles(address, word, seq)
+    }
+
+    /// `cycles` internal cycles with no data access. GBATEK's prefetch
+    /// disable bug: with the GamePak prefetch buffer off, a ROM opcode with
+    /// internal cycles that does not write R15 makes the next opcode fetch
+    /// non-sequential. Outside ROM N and S cost the same, so the flag is
+    /// harmless there.
+    #[inline]
+    pub(crate) fn idle_cycles(&mut self, bus: &MemoryBus, cycles: u32) -> u32 {
+        if !bus.prefetch_enabled() {
+            self.fetch_n = true;
+        }
+        cycles
     }
 
     /// Force PC alignment for the current instruction set: halfword in THUMB,
@@ -585,6 +630,7 @@ impl Cpu {
         self.spsr_irq = old_cpsr;
         self.registers[14] = return_addr.wrapping_add(4);
         self.registers[15] = 0x0000_0018;
+        self.fetch_n = false;
         // ARM7TDMI TRM: exception entry is 2S+1N, the pipeline refill at the
         // vector. Charged to the vector's first instruction.
         self.entry_cycles = 3;

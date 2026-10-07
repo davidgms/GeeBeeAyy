@@ -34,7 +34,10 @@ fn render(name: &str) -> Option<HashMap<(u8, u8, u8), usize>> {
     };
     let mut gba = Gba::new();
     gba.load_rom(&rom).expect("ppu ROM should load");
-    for _ in 0..8 {
+    // Long enough for a boot at hardware speed: Celeste runs from ROM with
+    // WAITCNT left at 0 and first draws on frame 12. Eight frames sufficed
+    // only while every memory access cost one cycle.
+    for _ in 0..30 {
         gba.run_frame();
     }
     let mut counts = HashMap::new();

@@ -39,8 +39,8 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     if (instruction >> 4) & 0xF == 0x9 {
         let opcode_bits = (instruction >> 20) & 0xFF;
         match opcode_bits {
-            0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu),
-            0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu),
+            0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu, bus),
+            0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu, bus),
             // SWP is 00010 B 00, so bits[27:20] are 0x10 for the word form and
             // 0x14 for the byte form. The old range stopped at 0x13, so
             // every SWPB fell through and was decoded as an MSR.
@@ -89,7 +89,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         && ((instruction >> 25) & 1 == 1
             || !((instruction >> 4) & 1 == 1 && (instruction >> 7) & 1 == 1))
     {
-        return data_processing(instruction, cpu);
+        return data_processing(instruction, cpu, bus);
     }
 
     // Single Data Transfer - bits [27:26]=01
@@ -125,7 +125,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 // Data Processing
 // ---------------------------------------------------------------------------
 
-fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
+fn data_processing(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
     let opcode = (instruction >> 21) & 0xF;
     let s_flag = (instruction >> 20) & 1 == 1;
     let rn = ((instruction >> 16) & 0xF) as usize;
@@ -160,7 +160,11 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
     };
 
     // Shift operand2. A shift by a register costs an internal cycle.
-    let cycles = u32::from(register_specified_shift);
+    let cycles = if register_specified_shift {
+        cpu.idle_cycles(bus, 1)
+    } else {
+        0
+    };
     let shifted = cpu.shift_operand2(instruction, immediate);
     let op2 = shifted.value;
 
@@ -283,7 +287,7 @@ pub fn overflow_sub(op1: u32, op2: u32, result: u32) -> bool {
 // Multiply
 // ---------------------------------------------------------------------------
 
-fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
+fn multiply(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
     let accumulate = (instruction >> 21) & 1 == 1;
     let set_flags = (instruction >> 20) & 1 == 1;
     let rd = ((instruction >> 16) & 0xF) as usize;
@@ -308,7 +312,7 @@ fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
     }
 
     // MUL is 1S+mI, MLA 1S+(m+1)I.
-    multiplier_cycles(rs_val, true) + u32::from(accumulate)
+    cpu.idle_cycles(bus, multiplier_cycles(rs_val, true) + u32::from(accumulate))
 }
 
 /// The `m` of GBATEK's multiply timings: the multiplier array retires 8 bits
@@ -328,7 +332,7 @@ pub(crate) fn multiplier_cycles(multiplier: u32, signed: bool) -> u32 {
     }
 }
 
-fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
+fn multiply_long(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
     // cond 00001 U A S RdHi RdLo Rs 1001 Rm
     // U = 1 is the *signed* form (SMULL/SMLAL); U = 0 is unsigned.
     let signed = (instruction >> 22) & 1 == 1;
@@ -367,7 +371,10 @@ fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
     }
 
     // UMULL/SMULL take 1S+(m+1)I, UMLAL/SMLAL 1S+(m+2)I.
-    multiplier_cycles(rs_val, signed) + 1 + u32::from(accumulate)
+    cpu.idle_cycles(
+        bus,
+        multiplier_cycles(rs_val, signed) + 1 + u32::from(accumulate),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +590,7 @@ fn swap(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     }
 
     // SWP takes 1S + 2N + 1I.
-    bus.access_cycles(addr, !byte_swap, false) * 2 + 1
+    cpu.data_cycles(bus, addr, !byte_swap, false) * 2 + 1
 }
 
 // ---------------------------------------------------------------------------
@@ -733,7 +740,7 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
 
     // ARM7TDMI TRM: LDR is 1S+1N+1I and STR 2N - the opcode fetch, the data
     // access, and for a load an internal cycle to write the register.
-    cycles += bus.access_cycles(addr, !byte_transfer, false);
+    cycles += cpu.data_cycles(bus, addr, !byte_transfer, false);
     if load {
         cycles += 1;
         if byte_transfer {
@@ -795,7 +802,7 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
     };
     let addr = if pre_index { offset_addr } else { base };
 
-    cycles += bus.access_cycles(addr, false, false);
+    cycles += cpu.data_cycles(bus, addr, false, false);
     if load {
         cycles += 1;
         let val = match sh {
@@ -871,7 +878,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     // LDM is nS+1N+1I and STM (n-1)S+2N: the first transfer non-sequential,
     // the rest sequential, and a load ends with an internal cycle.
     if empty_list {
-        cycles += bus.access_cycles(addr, true, false);
+        cycles += cpu.data_cycles(bus, addr, true, false);
         if load {
             cycles += 1;
             let val = bus.read32(addr);
@@ -895,7 +902,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         cycles += 1;
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
-                cycles += bus.access_cycles(addr, true, addr != start);
+                cycles += cpu.data_cycles(bus, addr, true, addr != start);
                 let val = bus.read32(addr);
                 if user_bank {
                     cpu.set_user_reg(i as usize, val);
@@ -940,7 +947,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                 } else {
                     cpu.reg(i as usize)
                 };
-                cycles += bus.access_cycles(addr, true, addr != start);
+                cycles += cpu.data_cycles(bus, addr, true, addr != start);
                 bus.write32(addr, val);
                 addr = addr.wrapping_add(4);
             }

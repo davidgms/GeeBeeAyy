@@ -347,7 +347,7 @@ impl Gba {
         // TMxCNT_L reads the live counter, not the reload the game wrote
         // there. Nothing published it before, so a game polling a timer saw
         // its own reload value forever.
-        let counters = self.timer.counters();
+        let counters = self.timer.counters(self.cpu.next_fetch_cycles(&self.bus));
         let regs = &mut self.bus.io_regs_data_mut()[0x100..0x110];
         for (reg, c) in regs.chunks_exact_mut(4).zip(counters) {
             reg[..2].copy_from_slice(&c.to_le_bytes());

@@ -24,7 +24,9 @@ pub struct MemoryBus {
     /// nothing else. It used to hang off `Gba`, where nothing on the memory
     /// path could call it, so save memory was unreachable.
     pub cart: super::cart::Cartridge,
-    pub waitcnt: u16,
+    /// WAITCNT, private so every write goes through [`Self::set_waitcnt`]
+    /// and rebuilds the wait table.
+    waitcnt: u16,
     pub sound_writes: Vec<(u32, u8)>,
     /// Channels whose DMAxCNT_H was written since `Gba::step` last looked.
     /// The bus cannot apply them itself: an immediate transfer runs inside
@@ -97,7 +99,7 @@ impl MemoryBus {
             bios_latch: 0,
             sio_cycles: 0,
             sio_written: false,
-            wait: timing::WaitTable::flat(),
+            wait: timing::WaitTable::from_waitcnt(0),
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -121,7 +123,7 @@ impl MemoryBus {
         self.palette.fill(0);
         self.vram.fill(0);
         self.oam.fill(0);
-        self.waitcnt = 0;
+        self.set_waitcnt(0);
         self.sound_writes.clear();
         self.dma_writes.clear();
         self.timer_writes.clear();
@@ -654,9 +656,9 @@ impl MemoryBus {
                         self.io.halt = true;
                     }
                 } else if offset == 0x204 {
-                    self.waitcnt = (self.waitcnt & 0xFF00) | (value as u16);
+                    self.set_waitcnt((self.waitcnt & 0xFF00) | (value as u16));
                 } else if offset == 0x205 {
-                    self.waitcnt = (self.waitcnt & 0x00FF) | ((value as u16) << 8);
+                    self.set_waitcnt((self.waitcnt & 0x00FF) | ((value as u16) << 8));
                 } else if (0x120..0x160).contains(&offset) && self.sio_store(offset, value) {
                     return;
                 }
@@ -742,9 +744,32 @@ impl MemoryBus {
 
     /// Cycles a CPU access to `address` costs: a halfword or byte, or a
     /// word; non-sequential, or sequential to the previous access.
+    ///
+    /// GBATEK, GBA Memory Map: the GamePak's sequential burst cannot cross a
+    /// 128 KiB boundary, so an access that lands on one is non-sequential
+    /// whatever came before.
     #[inline]
     pub(crate) fn access_cycles(&self, address: u32, word: bool, seq: bool) -> u32 {
+        let seq = seq && !(address & 0x1_FFFF == 0 && (0x08..0x0E).contains(&(address >> 24)));
         self.wait.cost(address, word, seq)
+    }
+
+    /// WAITCNT as last written.
+    pub fn waitcnt(&self) -> u16 {
+        self.waitcnt
+    }
+
+    /// Write WAITCNT and rebuild the wait table from it. Everything that sets
+    /// it - the CPU's store, reset, a save-state load - comes through here.
+    pub(crate) fn set_waitcnt(&mut self, value: u16) {
+        self.waitcnt = value;
+        self.wait = timing::WaitTable::from_waitcnt(value);
+    }
+
+    /// Whether the GamePak prefetch buffer is enabled (WAITCNT bit 14).
+    #[inline]
+    pub(crate) fn prefetch_enabled(&self) -> bool {
+        self.waitcnt & 0x4000 != 0
     }
 
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
