@@ -124,10 +124,16 @@ impl Gba {
                 .cycles_to_irq()
                 .unwrap_or(u32::MAX)
                 .min(self.ppu.cycles_to_next_event());
+            // A serial transfer's end is a wake-up event as well.
+            let step = match self.bus.sio_cycles {
+                0 => step,
+                sio => step.min(sio),
+            };
             self.apply_dma_writes();
             self.apply_timer_writes();
             self.ppu.tick(step, &mut self.bus, &mut self.dma);
             self.timer.tick(step, &mut self.bus);
+            self.bus.tick_sio(step);
             self.apu.tick(step);
             self.cycles += step as u64;
 
@@ -149,6 +155,12 @@ impl Gba {
                 if self.bus.io.interrupt_pending() {
                     self.cpu.handle_irq();
                 }
+                // After `handle_irq`, which resets `entry_cycles`: on
+                // hardware the BIOS epilogue runs once the handler returns,
+                // and the total to the caller's next instruction is the same.
+                if std::mem::take(&mut self.bus.io.halt_swi) {
+                    self.cpu.entry_cycles += bios::HALT_RETURN_CYCLES;
+                }
             }
             return (self.cycles - before) as u32;
         }
@@ -165,6 +177,15 @@ impl Gba {
         // value (mGBA suite, timer-IRQ test).
         let timer_irq = self.timer.tick(cycles, &mut self.bus);
         self.apply_timer_writes();
+        // Same order as the timers: a transfer started by this instruction
+        // owns none of its cycles.
+        let mut sio_irq = None;
+        if self.bus.sio_cycles != 0 || self.bus.sio_written {
+            sio_irq = self.bus.tick_sio(cycles);
+            if self.bus.sio_written {
+                self.bus.apply_sio_write();
+            }
+        }
         self.ppu.tick(cycles, &mut self.bus, &mut self.dma);
         self.apu.tick(cycles);
 
@@ -172,7 +193,11 @@ impl Gba {
 
         // Deliver IRQs to CPU, `IRQ_DELAY` cycles after the line went high.
         if self.bus.io.interrupt_pending() {
-            let raised = timer_irq.map_or(self.cycles, |at| before + u64::from(at));
+            let raised = match (timer_irq, sio_irq) {
+                (Some(a), Some(b)) => before + u64::from(a.min(b)),
+                (Some(at), None) | (None, Some(at)) => before + u64::from(at),
+                (None, None) => self.cycles,
+            };
             let since = *self.irq_since.get_or_insert(raised);
             if self.cycles >= since + IRQ_DELAY {
                 self.cpu.handle_irq();

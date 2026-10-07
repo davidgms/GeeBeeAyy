@@ -50,6 +50,11 @@ pub struct MemoryBus {
     // ponytail: not in save states; the next SWI or IRQ (every frame in a
     // game) restores it. Save it if a game is found reading the BIOS.
     pub(crate) bios_latch: u32,
+    /// Cycles left in a normal-mode serial transfer, 0 when none is running.
+    pub sio_cycles: u32,
+    /// SIOCNT was written since `Gba::step` last looked; see
+    /// [`Self::apply_sio_write`].
+    pub(crate) sio_written: bool,
 }
 
 /// The BIOS read latch after boot or SoftReset: the opcode at [0x0DC+8].
@@ -86,6 +91,8 @@ impl MemoryBus {
             exec_thumb: false,
             open_bus_busy: std::cell::Cell::new(false),
             bios_latch: 0,
+            sio_cycles: 0,
+            sio_written: false,
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -113,6 +120,8 @@ impl MemoryBus {
         self.sound_writes.clear();
         self.dma_writes.clear();
         self.timer_writes.clear();
+        self.sio_cycles = 0;
+        self.sio_written = false;
         self.io = super::io::IoHandler::new();
         self.init_bios();
         self.set_keys(0);
@@ -331,6 +340,57 @@ impl MemoryBus {
         }
     }
 
+    /// Start or cancel a transfer after a SIOCNT write. Deferred to the end
+    /// of the instruction, so a halfword write sees its mode bits and its
+    /// start bit together.
+    ///
+    /// Only a normal-mode transfer on the internal clock can finish with no
+    /// cable: GBATEK, SIO Normal Mode, 8 or 32 bits at 256 KHz (64 cycles a
+    /// bit) or 2 MHz (8). An external clock, multiplayer and UART wait for a
+    /// peer that never comes, as on hardware with nothing plugged in.
+    pub(crate) fn apply_sio_write(&mut self) {
+        self.sio_written = false;
+        let cnt = u16::from_le_bytes([self.io_regs[0x128], self.io_regs[0x129]]);
+        if cnt & 0x80 == 0 {
+            self.sio_cycles = 0;
+            return;
+        }
+        let normal = matches!(self.sio_mode(), SioMode::Normal8 | SioMode::Normal32);
+        if self.sio_cycles == 0 && normal && cnt & 1 != 0 {
+            let bits = if cnt & 0x1000 != 0 { 32 } else { 8 };
+            let per_bit = if cnt & 2 != 0 { 8 } else { 64 };
+            self.sio_cycles = bits * per_bit;
+        }
+    }
+
+    /// Advance a running transfer by `cycles`. On completion the start bit
+    /// clears and, if SIOCNT bit 14 asks, IRQ 7 is requested; the return is
+    /// how far into `cycles` that happened.
+    pub(crate) fn tick_sio(&mut self, cycles: u32) -> Option<u32> {
+        if self.sio_cycles == 0 {
+            return None;
+        }
+        if cycles < self.sio_cycles {
+            self.sio_cycles -= cycles;
+            return None;
+        }
+        let at = self.sio_cycles;
+        self.sio_cycles = 0;
+        // The bits shifted in come from SI, which reads high with no cable
+        // (GBATEK, SIOCNT bit 2: "1=High/None").
+        if self.io_regs[0x129] & 0x10 != 0 {
+            self.io_regs[0x120..0x124].fill(0xFF);
+        } else {
+            self.io_regs[0x12A] = 0xFF;
+        }
+        self.io_regs[0x128] &= !0x80;
+        if self.io_regs[0x129] & 0x40 != 0 {
+            self.io.request_interrupt(0x80);
+            return Some(at);
+        }
+        None
+    }
+
     /// The serial port mode RCNT bits 14-15 and SIOCNT bits 12-13 select.
     fn sio_mode(&self) -> SioMode {
         match (self.io_regs[0x135] >> 6, (self.io_regs[0x129] >> 4) & 3) {
@@ -353,8 +413,14 @@ impl MemoryBus {
             // in every mode.
             0x120..=0x123 if self.sio_mode() == SioMode::Normal32 => value,
             0x120..=0x127 => return true,
-            0x128 => value & 0x8F,
-            0x129 => value & 0x7F,
+            0x128 => {
+                self.sio_written = true;
+                value & 0x8F
+            }
+            0x129 => {
+                self.sio_written = true;
+                value & 0x7F
+            }
             0x135 => value & 0xC1,
             // JOYCNT: bits 0-2 are acknowledged by writing 1, bit 6 is R/W.
             0x140 => (self.io_regs[0x140] & 0x07 & !value) | (value & 0x40),

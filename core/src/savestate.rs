@@ -16,11 +16,17 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// chip as it was.
 /// v8 appended the four DMA channel latches (what a DMA read of the BIOS
 /// returns). v6 and v7 still load, with the latches cleared.
-const SAVE_VERSION: u32 = 8;
+/// v9 appended the cycles left in a serial transfer. Older states load with
+/// no transfer running.
+const SAVE_VERSION: u32 = 9;
 
 /// Bytes the v8 DMA latch block takes at the end of a state.
 #[cfg(test)]
 const DMA_LATCHES_LEN: usize = 16;
+
+/// Bytes the v9 serial transfer counter takes at the end of a state.
+#[cfg(test)]
+const SIO_LEN: usize = 4;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -152,6 +158,8 @@ impl SaveState {
         for ch in &gba.dma.channels {
             write_u32(&mut buf, ch.latch);
         }
+
+        write_u32(&mut buf, gba.bus.sio_cycles);
 
         SaveState { data: buf }
     }
@@ -334,6 +342,12 @@ impl SaveState {
                 0
             };
         }
+
+        gba.bus.sio_cycles = if version >= 9 {
+            read_u32(&mut cursor)?
+        } else {
+            0
+        };
 
         Ok(())
     }
@@ -573,7 +587,7 @@ mod tests {
     fn a_hostile_chip_state_is_rejected() {
         let mut state = SaveState::create(&machine_with(b"EEPROM_V124"));
         let len = state.data.len();
-        let chip_at = len - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
+        let chip_at = len - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
         let chip = &mut state.data[chip_at..];
         chip[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes()); // EEPROM block
         let mut target = machine_with(b"EEPROM_V124");
@@ -607,7 +621,9 @@ mod tests {
     #[test]
     fn a_version_7_state_still_loads_with_clear_latches() {
         let mut state = SaveState::create(&Gba::new());
-        state.data.truncate(state.data.len() - DMA_LATCHES_LEN);
+        state
+            .data
+            .truncate(state.data.len() - SIO_LEN - DMA_LATCHES_LEN);
         state.data[4..8].copy_from_slice(&7u32.to_le_bytes());
         let mut target = Gba::new();
         target.dma.channels[1].latch = 0xDEAD_BEEF;
@@ -621,8 +637,30 @@ mod tests {
         let mut state = SaveState::create(&machine_with(b"FLASH1M_V103"));
         state
             .data
-            .truncate(state.data.len() - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN);
+            .truncate(state.data.len() - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN);
         state.data[4..8].copy_from_slice(&6u32.to_le_bytes());
         assert!(state.restore(&mut machine_with(b"FLASH1M_V103")).is_ok());
+    }
+
+    /// A serial transfer in flight is machine state: without it, a state
+    /// saved mid-transfer would leave SIOCNT's start bit set forever.
+    #[test]
+    fn a_serial_transfer_survives_a_save_state() {
+        let state = state_with(|gba| gba.bus.sio_cycles = 123);
+        let mut target = Gba::new();
+        state.restore(&mut target).expect("state should load");
+        assert_eq!(target.bus.sio_cycles, 123);
+    }
+
+    /// v8 had no serial counter. It still loads, with no transfer running.
+    #[test]
+    fn a_version_8_state_still_loads_with_no_serial_transfer() {
+        let mut state = SaveState::create(&Gba::new());
+        state.data.truncate(state.data.len() - SIO_LEN);
+        state.data[4..8].copy_from_slice(&8u32.to_le_bytes());
+        let mut target = Gba::new();
+        target.bus.sio_cycles = 99;
+        state.restore(&mut target).expect("v8 state should load");
+        assert_eq!(target.bus.sio_cycles, 0);
     }
 }

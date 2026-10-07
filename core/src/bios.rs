@@ -96,6 +96,7 @@ fn handle_register_ram_reset(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 /// SWI 0x02: Halt - enters low-power state until interrupt
 fn handle_halt(_cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     bus.io.halt = true;
+    bus.io.halt_swi = true;
     true
 }
 
@@ -113,6 +114,17 @@ fn handle_halt(_cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 /// and resolve it to the cycle: 44 fails 16 of 936 checks, 45 none, 46 18
 /// (`timer_count_up_matches_the_mgba_suite`).
 const INTR_WAIT_RETURN_CYCLES: u32 = 45;
+
+/// Cycles the BIOS spends after a wake from `Halt` (SWI 02h) before the
+/// caller's next instruction: the `bx lr` out of the halt routine and the SWI
+/// dispatcher's epilogue (`ldmfd`, `msr`, `ldmfd`, `msr`, `ldmfd`,
+/// `movs pc, lr`), which this HLE does not execute. Same idea as
+/// `INTR_WAIT_RETURN_CYCLES`, without its flag check. Fitted to the mGBA
+/// suite's SIO timing test (hardware values): its four normal-mode rows all
+/// sit 30 cycles above the bit time plus this core's IRQ path, and 29 or 31
+/// fail all four. That test cannot tell a halt return cost from a transfer
+/// start latency; the halt return is the one known to be missing here.
+pub(crate) const HALT_RETURN_CYCLES: u32 = 30;
 
 /// SWI 0x04: IntrWait(r1=discardOldFlags, r2=IEFlags)
 /// SWI 04h. GBATEK: "Continues to wait in Halt state until one (or more) of
