@@ -148,14 +148,12 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         // Format 4/5/6: ALU, hi-register + BX, PC-relative load
         0b0100 => {
             if bits15_10 == 0b01_0000 {
-                format4_alu(instruction, cpu);
+                cycles += format4_alu(instruction, cpu);
             } else if bits15_10 == 0b01_0001 {
+                // 1S, plus the refill `Cpu::step` charges when Rd is PC. This
+                // used to cost 3 whatever it did, so `nop` (`mov r8, r8`)
+                // took three cycles.
                 format5_hireg(instruction, cpu);
-                // Charged as 3 whatever the operation; only a write to PC
-                // costs the refill. Kept until the cycle counts are fixed.
-                if !cpu.branched {
-                    cycles += 2;
-                }
             } else {
                 // bits [15:11] = 01001 -> Format 6: LDR Rd, [PC, #imm]
                 cycles += format6_ldr_pc(instruction, cpu, bus);
@@ -167,11 +165,9 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let load = (instruction >> 11) & 1 == 1;
             let flag = (instruction >> 10) & 1 == 1;
             let word = (instruction >> 9) & 1 == 0 && !flag;
+            // A load is 1S+1N+1I, a store 2N.
             cycles += bus.access_cycles(format7_addr(instruction, cpu), word, false);
-            // Loads and stores alike are charged 1S+1N+1I here, a store's
-            // internal cycle being an over-count kept until the cycle counts
-            // are fixed.
-            cycles += 1;
+            cycles += u32::from(load);
             if (instruction >> 9) & 1 == 0 {
                 // Format 7: word / byte. bit11 = L, bit10 = B
                 match (load, flag) {
@@ -313,9 +309,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         bus.write32(sp, cpu.registers[14]);
                     }
                     cpu.registers[13] = cpu.registers[13].wrapping_sub(reg_count * 4);
-                    // Over-counted by one, kept until the cycle counts are
-                    // fixed.
-                    cycles += 1;
                 } else {
                     // POP
                     let mut sp = cpu.registers[13];
@@ -331,10 +324,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                     }
                     if r == 1 {
                         cycles += bus.access_cycles(sp, true, sp != start);
-                        // `pop {pc}` was charged as if PC were any register,
-                        // without its refill; kept until the cycle counts are
-                        // fixed.
-                        cycles -= 2;
                         let val = bus.read32(sp);
                         if val & 1 == 1 {
                             cpu.cpsr |= 0x20;
@@ -426,9 +415,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 let offset = (((offset11 << 12) as i32) << 9) >> 9;
                 let lr = cpu.registers[15].wrapping_add(offset as u32);
                 cpu.set_reg(14, lr);
-                // Charged as 3 like the second half; kept until the cycle
-                // counts are fixed.
-                cycles += 2;
             } else {
                 // Second half: branch to LR + (offset << 1), LR = address of the
                 // instruction after this half, with the THUMB bit set.
@@ -448,7 +434,9 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 // Format 4: ALU operations
 // ---------------------------------------------------------------------------
 
-fn format4_alu(instruction: u16, cpu: &mut Cpu) {
+/// Returns the internal cycles: one for a shift by register, the multiplier's
+/// `m` for `mul`.
+fn format4_alu(instruction: u16, cpu: &mut Cpu) -> u32 {
     let op = (instruction >> 6) & 0xF;
     let rs = ((instruction >> 3) & 7) as usize;
     let rd = (instruction & 7) as usize;
@@ -603,12 +591,13 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
             cpu.set_flag_nz(result);
         }
         0b1101 => {
-            // MUL
+            // MUL: 1S+mI, Rd being the multiplier.
             result = rd_val.wrapping_mul(rs_val);
             cpu.set_reg(rd, result);
             // Rd is the multiplier the Booth array steps through.
             let c = crate::cpu::arm::multiply_carry(rs_val, rd_val, 0);
             cpu.set_flags(result >> 31 == 1, result == 0, c, cpu.flag_v());
+            return crate::cpu::arm::multiplier_cycles(rd_val, true);
         }
         0b1110 => {
             // BIC
@@ -624,6 +613,8 @@ fn format4_alu(instruction: u16, cpu: &mut Cpu) {
         }
         _ => {}
     }
+    // LSL, LSR, ASR and ROR (ops 2, 3, 4, 7) shift by a register.
+    (0x9Cu32 >> op) & 1
 }
 
 // ---------------------------------------------------------------------------

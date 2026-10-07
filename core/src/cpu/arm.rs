@@ -159,7 +159,8 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.reg(rn)
     };
 
-    // Shift operand2
+    // Shift operand2. A shift by a register costs an internal cycle.
+    let cycles = u32::from(register_specified_shift);
     let shifted = cpu.shift_operand2(instruction, immediate);
     let op2 = shifted.value;
 
@@ -203,12 +204,12 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
         0b1000 => {
             let result = rn_val & op2;
             cpu.set_flag_nz_data(result, shifted.carry_out);
-            return 0;
+            return cycles;
         }
         0b1001 => {
             let result = rn_val ^ op2;
             cpu.set_flag_nz_data(result, shifted.carry_out);
-            return 0;
+            return cycles;
         }
         0b1010 => {
             let result = rn_val.wrapping_sub(op2);
@@ -219,7 +220,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
                 carry,
                 overflow_sub(rn_val, op2, result),
             );
-            return 0;
+            return cycles;
         }
         0b1011 => {
             let result = rn_val.wrapping_add(op2);
@@ -230,7 +231,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
                 carry,
                 overflow_add(rn_val, op2, result),
             );
-            return 0;
+            return cycles;
         }
         0b1100 => (rn_val | op2, true, shifted.carry_out, cpu.flag_v()),
         0b1101 => {
@@ -261,7 +262,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
             }
         }
     }
-    0
+    cycles
 }
 
 pub fn overflow_add(op1: u32, op2: u32, result: u32) -> bool {
@@ -306,8 +307,25 @@ fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.set_flags(n, z, c, cpu.flag_v());
     }
 
-    // MUL takes 1S + mI cycles, approximated as 1S + 3I.
-    3
+    // MUL is 1S+mI, MLA 1S+(m+1)I.
+    multiplier_cycles(rs_val, true) + u32::from(accumulate)
+}
+
+/// The `m` of GBATEK's multiply timings: the multiplier array retires 8 bits
+/// of the multiplier (Rs; THUMB: Rd) per cycle and stops once the rest are
+/// all zero - or, for the signed forms, all one.
+pub(crate) fn multiplier_cycles(multiplier: u32, signed: bool) -> u32 {
+    let rest = if signed && multiplier >> 31 != 0 {
+        !multiplier
+    } else {
+        multiplier
+    };
+    match rest {
+        0..=0xFF => 1,
+        0x100..=0xFFFF => 2,
+        0x1_0000..=0xFF_FFFF => 3,
+        _ => 4,
+    }
 }
 
 fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
@@ -348,8 +366,8 @@ fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.set_flags(n, z, c, cpu.flag_v());
     }
 
-    // Long multiply takes 1S + (m+1)I, approximated as 1S + 4I.
-    4
+    // UMULL/SMULL take 1S+(m+1)I, UMLAL/SMLAL 1S+(m+2)I.
+    multiplier_cycles(rs_val, signed) + 1 + u32::from(accumulate)
 }
 
 // ---------------------------------------------------------------------------
