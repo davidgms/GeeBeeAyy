@@ -403,3 +403,42 @@ fn a_dma_aligns_its_addresses_to_the_unit_width() {
     transfer(&mut gba, 3, 0x0200_0200, 0x0E00_0011, 1, ENABLE | WORD);
     assert_eq!(gba.bus.read8(0x0E00_0010), 0xD8, "word destination");
 }
+
+/// A repeating DMA reloads its unit count from DMAxCNT_L on every repeat, so
+/// a count written after the enable edge applies from the second transfer on
+/// (mGBA suite, Misc. edge cases, "DMA count latching": hardware copies
+/// src[0..2] on the first VBlank and src[2..6] on the second, leaving 1 then
+/// 5 in a fixed destination). The count latched at the enable edge was being
+/// reused instead, which gave 3.
+#[test]
+fn a_repeating_dma_reloads_its_count_from_the_register() {
+    let mut gba = spinning_gba();
+    for i in 0..32u32 {
+        gba.bus.write16(0x0200_0000 + i * 2, i as u16);
+    }
+    // VBlank, repeat, 16-bit, source increment, destination fixed, count 2.
+    configure(
+        &mut gba,
+        3,
+        0x0200_0000,
+        0x0200_0100,
+        2,
+        0x8000 | 0x1000 | 0x0200 | 0x0040,
+    );
+    // The enable edge latches the count at the end of the next instruction.
+    gba.step();
+    // Count 4 for the repeats; the running transfer keeps its latched 2.
+    gba.bus.write16(0x0400_00DC, 4);
+    gba.run_frame();
+    assert_eq!(
+        gba.bus.read16(0x0200_0100),
+        1,
+        "first VBlank copies two units"
+    );
+    gba.run_frame();
+    assert_eq!(
+        gba.bus.read16(0x0200_0100),
+        5,
+        "the repeat must copy CNT_L's four units, not the two latched at enable"
+    );
+}

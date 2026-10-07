@@ -216,6 +216,9 @@ pub struct IoHandler {
     /// re-executed SWI from discarding the very flags the IRQ handler just
     /// set - `VBlankIntrWait` reloads r0=1 every time it runs.
     pub intr_wait_active: bool,
+    /// True while halted by the HLE `Halt` SWI, whose BIOS return path has
+    /// a cost of its own after the wake; see `bios::HALT_RETURN_CYCLES`.
+    pub halt_swi: bool,
 }
 
 impl Default for IoHandler {
@@ -232,6 +235,7 @@ impl IoHandler {
             ime: 0,
             halt: false,
             intr_wait_active: false,
+            halt_swi: false,
         }
     }
 

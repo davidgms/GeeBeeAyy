@@ -1214,3 +1214,38 @@ fn mode2_sorts_its_affine_bgs_by_priority_then_bg_number() {
         "priority-0 BG3 must cover priority-1 BG2"
     );
 }
+
+/// GBATEK, LCD I/O Interrupts and Status: "Although the drawing time is only
+/// 960 cycles (240*4), the H-Blank flag is "0" for a total of 1006 cycles."
+/// The HBlank IRQ (and HBlank DMA) still start at 960; only the DISPSTAT flag
+/// is late. The mGBA suite's "H-blank bit" flips measure the flag set for
+/// ~226 cycles a line on hardware; it read set for 272 here.
+#[test]
+fn the_hblank_flag_rises_at_cycle_1006_while_the_irq_still_fires_at_960() {
+    use geebeeayy_core::dma::Dma;
+    use geebeeayy_core::memory::MemoryBus;
+    use geebeeayy_core::ppu::Ppu;
+
+    let mut ppu = Ppu::new();
+    let mut bus = MemoryBus::new();
+    let mut dma = Dma::new();
+    bus.write16(0x0400_0004, 0x0010); // HBlank IRQ enable
+    let flag = |bus: &MemoryBus| bus.read16(0x0400_0004) & 2 != 0;
+
+    // The PPU picks up DISPSTAT's IRQ enables at the end of a tick.
+    ppu.tick(1, &mut bus, &mut dma);
+    ppu.tick(959, &mut bus, &mut dma);
+    assert!(
+        ppu.hblank_pending(),
+        "the HBlank IRQ is requested at cycle 960"
+    );
+    assert!(!flag(&bus), "the flag is still clear at 960");
+    ppu.tick(45, &mut bus, &mut dma);
+    assert!(!flag(&bus), "the flag is still clear at 1005");
+    ppu.tick(1, &mut bus, &mut dma);
+    assert!(flag(&bus), "the flag is set from 1006");
+    ppu.tick(225, &mut bus, &mut dma);
+    assert!(flag(&bus), "the flag stays set to the end of the line");
+    ppu.tick(1, &mut bus, &mut dma);
+    assert!(!flag(&bus), "the flag clears with the next line");
+}

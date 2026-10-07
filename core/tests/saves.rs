@@ -564,15 +564,16 @@ fn a_save_state_with_an_absurd_length_field_is_rejected_not_allocated() {
     let mut bytes = gba.save_state().data;
 
     // Tail layout is `save_len: u32`, `cycles: u64`, the 18-byte chip state
-    // (v7) and the 16-byte DMA latches (v8); with no cartridge save present,
+    // (v7), the 16-byte DMA latches (v8) and the serial transfer counter
+    // (v9); with no cartridge save present,
     // `save_len` is zero, which pins the offset. The offset used to be len-12,
     // which after v7 landed in the chip block and passed only because the
     // chip rejected the 0xFF bytes.
-    let at = bytes.len() - 4 - 8 - 18 - 16;
+    let at = bytes.len() - 4 - 8 - 18 - 16 - 4;
     assert_eq!(
         &bytes[at..at + 4],
         &[0, 0, 0, 0],
-        "expected the save-length field 46 bytes from the end"
+        "expected the save-length field 50 bytes from the end"
     );
     bytes[at..at + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 

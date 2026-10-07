@@ -8,6 +8,9 @@ const FRAME_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
 const LAYER_OBJ: usize = 4;
 const LAYER_BD: usize = 5;
 
+/// Line cycle at which DISPSTAT's H-Blank flag rises; see `tick`.
+const HBLANK_FLAG_CYCLE: u32 = 1006;
+
 pub struct Ppu {
     frame_buffer: [u8; FRAME_SIZE],
     pub scanline: u16,
@@ -339,7 +342,11 @@ impl Ppu {
 
         let dispstat = game_bits
             | (self.vblank as u16)
-            | ((self.hblank as u16) << 1)
+            // GBATEK, LCD I/O Interrupts and Status: "Although the drawing
+            // time is only 960 cycles (240*4), the H-Blank flag is "0" for a
+            // total of 1006 cycles." The IRQ, HBlank DMA and the line draw
+            // stay at 960 (`self.hblank`); only the flag is late.
+            | (((self.cycle_counter >= HBLANK_FLAG_CYCLE) as u16) << 1)
             | ((vcount_match as u16) << 2);
         bus.write16(0x0400_0004, dispstat);
 

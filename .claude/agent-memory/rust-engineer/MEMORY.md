@@ -26,3 +26,4 @@ here pointing at it.
 - **2026-10-04** - [DMA latch, ROM-increment, alignment rules (project memory)](../../memory.md)
 - **2026-10-04** - [Licence check before porting (NBA is GPL, mGBA MPL); source without auth; suite table -> test](2026-10-04-reference-sources-and-hardware-tables.md)
 - **2026-10-04** - [BIOS math coefficients, multiply carry model, BIOS read latch (project memory)](../../memory.md)
+- **2026-10-07** - [SIO regs/timing, Halt return 30, HBlank flag 1006, misc-edge log swaps got/expected (project memory)](../../memory.md)
