@@ -2,7 +2,11 @@ use super::Cpu;
 use crate::memory::MemoryBus;
 
 /// Execute a single THUMB instruction.
+///
+/// Returns the cycles of its data accesses and internal cycles; the opcode
+/// fetch and any pipeline refill are charged by `Cpu::step`.
 pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
+    let mut cycles = 0;
     let bits15_12 = (instruction >> 12) & 0xF;
     let bits15_10 = (instruction >> 10) & 0x3F;
 
@@ -86,7 +90,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                     cpu.set_reg(rd, result);
                 }
             }
-            1
         }
 
         // Format 3: MOV, CMP, ADD, SUB with an 8-bit immediate
@@ -138,7 +141,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         }
                         _ => unreachable!(),
                     }
-                    1
                 }
             }
         }
@@ -147,14 +149,16 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         0b0100 => {
             if bits15_10 == 0b01_0000 {
                 format4_alu(instruction, cpu);
-                1
             } else if bits15_10 == 0b01_0001 {
                 format5_hireg(instruction, cpu);
-                3
+                // Charged as 3 whatever the operation; only a write to PC
+                // costs the refill. Kept until the cycle counts are fixed.
+                if !cpu.branched {
+                    cycles += 2;
+                }
             } else {
                 // bits [15:11] = 01001 -> Format 6: LDR Rd, [PC, #imm]
-                format6_ldr_pc(instruction, cpu, bus);
-                3
+                cycles += format6_ldr_pc(instruction, cpu, bus);
             }
         }
 
@@ -162,6 +166,12 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         0b0101 => {
             let load = (instruction >> 11) & 1 == 1;
             let flag = (instruction >> 10) & 1 == 1;
+            let word = (instruction >> 9) & 1 == 0 && !flag;
+            cycles += bus.access_cycles(format7_addr(instruction, cpu), word, false);
+            // Loads and stores alike are charged 1S+1N+1I here, a store's
+            // internal cycle being an over-count kept until the cycle counts
+            // are fixed.
+            cycles += 1;
             if (instruction >> 9) & 1 == 0 {
                 // Format 7: word / byte. bit11 = L, bit10 = B
                 match (load, flag) {
@@ -186,7 +196,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                     (true, true) => format9_ldrsh(instruction, cpu, bus),
                 }
             }
-            3
         }
 
         // Format 9: LDR/STR with immediate offset
@@ -200,24 +209,18 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 .reg(rn)
                 .wrapping_add(if byte { offset5 } else { offset5 * 4 });
 
+            cycles += bus.access_cycles(addr, !byte, false);
+            if load {
+                cycles += 1;
+            }
             match (load, byte) {
                 (true, false) => {
                     let val = bus.read32_rotated(addr);
                     cpu.set_reg(rd, val);
-                    3
                 }
-                (true, true) => {
-                    cpu.set_reg(rd, bus.read8(addr) as u32);
-                    3
-                }
-                (false, false) => {
-                    bus.write32(addr, cpu.reg(rd));
-                    2
-                }
-                (false, true) => {
-                    bus.write8(addr, cpu.reg(rd) as u8);
-                    2
-                }
+                (true, true) => cpu.set_reg(rd, bus.read8(addr) as u32),
+                (false, false) => bus.write32(addr, cpu.reg(rd)),
+                (false, true) => bus.write8(addr, cpu.reg(rd) as u8),
             }
         }
 
@@ -229,13 +232,13 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let rd = (instruction & 7) as usize;
             let addr = cpu.reg(rn).wrapping_add(offset5 as u32);
 
+            cycles += bus.access_cycles(addr, false, false);
             if load {
+                cycles += 1;
                 let val = bus.read16(addr);
                 cpu.set_reg(rd, val as u32);
-                3
             } else {
                 bus.write16(addr, cpu.reg(rd) as u16);
-                2
             }
         }
 
@@ -248,14 +251,14 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let sp = cpu.registers[13];
             let addr = sp.wrapping_add(offset);
 
+            cycles += bus.access_cycles(addr, true, false);
             if load {
+                cycles += 1;
                 // SP-relative loads rotate on a misaligned SP, same as any LDR.
                 let val = bus.read32_rotated(addr);
                 cpu.set_reg(rd, val);
-                3
             } else {
                 bus.write32(addr, cpu.reg(rd));
-                2
             }
         }
 
@@ -272,7 +275,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             };
 
             cpu.set_reg(rd, result);
-            1
         }
 
         // Format 13/14: ADD SP / PUSH / POP
@@ -287,7 +289,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 } else {
                     cpu.registers[13] = cpu.registers[13].wrapping_sub(imm7 * 4);
                 }
-                1
             } else {
                 // Format 14: PUSH/POP
                 let l = (instruction >> 11) & 1;
@@ -299,29 +300,41 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                     let reg_count = reg_list.count_ones() + r as u32;
                     let mut sp = cpu.registers[13].wrapping_sub(reg_count * 4);
                     sp &= !3;
+                    let start = sp;
                     for i in 0..8u16 {
                         if reg_list & (1 << i) != 0 {
+                            cycles += bus.access_cycles(sp, true, sp != start);
                             bus.write32(sp, cpu.reg(i as usize));
                             sp = sp.wrapping_add(4);
                         }
                     }
                     if r == 1 {
+                        cycles += bus.access_cycles(sp, true, sp != start);
                         bus.write32(sp, cpu.registers[14]);
                     }
                     cpu.registers[13] = cpu.registers[13].wrapping_sub(reg_count * 4);
-                    2 + reg_count
+                    // Over-counted by one, kept until the cycle counts are
+                    // fixed.
+                    cycles += 1;
                 } else {
                     // POP
-                    let reg_count = reg_list.count_ones() + r as u32;
                     let mut sp = cpu.registers[13];
+                    let start = sp;
+                    cycles += 1;
                     for i in 0..8u16 {
                         if reg_list & (1 << i) != 0 {
+                            cycles += bus.access_cycles(sp, true, sp != start);
                             let val = bus.read32(sp);
                             cpu.set_reg(i as usize, val);
                             sp = sp.wrapping_add(4);
                         }
                     }
                     if r == 1 {
+                        cycles += bus.access_cycles(sp, true, sp != start);
+                        // `pop {pc}` was charged as if PC were any register,
+                        // without its refill; kept until the cycle counts are
+                        // fixed.
+                        cycles -= 2;
                         let val = bus.read32(sp);
                         if val & 1 == 1 {
                             cpu.cpsr |= 0x20;
@@ -333,7 +346,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         sp = sp.wrapping_add(4);
                     }
                     cpu.registers[13] = sp;
-                    2 + reg_count
                 }
             }
         }
@@ -343,12 +355,14 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let load = (instruction >> 11) & 1 == 1;
             let rn = ((instruction >> 8) & 7) as usize;
             let reg_list = instruction & 0xFF;
-            let reg_count = reg_list.count_ones();
             let mut addr = cpu.reg(rn);
+            let start = addr;
 
             if load {
+                cycles += 1;
                 for i in 0..8u16 {
                     if reg_list & (1 << i) != 0 {
+                        cycles += bus.access_cycles(addr, true, addr != start);
                         let val = bus.read32(addr);
                         cpu.set_reg(i as usize, val);
                         addr = addr.wrapping_add(4);
@@ -361,16 +375,15 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 if reg_list & (1 << rn) == 0 {
                     cpu.set_reg(rn, addr);
                 }
-                2 + reg_count
             } else {
                 for i in 0..8u16 {
                     if reg_list & (1 << i) != 0 {
+                        cycles += bus.access_cycles(addr, true, addr != start);
                         bus.write32(addr, cpu.reg(i as usize));
                         addr = addr.wrapping_add(4);
                     }
                 }
                 cpu.set_reg(rn, addr);
-                1 + reg_count
             }
         }
 
@@ -384,19 +397,14 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 // Format 17: SWI
                 let comment = instruction & 0xFF;
                 cpu.swi(comment as u32, bus);
-                3
             } else if cond == 0b1110 {
                 // Undefined, treat as NOP
-                1
             } else if cpu.condition_met(cond as u32) {
                 // Format 16: Conditional branch
                 let offset = (instruction & 0xFF) as i8 as i32;
                 let pc = cpu.registers[15];
                 let target = pc.wrapping_add((offset << 1) as u32);
                 cpu.set_reg(15, target);
-                3
-            } else {
-                1
             }
         }
 
@@ -408,7 +416,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let pc = cpu.registers[15];
             let target = pc.wrapping_add((offset11 << 1) as u32);
             cpu.set_reg(15, target);
-            3
         }
 
         // Format 19: Long branch with link (both halves; bit 11 picks which)
@@ -419,6 +426,9 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 let offset = (((offset11 << 12) as i32) << 9) >> 9;
                 let lr = cpu.registers[15].wrapping_add(offset as u32);
                 cpu.set_reg(14, lr);
+                // Charged as 3 like the second half; kept until the cycle
+                // counts are fixed.
+                cycles += 2;
             } else {
                 // Second half: branch to LR + (offset << 1), LR = address of the
                 // instruction after this half, with the THUMB bit set.
@@ -427,11 +437,11 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 cpu.set_reg(14, return_addr);
                 cpu.set_reg(15, target);
             }
-            3
         }
 
-        _ => 1,
+        _ => {}
     }
+    cycles
 }
 
 // ---------------------------------------------------------------------------
@@ -671,12 +681,13 @@ fn format5_hireg(instruction: u16, cpu: &mut Cpu) {
 // Format 6: LDR (PC-relative)
 // ---------------------------------------------------------------------------
 
-fn format6_ldr_pc(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) {
+fn format6_ldr_pc(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     let rd = ((instruction >> 8) & 7) as usize;
     let imm8 = (instruction & 0xFF) as u32;
     let addr = (cpu.registers[15] & !2).wrapping_add(imm8 * 4);
     let val = bus.read32(addr);
     cpu.set_reg(rd, val);
+    bus.access_cycles(addr, true, false) + 1
 }
 
 // ---------------------------------------------------------------------------

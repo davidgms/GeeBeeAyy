@@ -860,3 +860,83 @@ fn muls_sets_carry_from_the_last_booth_digit() {
         assert_eq!(cpu.cpsr & (1 << 29) != 0, carry, "THUMB mul by {rs:#010x}");
     }
 }
+
+/// Prime the registers and memory the cycle tables below rely on: r0 a code
+/// address (THUMB bit set for THUMB), r1 a data address holding code
+/// addresses, r2 = 0x10, r3 = 0, and two code addresses on the stack.
+fn prime(cpu: &mut Cpu, bus: &mut MemoryBus, thumb: bool) {
+    cpu.registers[0] = BASE + 0x100 + u32::from(thumb);
+    cpu.registers[1] = BASE + 0x200;
+    cpu.registers[2] = 0x10;
+    cpu.registers[3] = 0;
+    for at in [BASE + 0x200, BASE + 0x204, 0x0300_7F00, 0x0300_7F04] {
+        bus.write32(at, BASE + 0x100 + u32::from(thumb));
+    }
+}
+
+/// Cycles per instruction with every access in 1-cycle memory (IWRAM).
+/// This is the accounting every fitted timing constant in the core was
+/// measured against, so a change to how cycles are counted must leave it
+/// alone unless an entry here is itself the subject of the change.
+#[test]
+fn arm_instruction_cycles_in_one_cycle_memory() {
+    let cases: &[(u32, u32, &str)] = &[
+        (0xE1A0_0001, 1, "mov r0, r1"),
+        (0xE080_0211, 1, "add r0, r0, r1, lsl r2"),
+        (0xE1A0_F000, 3, "mov pc, r0"),
+        (0x01A0_0001, 1, "moveq r0, r1 (not taken)"),
+        (0xE000_0291, 4, "mul r0, r1, r2"),
+        (0xE083_0291, 5, "umull r0, r3, r1, r2"),
+        (0xE591_2000, 3, "ldr r2, [r1]"),
+        (0xE591_F000, 5, "ldr pc, [r1]"),
+        (0xE581_2000, 2, "str r2, [r1]"),
+        (0xE1D1_20B0, 3, "ldrh r2, [r1]"),
+        (0xE1C1_20B0, 2, "strh r2, [r1]"),
+        (0xE891_000C, 4, "ldmia r1, {r2, r3}"),
+        (0xE891_8004, 6, "ldmia r1, {r2, pc}"),
+        (0xE881_000C, 3, "stmia r1, {r2, r3}"),
+        (0xE101_2093, 4, "swp r2, r3, [r1]"),
+        (0xEA00_0000, 3, "b"),
+        (0xE12F_FF10, 3, "bx r0"),
+        (0xE10F_0000, 1, "mrs r0, cpsr"),
+        (0xEF06_0000, 3, "swi 0x06"),
+    ];
+    for &(op, want, text) in cases {
+        let (mut cpu, mut bus) = setup_arm(&[op]);
+        prime(&mut cpu, &mut bus, false);
+        assert_eq!(cpu.step(&mut bus), want, "{text}");
+    }
+}
+
+#[test]
+fn thumb_instruction_cycles_in_one_cycle_memory() {
+    let cases: &[(u16, u32, &str)] = &[
+        (0x2001, 1, "mov r0, #1"),
+        (0x4088, 1, "lsl r0, r1"),
+        (0x4348, 1, "mul r0, r1"),
+        (0x46C0, 3, "mov r8, r8"),
+        (0x4687, 3, "mov pc, r0"),
+        (0x4700, 3, "bx r0"),
+        (0x4A00, 3, "ldr r2, [pc, #0]"),
+        (0x58CA, 3, "ldr r2, [r1, r3]"),
+        (0x50CA, 3, "str r2, [r1, r3]"),
+        (0x680A, 3, "ldr r2, [r1]"),
+        (0x600A, 2, "str r2, [r1]"),
+        (0xB40C, 4, "push {r2, r3}"),
+        (0xBC0C, 4, "pop {r2, r3}"),
+        (0xBD04, 4, "pop {r2, pc}"),
+        (0xC90C, 4, "ldmia r1!, {r2, r3}"),
+        (0xC10C, 3, "stmia r1!, {r2, r3}"),
+        (0xE000, 3, "b"),
+        (0xD100, 3, "bne (taken)"),
+        (0xD000, 1, "beq (not taken)"),
+        (0xF000, 3, "bl, first half"),
+        (0xF800, 3, "bl, second half"),
+        (0xDF06, 3, "swi 0x06"),
+    ];
+    for &(op, want, text) in cases {
+        let (mut cpu, mut bus) = setup_thumb(&[op]);
+        prime(&mut cpu, &mut bus, true);
+        assert_eq!(cpu.step(&mut bus), want, "{text}");
+    }
+}

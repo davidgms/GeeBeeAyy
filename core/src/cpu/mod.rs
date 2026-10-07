@@ -36,7 +36,7 @@ pub struct Cpu {
     pub spsr_und: u32,
     pub halted: bool,
     /// Set when an instruction writes R15, so `step` knows not to advance PC itself.
-    branched: bool,
+    pub(crate) branched: bool,
     /// Cycles owed by an exception entry, or by HLE BIOS code that ran in no
     /// time, charged to the next `step`.
     pub(crate) entry_cycles: u32,
@@ -167,15 +167,20 @@ impl Cpu {
         }
 
         // R15 reads as the address of the instruction plus two fetches while it
-        // executes: +8 in ARM, +4 in THUMB.
-        let cycles = if is_thumb {
+        // executes: +8 in ARM, +4 in THUMB. Each instruction pays for the
+        // prefetch of that address; the decoders return what their data
+        // accesses and internal cycles cost. Returned rather than added to a
+        // field as they go: a running total in memory measured ~7% slower
+        // per frame on Mario Tennis.
+        let mut cycles = if is_thumb {
             let instruction = bus.read16(pc);
             self.registers[15] = pc.wrapping_add(4);
-            self.execute_thumb(instruction, bus)
+            bus.access_cycles(pc.wrapping_add(4), false, true)
+                + self.execute_thumb(instruction, bus)
         } else {
             let instruction = bus.read32(pc);
             self.registers[15] = pc.wrapping_add(8);
-            self.execute_arm(instruction, bus)
+            bus.access_cycles(pc.wrapping_add(8), true, true) + self.execute_arm(instruction, bus)
         };
 
         // Only advance to the next instruction when the instruction itself did
@@ -187,6 +192,15 @@ impl Cpu {
         // Align against the state we are in *now*: a BX or an `ldm ^` may have
         // flipped the T bit as part of this instruction.
         self.align_pc();
+
+        // Any write to PC refills the pipeline at the target, in the state
+        // the instruction left: one place for every branch, load to PC and
+        // exception return.
+        if self.branched {
+            let (target, word) = (self.registers[15], self.cpsr & 0x20 == 0);
+            cycles +=
+                bus.access_cycles(target, word, false) + bus.access_cycles(target, word, true);
+        }
 
         cycles + entry
     }
@@ -203,10 +217,11 @@ impl Cpu {
 
     pub fn execute_arm(&mut self, instruction: u32, bus: &mut super::memory::MemoryBus) -> u32 {
         let cond = (instruction >> 28) & 0xF;
-        if !self.condition_met(cond) {
-            return 1;
+        if self.condition_met(cond) {
+            arm::execute(instruction, self, bus)
+        } else {
+            0
         }
-        arm::execute(instruction, self, bus)
     }
 
     pub fn execute_thumb(&mut self, instruction: u16, bus: &mut super::memory::MemoryBus) -> u32 {
@@ -527,8 +542,16 @@ impl Cpu {
 
     /// SWI handler - calls BIOS HLE
     pub fn swi(&mut self, comment: u32, bus: &mut super::memory::MemoryBus) {
+        let back = if self.cpsr & 0x20 != 0 { 2 } else { 4 };
         // Software interrupt: call BIOS HLE
         super::bios::handle_swi(comment, self, bus);
+        // The BIOS returns with `movs pc, lr`, a refill at the caller's next
+        // instruction. Writing PC here charges it there, in the caller's
+        // region, unless the HLE already sent PC somewhere else (SoftReset,
+        // or IntrWait re-running its own SWI).
+        if !self.branched {
+            self.set_reg(15, self.registers[15].wrapping_sub(back));
+        }
         // What the real BIOS's SWI epilogue (or SoftReset) leaves in the
         // BIOS read latch; the HLE runs no BIOS code to fetch it.
         bus.bios_latch = if comment == 0 {

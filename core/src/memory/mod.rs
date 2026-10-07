@@ -1,3 +1,5 @@
+mod timing;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SioMode {
     Normal8,
@@ -55,6 +57,8 @@ pub struct MemoryBus {
     /// SIOCNT was written since `Gba::step` last looked; see
     /// [`Self::apply_sio_write`].
     pub(crate) sio_written: bool,
+    /// What each CPU access costs, per region; see [`timing`].
+    wait: timing::WaitTable,
 }
 
 /// The BIOS read latch after boot or SoftReset: the opcode at [0x0DC+8].
@@ -93,6 +97,7 @@ impl MemoryBus {
             bios_latch: 0,
             sio_cycles: 0,
             sio_written: false,
+            wait: timing::WaitTable::flat(),
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -735,71 +740,11 @@ impl MemoryBus {
         self.rom = data.to_vec();
     }
 
-    pub fn read_cycles(&self, address: u32, is_32bit: bool) -> u32 {
-        match address {
-            0x0000_0000..=0x0000_3FFF => 1,
-            0x0200_0000..=0x0203_FFFF => {
-                if is_32bit {
-                    6
-                } else {
-                    3
-                }
-            }
-            0x0300_0000..=0x0300_7FFF => {
-                if is_32bit {
-                    2
-                } else {
-                    1
-                }
-            }
-            0x0400_0000..=0x0400_03FE => 1,
-            0x0500_0000..=0x0500_03FF => 1,
-            0x0600_0000..=0x0601_7FFF => 1,
-            0x0700_0000..=0x0700_03FF => 1,
-            0x0800_0000..=0x09FF_FFFF => {
-                let ws = (self.waitcnt >> 2) & 3;
-                if is_32bit {
-                    ws as u32 * 2 + 6
-                } else {
-                    ws as u32 + 3
-                }
-            }
-            0x0A00_0000..=0x0BFF_FFFF => {
-                let ws = (self.waitcnt >> 5) & 3;
-                if is_32bit {
-                    ws as u32 * 2 + 6
-                } else {
-                    ws as u32 + 3
-                }
-            }
-            0x0C00_0000..=0x0DFF_FFFF => {
-                let ws = (self.waitcnt >> 8) & 3;
-                if is_32bit {
-                    ws as u32 * 2 + 6
-                } else {
-                    ws as u32 + 3
-                }
-            }
-            _ => 1,
-        }
-    }
-
-    pub fn write_cycles(&self, address: u32, is_32bit: bool) -> u32 {
-        match address {
-            0x0200_0000..=0x0203_FFFF => {
-                if is_32bit {
-                    6
-                } else {
-                    3
-                }
-            }
-            0x0300_0000..=0x0300_7FFF => 1,
-            0x0400_0000..=0x0400_03FE => 1,
-            0x0500_0000..=0x0500_03FF => 1,
-            0x0600_0000..=0x0601_7FFF => 2,
-            0x0700_0000..=0x0700_03FF => 1,
-            _ => 1,
-        }
+    /// Cycles a CPU access to `address` costs: a halfword or byte, or a
+    /// word; non-sequential, or sequential to the previous access.
+    #[inline]
+    pub(crate) fn access_cycles(&self, address: u32, word: bool, seq: bool) -> u32 {
+        self.wait.cost(address, word, seq)
     }
 
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {
