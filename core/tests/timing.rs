@@ -221,6 +221,36 @@ fn rows() -> Vec<Row<'static>> {
             ],
         },
         Row {
+            name: "ldr r2, [sp] / ldr r2, [#0x08000000]",
+            arm: &[0xE59D_2000, 0xE593_2000],
+            thumb: &[0x9A00, 0x681A],
+            regs: &[ROM_DATA],
+            expected: [
+                27, 23, 24, 21, 24, 19, 21, 17, 23, 13, 21, 17, 18, 15, 20, 17, 17, 15, 17, 13,
+            ],
+        },
+        // An LDM running off the end of OAM into ROM: how many OAM words
+        // come first decides where the prefetch buffer is in a halfword when
+        // the ROM access stops it.
+        Row {
+            name: "ldmia [#0x07FFFFFC]!, {r3-r7}",
+            arm: &[0xE8B2_00F8],
+            thumb: &[0xCAF8],
+            regs: &[(2, 0x07FF_FFFC)],
+            expected: [
+                36, 36, 34, 34, 28, 29, 26, 27, 34, 29, 33, 33, 31, 31, 26, 27, 24, 25, 31, 29,
+            ],
+        },
+        Row {
+            name: "ldmia [#0x07FFFFF8]!, {r3-r7}",
+            arm: &[0xE8B2_00F8],
+            thumb: &[0xCAF8],
+            regs: &[(2, 0x07FF_FFF8)],
+            expected: [
+                31, 32, 29, 30, 25, 25, 23, 23, 29, 24, 28, 29, 26, 27, 23, 23, 21, 21, 26, 24,
+            ],
+        },
+        Row {
             name: "ldmia sp, {r2-r7}",
             arm: &[0xE89D_00FC],
             thumb: &[],
@@ -248,4 +278,11 @@ fn rows() -> Vec<Row<'static>> {
 #[test]
 fn timing_without_prefetch_matches_hardware() {
     check(&rows(), |c| !PREFETCH.contains(&c));
+}
+
+/// ROM with the GamePak prefetch buffer on: opcodes come out of the buffer
+/// in one cycle when the buffer had idle bus cycles to fill it.
+#[test]
+fn timing_with_prefetch_matches_hardware() {
+    check(&rows(), |c| PREFETCH.contains(&c));
 }

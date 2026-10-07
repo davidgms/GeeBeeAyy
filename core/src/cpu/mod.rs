@@ -1,4 +1,5 @@
 pub mod arm;
+mod prefetch;
 pub mod thumb;
 
 use crate::memory::MemoryBus;
@@ -48,6 +49,9 @@ pub struct Cpu {
     /// prefetch buffer off. Only ROM, where N and S differ, can tell.
     /// Transient, like `branched`, so not part of a save state.
     pub(crate) fetch_n: bool,
+    /// The GamePak prefetch buffer. Transient: a save state restores with it
+    /// empty, which costs at most a few cycles of one opcode fetch.
+    prefetch: prefetch::Prefetch,
 }
 
 pub struct BarrelShiftResult {
@@ -82,6 +86,7 @@ impl Cpu {
             branched: false,
             entry_cycles: 0,
             fetch_n: false,
+            prefetch: prefetch::Prefetch::default(),
         }
     }
 
@@ -185,11 +190,13 @@ impl Cpu {
         let mut cycles = if is_thumb {
             let instruction = bus.read16(pc);
             self.registers[15] = pc.wrapping_add(4);
-            bus.access_cycles(pc.wrapping_add(4), false, seq) + self.execute_thumb(instruction, bus)
+            self.fetch_cycles(bus, pc.wrapping_add(4), false, seq)
+                + self.execute_thumb(instruction, bus)
         } else {
             let instruction = bus.read32(pc);
             self.registers[15] = pc.wrapping_add(8);
-            bus.access_cycles(pc.wrapping_add(8), true, seq) + self.execute_arm(instruction, bus)
+            self.fetch_cycles(bus, pc.wrapping_add(8), true, seq)
+                + self.execute_arm(instruction, bus)
         };
 
         // Only advance to the next instruction when the instruction itself did
@@ -210,6 +217,9 @@ impl Cpu {
             cycles +=
                 bus.access_cycles(target, word, false) + bus.access_cycles(target, word, true);
             self.fetch_n = false;
+            // The buffer starts over behind the two opcodes just fetched.
+            let width = if word { 4 } else { 2 };
+            self.restart_prefetch(bus, target.wrapping_add(2 * width));
         }
 
         cycles + entry
@@ -219,8 +229,42 @@ impl Cpu {
     /// happens after it (see `Timer::counters`).
     pub(crate) fn next_fetch_cycles(&self, bus: &MemoryBus) -> u32 {
         let thumb = self.cpsr & 0x20 != 0;
-        let prefetch = self.registers[15].wrapping_add(if thumb { 4 } else { 8 });
-        bus.access_cycles(prefetch, !thumb, !self.fetch_n)
+        let address = self.registers[15].wrapping_add(if thumb { 4 } else { 8 });
+        // On a copy: this only looks.
+        let mut prefetch = self.prefetch;
+        if prefetch.active && bus.prefetch_enabled() {
+            if let Some(cycles) = prefetch.fetch(address, !thumb) {
+                return cycles;
+            }
+        }
+        bus.access_cycles(address, !thumb, !self.fetch_n)
+    }
+
+    /// An opcode fetch: from the prefetch buffer if it has the opcode,
+    /// otherwise an ordinary access, behind which the buffer starts over.
+    #[inline]
+    fn fetch_cycles(&mut self, bus: &MemoryBus, address: u32, word: bool, seq: bool) -> u32 {
+        if self.prefetch.active && bus.prefetch_enabled() {
+            if let Some(cycles) = self.prefetch.fetch(address, word) {
+                return cycles;
+            }
+        }
+        let cycles = bus.access_cycles(address, word, seq);
+        self.restart_prefetch(bus, address.wrapping_add(if word { 4 } else { 2 }));
+        cycles
+    }
+
+    /// Point the prefetch buffer at `next`, empty, if opcodes there come from
+    /// ROM with the buffer enabled; otherwise leave it stopped.
+    #[inline]
+    fn restart_prefetch(&mut self, bus: &MemoryBus, next: u32) {
+        if prefetch::gamepak(next) && bus.prefetch_enabled() {
+            // `| 2`: the halfword time itself, never the 128 KiB boundary's N.
+            self.prefetch
+                .restart(next, bus.access_cycles(next | 2, false, true));
+        } else {
+            self.prefetch.active = false;
+        }
     }
 
     /// Cycles of a data access, which also leaves the next opcode fetch
@@ -234,7 +278,15 @@ impl Cpu {
         seq: bool,
     ) -> u32 {
         self.fetch_n = true;
-        bus.access_cycles(address, word, seq)
+        let mut cycles = bus.access_cycles(address, word, seq);
+        if self.prefetch.active {
+            if prefetch::gamepak(address) {
+                cycles += self.prefetch.stop();
+            } else {
+                self.prefetch.advance(cycles);
+            }
+        }
+        cycles
     }
 
     /// `cycles` internal cycles with no data access. GBATEK's prefetch
@@ -247,6 +299,7 @@ impl Cpu {
         if !bus.prefetch_enabled() {
             self.fetch_n = true;
         }
+        self.prefetch.advance(cycles);
         cycles
     }
 

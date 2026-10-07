@@ -590,7 +590,9 @@ fn swap(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     }
 
     // SWP takes 1S + 2N + 1I.
-    cpu.data_cycles(bus, addr, !byte_swap, false) * 2 + 1
+    cpu.data_cycles(bus, addr, !byte_swap, false)
+        + cpu.data_cycles(bus, addr, !byte_swap, false)
+        + cpu.idle_cycles(bus, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -742,7 +744,7 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
     // access, and for a load an internal cycle to write the register.
     cycles += cpu.data_cycles(bus, addr, !byte_transfer, false);
     if load {
-        cycles += 1;
+        cycles += cpu.idle_cycles(bus, 1);
         if byte_transfer {
             let val = bus.read8(addr);
             cpu.set_reg(rd, val as u32);
@@ -804,7 +806,7 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
 
     cycles += cpu.data_cycles(bus, addr, false, false);
     if load {
-        cycles += 1;
+        cycles += cpu.idle_cycles(bus, 1);
         let val = match sh {
             // LDRH from an odd address reads the aligned halfword and rotates
             // the result right by 8, the same way a misaligned LDR rotates.
@@ -880,7 +882,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     if empty_list {
         cycles += cpu.data_cycles(bus, addr, true, false);
         if load {
-            cycles += 1;
+            cycles += cpu.idle_cycles(bus, 1);
             let val = bus.read32(addr);
             cpu.set_reg(15, val);
         } else {
@@ -899,7 +901,6 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
 
     let start = addr;
     if load {
-        cycles += 1;
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
                 cycles += cpu.data_cycles(bus, addr, true, addr != start);
@@ -912,6 +913,9 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                 addr = addr.wrapping_add(4);
             }
         }
+        // The internal cycle comes after the transfers, which matters to the
+        // prefetch buffer when one of them was on the GamePak.
+        cycles += cpu.idle_cycles(bus, 1);
         if s_bit && reg_list & (1 << 15) != 0 {
             let spsr = match cpu.mode() {
                 super::Mode::Fiq => cpu.spsr_fiq,

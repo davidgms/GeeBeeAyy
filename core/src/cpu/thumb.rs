@@ -170,7 +170,9 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let word = (instruction >> 9) & 1 == 0 && !flag;
             // A load is 1S+1N+1I, a store 2N.
             cycles += cpu.data_cycles(bus, format7_addr(instruction, cpu), word, false);
-            cycles += u32::from(load);
+            if load {
+                cycles += cpu.idle_cycles(bus, 1);
+            }
             if (instruction >> 9) & 1 == 0 {
                 // Format 7: word / byte. bit11 = L, bit10 = B
                 match (load, flag) {
@@ -210,7 +212,7 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
             cycles += cpu.data_cycles(bus, addr, !byte, false);
             if load {
-                cycles += 1;
+                cycles += cpu.idle_cycles(bus, 1);
             }
             match (load, byte) {
                 (true, false) => {
@@ -233,7 +235,7 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
             cycles += cpu.data_cycles(bus, addr, false, false);
             if load {
-                cycles += 1;
+                cycles += cpu.idle_cycles(bus, 1);
                 let val = bus.read16(addr);
                 cpu.set_reg(rd, val as u32);
             } else {
@@ -252,7 +254,7 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
 
             cycles += cpu.data_cycles(bus, addr, true, false);
             if load {
-                cycles += 1;
+                cycles += cpu.idle_cycles(bus, 1);
                 // SP-relative loads rotate on a misaligned SP, same as any LDR.
                 let val = bus.read32_rotated(addr);
                 cpu.set_reg(rd, val);
@@ -316,7 +318,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                     // POP
                     let mut sp = cpu.registers[13];
                     let start = sp;
-                    cycles += 1;
                     for i in 0..8u16 {
                         if reg_list & (1 << i) != 0 {
                             cycles += cpu.data_cycles(bus, sp, true, sp != start);
@@ -338,6 +339,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                         sp = sp.wrapping_add(4);
                     }
                     cpu.registers[13] = sp;
+                    // After the transfers, as on hardware.
+                    cycles += cpu.idle_cycles(bus, 1);
                 }
             }
         }
@@ -351,7 +354,6 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
             let start = addr;
 
             if load {
-                cycles += 1;
                 for i in 0..8u16 {
                     if reg_list & (1 << i) != 0 {
                         cycles += cpu.data_cycles(bus, addr, true, addr != start);
@@ -367,6 +369,8 @@ pub fn execute(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
                 if reg_list & (1 << rn) == 0 {
                     cpu.set_reg(rn, addr);
                 }
+                // After the transfers, as on hardware.
+                cycles += cpu.idle_cycles(bus, 1);
             } else {
                 for i in 0..8u16 {
                     if reg_list & (1 << i) != 0 {
@@ -681,7 +685,7 @@ fn format6_ldr_pc(instruction: u16, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     let addr = (cpu.registers[15] & !2).wrapping_add(imm8 * 4);
     let val = bus.read32(addr);
     cpu.set_reg(rd, val);
-    cpu.data_cycles(bus, addr, true, false) + 1
+    cpu.data_cycles(bus, addr, true, false) + cpu.idle_cycles(bus, 1)
 }
 
 // ---------------------------------------------------------------------------
