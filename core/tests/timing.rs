@@ -56,7 +56,7 @@ fn program(thumb: bool, code: &[u32]) -> Vec<u8> {
 }
 
 /// Run the harness around `code` at `base` and return the timer reading.
-fn run(thumb: bool, (base, waitcnt): (u32, u16), regs: &[(usize, u32)], code: &[u32]) -> u32 {
+fn run(thumb: bool, (base, waitcnt): (u32, u16), row: &Row, code: &[u32]) -> u32 {
     let program = program(thumb, code);
     let mut rom = vec![0u8; 0x1000];
     if base >> 24 == 0x08 {
@@ -75,8 +75,11 @@ fn run(thumb: bool, (base, waitcnt): (u32, u16), regs: &[(usize, u32)], code: &[
     gba.cpu.registers[0] = TM0CNT;
     gba.cpu.registers[1] = 0x0080_0000; // TM0CNT: reload 0, enabled
     gba.cpu.registers[13] = SP;
-    for &(r, v) in regs {
+    for &(r, v) in row.regs {
         gba.cpu.registers[r] = v;
+    }
+    for &(at, v) in row.mem {
+        gba.bus.write32(at, v);
     }
     gba.cpu.registers[15] = base;
     if thumb {
@@ -99,6 +102,8 @@ struct Row<'a> {
     arm: &'a [u32],
     thumb: &'a [u32],
     regs: &'a [(usize, u32)],
+    /// Words written to memory beforehand.
+    mem: &'a [(u32, u32)],
     expected: [u32; 20],
 }
 
@@ -113,12 +118,7 @@ fn check(rows: &[Row], columns: impl Fn(usize) -> bool) {
                 if !columns(c) {
                     continue;
                 }
-                let got = run(mode, column, row.regs, code).wrapping_sub(run(
-                    mode,
-                    column,
-                    row.regs,
-                    &[],
-                ));
+                let got = run(mode, column, row, code).wrapping_sub(run(mode, column, row, &[]));
                 let want = row.expected[c + if mode { 10 } else { 0 }];
                 if got != want {
                     let mode = if mode { "THUMB" } else { "ARM" };
@@ -149,6 +149,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[NOP_ARM],
             thumb: &[NOP_THUMB],
             regs: &[],
+            mem: &[],
             expected: [6, 6, 6, 6, 4, 4, 4, 4, 6, 1, 3, 3, 3, 3, 2, 2, 2, 2, 3, 1],
         },
         Row {
@@ -156,6 +157,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE59D_2000],
             thumb: &[0x9A00],
             regs: &[],
+            mem: &[],
             expected: [10, 6, 9, 6, 9, 4, 8, 4, 8, 3, 7, 3, 6, 3, 7, 3, 6, 3, 5, 3],
         },
         Row {
@@ -163,6 +165,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE1D3_20B0],
             thumb: &[0x881A],
             regs: &[ROM_DATA],
+            mem: &[],
             expected: [
                 14, 14, 12, 12, 13, 13, 11, 11, 12, 7, 11, 11, 9, 9, 11, 11, 9, 9, 9, 7,
             ],
@@ -172,6 +175,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE593_2000],
             thumb: &[0x681A],
             regs: &[ROM_DATA],
+            mem: &[],
             expected: [
                 17, 17, 15, 15, 15, 15, 13, 13, 15, 10, 14, 14, 12, 12, 13, 13, 11, 11, 12, 10,
             ],
@@ -181,6 +185,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE58D_3000, 0xE58D_3000],
             thumb: &[0x9300, 0x9300],
             regs: &[],
+            mem: &[],
             expected: [
                 18, 12, 16, 12, 16, 8, 14, 8, 14, 4, 12, 6, 10, 6, 12, 4, 10, 4, 8, 4,
             ],
@@ -190,6 +195,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE003_0392], // mul r3, r2, r3
             thumb: &[0x4353],    // mul r3, r2
             regs: &[(2, 0xFF), (3, 0x1234_5678)],
+            mem: &[],
             expected: [
                 12, 6, 11, 6, 11, 5, 10, 5, 10, 5, 9, 5, 8, 5, 9, 5, 8, 5, 7, 5,
             ],
@@ -199,6 +205,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xEA00_0000, NOP_ARM, NOP_ARM],
             thumb: &[0xE000, NOP_THUMB, NOP_THUMB],
             regs: &[],
+            mem: &[],
             expected: [
                 26, 26, 25, 25, 19, 19, 18, 18, 24, 4, 14, 14, 13, 13, 11, 11, 10, 10, 12, 4,
             ],
@@ -215,6 +222,7 @@ fn rows() -> Vec<Row<'static>> {
             ],
             thumb: &[0x2200, 0x2310, 0x3201, 0x429A, 0xD1FC],
             regs: &[],
+            mem: &[],
             expected: [
                 510, 510, 495, 495, 365, 365, 350, 350, 480, 80, 270, 270, 255, 255, 205, 205, 190,
                 190, 240, 80,
@@ -225,6 +233,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE59D_2000, 0xE593_2000],
             thumb: &[0x9A00, 0x681A],
             regs: &[ROM_DATA],
+            mem: &[],
             expected: [
                 27, 23, 24, 21, 24, 19, 21, 17, 23, 13, 21, 17, 18, 15, 20, 17, 17, 15, 17, 13,
             ],
@@ -237,6 +246,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE8B2_00F8],
             thumb: &[0xCAF8],
             regs: &[(2, 0x07FF_FFFC)],
+            mem: &[],
             expected: [
                 36, 36, 34, 34, 28, 29, 26, 27, 34, 29, 33, 33, 31, 31, 26, 27, 24, 25, 31, 29,
             ],
@@ -246,6 +256,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE8B2_00F8],
             thumb: &[0xCAF8],
             regs: &[(2, 0x07FF_FFF8)],
+            mem: &[],
             expected: [
                 31, 32, 29, 30, 25, 25, 23, 23, 29, 24, 28, 29, 26, 27, 23, 23, 21, 21, 26, 24,
             ],
@@ -255,6 +266,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE89D_00FC],
             thumb: &[],
             regs: &[],
+            mem: &[],
             expected: [
                 15, 8, 14, 8, 14, 8, 13, 8, 13, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ],
@@ -264,6 +276,7 @@ fn rows() -> Vec<Row<'static>> {
             arm: &[0xE88D_00FC],
             thumb: &[],
             regs: &[],
+            mem: &[],
             expected: [
                 14, 7, 13, 7, 13, 7, 12, 7, 12, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ],
@@ -285,4 +298,69 @@ fn timing_without_prefetch_matches_hardware() {
 #[test]
 fn timing_with_prefetch_matches_hardware() {
     check(&rows(), |c| PREFETCH.contains(&c));
+}
+
+const DMA3SAD: u32 = 0x0400_00D4;
+const DMA_IWRAM: u32 = 0x0300_1000;
+const DMA_ROM: u32 = 0x0800_0800;
+/// `str r3, [r2, #8]`: write DMA3CNT, starting an immediate transfer.
+const START_DMA: (&[u32], &[u32]) = (&[0xE582_3008], &[0x6093]);
+
+fn dma_rows() -> Vec<Row<'static>> {
+    vec![
+        Row {
+            name: "Trivial DMA (16)",
+            arm: START_DMA.0,
+            thumb: START_DMA.1,
+            regs: &[(2, DMA3SAD), (3, 0x8000_0001)],
+            mem: &[(DMA3SAD, DMA_IWRAM), (DMA3SAD + 4, DMA_IWRAM + 0x40)],
+            expected: [
+                13, 10, 12, 10, 12, 8, 11, 8, 11, 2, 10, 7, 9, 7, 10, 2, 9, 2, 8, 2,
+            ],
+        },
+        Row {
+            name: "Short DMA (16/ROM to ROM)",
+            arm: START_DMA.0,
+            thumb: START_DMA.1,
+            regs: &[(2, DMA3SAD), (3, 0x8000_0010)],
+            mem: &[(DMA3SAD, DMA_ROM), (DMA3SAD + 4, DMA_ROM + 0x40)],
+            expected: [
+                109, 106, 107, 105, 77, 74, 75, 73, 107, 2, 106, 103, 104, 102, 75, 2, 73, 2, 104,
+                2,
+            ],
+        },
+        // RAM to ROM: the read from IWRAM leaves the prefetch buffer one
+        // more cycle before the write takes the GamePak bus from it.
+        Row {
+            name: "Short DMA (16/to ROM)",
+            arm: START_DMA.0,
+            thumb: START_DMA.1,
+            regs: &[(2, DMA3SAD), (3, 0x8000_0010)],
+            mem: &[(DMA3SAD, DMA_IWRAM), (DMA3SAD + 4, DMA_ROM)],
+            expected: [
+                77, 75, 75, 74, 61, 57, 59, 56, 75, 2, 74, 72, 72, 71, 59, 2, 57, 2, 72, 2,
+            ],
+        },
+        Row {
+            name: "Short DMA (32/from ROM)",
+            arm: START_DMA.0,
+            thumb: START_DMA.1,
+            regs: &[(2, DMA3SAD), (3, 0x8400_0010)],
+            mem: &[(DMA3SAD, DMA_ROM), (DMA3SAD + 4, DMA_IWRAM)],
+            expected: [
+                125, 122, 123, 121, 93, 90, 91, 89, 123, 2, 122, 119, 120, 118, 91, 2, 89, 2, 120,
+                2,
+            ],
+        },
+    ]
+}
+
+/// An immediate DMA stalls the CPU for 2N + 2(n-1)S + 2I (GBATEK, DMA
+/// Transfers; between two GamePak ends the write side is sequential, fitted
+/// to these values). It starts two cycles after the write that enabled it,
+/// so an opcode fetch of a single cycle lets the next instruction's first
+/// access in ahead of it: that is the 2 in the IWRAM and buffered columns.
+#[test]
+fn dma_stalls_the_cpu_as_on_hardware() {
+    check(&dma_rows(), |_| true);
 }

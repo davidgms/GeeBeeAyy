@@ -22,7 +22,8 @@
 //!   behind it, empty. A pipeline refill is two ordinary accesses.
 //! - A data access to the GamePak (ROM or SRAM) empties and stops the buffer
 //!   until the next opcode fetch misses, and costs one more cycle if the
-//!   buffer was part way through a halfword.
+//!   halfword the buffer is fetching has exactly one cycle left. A DMA on
+//!   the GamePak pays the same cycle but leaves the buffer as it was.
 
 /// Whether `address` is on the GamePak bus: ROM in its three wait-state
 /// mirrors, and SRAM.
@@ -120,13 +121,19 @@ impl Prefetch {
         Some(first + self.half(address.wrapping_add(2)).unwrap_or(1))
     }
 
+    /// What another master taking the GamePak bus waits for the buffer: one
+    /// cycle when the halfword it is fetching has exactly one cycle left
+    /// (fitted, see the module notes).
+    pub(crate) fn handover(&self) -> u32 {
+        u32::from(self.active && self.count < 8 && self.progress + 1 == self.s16)
+    }
+
     /// A data access to the GamePak takes the bus: the buffer empties and
-    /// stops. Returns the cycles that costs the access: one if a halfword
-    /// fetch was part way through, which the access has to wait out.
+    /// stops. Returns the cycles that costs the access, `handover`.
     pub(crate) fn stop(&mut self) -> u32 {
-        let partial = self.active && self.count < 8 && self.progress + 1 == self.s16;
+        let wait = self.handover();
         self.active = false;
         self.count = 0;
-        u32::from(partial)
+        wait
     }
 }

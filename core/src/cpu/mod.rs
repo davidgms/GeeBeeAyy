@@ -254,6 +254,16 @@ impl Cpu {
         cycles
     }
 
+    /// A DMA takes the GamePak bus `lead` cycles in: what it waits for the
+    /// prefetch buffer, which fetches on through those cycles. The buffer
+    /// keeps what it holds; the mGBA suite's DMA timings show the opcode
+    /// after the transfer still coming out of it.
+    pub(crate) fn prefetch_handover(&self, lead: u32) -> u32 {
+        let mut prefetch = self.prefetch;
+        prefetch.advance(lead);
+        prefetch.handover()
+    }
+
     /// Point the prefetch buffer at `next`, empty, if opcodes there come from
     /// ROM with the buffer enabled; otherwise leave it stopped.
     #[inline]

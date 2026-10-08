@@ -43,6 +43,10 @@ pub struct Gba {
     /// When the CPU's IRQ line (IE & IF with IME set) went high, for
     /// `IRQ_DELAY`. A few cycles of state, so not in a save state either.
     irq_since: Option<u64>,
+    /// DMA cycles owed to the end of the next instruction: a transfer starts
+    /// two cycles after the write that enabled it, which a one-cycle opcode
+    /// fetch and the access after it get in ahead of. Transient.
+    dma_stall: u32,
 }
 
 impl Default for Gba {
@@ -64,6 +68,7 @@ impl Gba {
             run_frame_counter: 0,
             frame_start: 0,
             irq_since: None,
+            dma_stall: 0,
         }
     }
 
@@ -100,6 +105,7 @@ impl Gba {
         self.run_frame_counter = 0;
         self.frame_start = 0;
         self.irq_since = None;
+        self.dma_stall = 0;
     }
 
     /// Advance the whole machine by one CPU instruction.
@@ -132,6 +138,10 @@ impl Gba {
             self.apply_dma_writes();
             self.apply_timer_writes();
             self.ppu.tick(step, &mut self.bus, &mut self.dma);
+            // A transfer while the CPU is halted stops nothing that runs.
+            self.dma.stall = 0;
+            self.dma.stall_gamepak = None;
+            self.dma_stall = 0;
             self.timer.tick(step, &mut self.bus);
             self.bus.tick_sio(step);
             self.apu.tick(step);
@@ -165,12 +175,31 @@ impl Gba {
             return (self.cycles - before) as u32;
         }
 
-        let cycles = self.cpu.step(&mut self.bus);
-        self.cycles += cycles as u64;
+        let mut cycles = self.cpu.step(&mut self.bus) + std::mem::take(&mut self.dma_stall);
         // Before the PPU tick, so a channel enabled by this instruction is
         // configured in time for an HBlank or VBlank that lands in the same
         // step.
         self.apply_dma_writes();
+        // The CPU stops while a DMA owns the bus (GBATEK, DMA Transfers):
+        // this instruction's transfers, and the HBlank, VBlank and sound ones
+        // the last step's ticks ran. A transfer starts two cycles after it
+        // is enabled ("wait 2 clock cycles"), so when the next opcode fetch
+        // takes one cycle that instruction's first access goes before it,
+        // and the stall lands after that instruction instead (mGBA suite,
+        // DMA timing, the IWRAM and prefetched columns).
+        let mut stall = std::mem::take(&mut self.dma.stall);
+        if let Some(lead) = self.dma.stall_gamepak.take() {
+            // It takes the GamePak bus from the prefetch buffer.
+            stall += self.cpu.prefetch_handover(lead);
+        }
+        if stall != 0 {
+            if self.cpu.next_fetch_cycles(&self.bus) < 2 {
+                self.dma_stall = stall;
+            } else {
+                cycles += stall;
+            }
+        }
+        self.cycles += cycles as u64;
         // Timer writes land *after* the tick. A store writes in its last
         // cycle, so none of this instruction's cycles belong to a timer it
         // starts, and an overflow in that last cycle still reloads the old
