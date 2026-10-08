@@ -649,6 +649,13 @@ and their PR and issue history.
       [`docs/research/wait-states-design.md`](docs/research/wait-states-design.md).
       Tested on the Mi 10T Pro: Yggdra, Mario Tennis, Celeste and 240p at
       60 fps; Mario Tennis CPU 82-100% of a core over 2 minutes.
+- [x] **Phase 4.5 review** (#71). A sound DMA during HALT no longer costs
+      the first instruction after the wake ~30 cycles; HBlank, VBlank and
+      sound DMA stalls land in the instruction they started in; the opcode
+      fetch after a GamePak DMA is non-sequential; the timer counter
+      published ahead wraps as often as the timer does. The mGBA suite is
+      now a hard gate: `mgba_suite_does_not_regress` fails on any sub-suite
+      below its floor when the ROM is present. Score unchanged, 6852/6998.
 - [x] **Declined: Timing's last 140 cells** - they time the real BIOS's own
       math routines. The HLE BIOS runs none of that code.
 - [x] **Deferred: Misc 6/12** - the rest needs DMA inside an instruction,
@@ -748,14 +755,16 @@ properly: misaligned halfword loads now rotate and degrade correctly, and the
 HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
 `subs pc, lr, #4` return.
 
-- No OAM DMA, and no video capture DMA (`core/src/dma.rs:201`).
-- **The gamepak prefetch buffer is not modelled.** WAITCNT bit 14 is stored
-  and ignored. There used to be a `MemoryBus::prefetch_tick` called once per
-  CPU cycle, but it only ever decremented a counter nothing read, so it
-  bought no accuracy and cost about 5% of the emulation budget; it was
-  deleted on 2026-09-04. Modelling prefetch properly means giving the bus a
-  real 8-halfword FIFO that fills during non-sequential ROM access, and it
-  belongs with the wait-state work, not on its own.
+- No OAM DMA, and no video capture DMA (the `TODO` for start timing 3 in
+  `core/src/dma.rs`).
+- **DMA and prefetch timing is per instruction, not per cycle.** Since #69
+  the bus has per-region wait states, the prefetch buffer
+  (`core/src/cpu/prefetch.rs`, driven by WAITCNT bit 14) and the DMA stall.
+  Instructions are still atomic, so an HBlank, VBlank or sound DMA lands at
+  the end of the instruction it started in rather than on its exact cycle,
+  and a RAM-only DMA does not let the prefetch buffer fill during the stall.
+  Timing scores 1880/2020; the other 140 cells time the real BIOS's math
+  routines, which the HLE BIOS does not run.
 - No BIOS execute permission checks.
 - Sprite priority against backgrounds is correct in **mode 0 only**. The other
   modes lay sprites on top of everything instead of ordering them, which is
@@ -790,14 +799,15 @@ HLE BIOS IRQ handler now uses the standard `LR = return + 4` entry with a
   1/2/4/8-bit source units into wider destination units using a five-byte
   parameter block. A game that uses it gets silently corrupted memory rather
   than a no-op.
-- The exact cycle on which a timer or DMA raises its IF bit is not modelled;
-  the flag is set when the overflow or the transfer completes. GBATEK does not
-  document the sub-cycle behaviour, so settling it needs a hardware capture or
-  a timing test ROM rather than more reading.
-- HALT wake-up granularity is one PPU event (HBlank start or the end of a
-  scanline), not one cycle. It used to be a whole scanline, which stepped
-  straight over HBlank and gave a halted game one interrupt a frame
-  instead of 228.
+- A timer IRQ is timed from its overflow cycle inside the instruction (#60);
+  a DMA's IF bit is still set when the whole transfer completes, not on its
+  last unit's cycle.
+- HALT wakes on the next PPU event, timer overflow or end of a serial
+  transfer, whichever comes first, not on an arbitrary cycle. It used to be a
+  whole scanline, which stepped straight over HBlank and gave a halted game
+  one interrupt a frame instead of 228.
+- mGBA suite Misc. edge cases score 6/12. The rest needs DMA inside an
+  instruction, cycle-exact ROM timing, and an unexplained 3-cycle Halt delta.
 - Channel 3's wave RAM now honours the bank bit and 64-digit mode, checked
   against three GBATEK mirrors and mGBA (recorded in
   `.claude/agents/search-specialist.md`). What is still unmodelled: whether
