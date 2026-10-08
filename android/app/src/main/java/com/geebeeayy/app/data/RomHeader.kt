@@ -1,6 +1,7 @@
 package com.geebeeayy.app.data
 
 import java.io.File
+import java.util.zip.CRC32
 
 /**
  * The two identifying fields of a GBA cartridge header.
@@ -32,6 +33,19 @@ data class RomHeader(val title: String, val gameCode: String) {
     companion object {
         /** Bytes needed before the header's fields are all present. */
         const val MIN_BYTES = 0xB0
+
+        /**
+         * The state key for a whole cart.
+         *
+         * A cart with neither a title nor a game code - most homebrew - would
+         * key as `ROM`, and every such cart would share one set of save
+         * states: Celeste loaded the 240p suite's quick save. Those carts are
+         * told apart by a CRC32 of the whole image instead. Carts with either
+         * field key exactly as before.
+         */
+        fun stateKey(romData: ByteArray): String =
+            from(romData)?.stateKey()?.takeIf { it != "ROM" }
+                ?: "ROM_%08X".format(CRC32().apply { update(romData) }.value)
 
         fun from(romData: ByteArray): RomHeader? {
             if (romData.size < MIN_BYTES) return null

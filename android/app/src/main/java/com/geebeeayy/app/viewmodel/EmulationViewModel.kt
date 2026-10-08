@@ -524,7 +524,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * save states live is one copy too many.
      */
     private fun computeRomStateKey(romData: ByteArray): String =
-        RomHeader.from(romData)?.stateKey() ?: "rom"
+        RomHeader.stateKey(romData)
 
     /**
      * Load a battery save into the core before the first frame runs, or the
