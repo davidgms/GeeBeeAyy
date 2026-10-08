@@ -458,8 +458,11 @@ fn a_sound_dma_during_halt_is_not_charged_after_the_wake() {
     }
     gba.cpu.registers[15] = 0x0300_0000;
     // DMA1: EWRAM -> FIFO A, 32-bit, repeat, timing 3. The FIFO starts
-    // empty, so the halted step's `post_tick` refills it.
+    // empty, so the halted step's `post_tick` refills it; the word the CPU
+    // writes lands after that refill and takes the FIFO past half full, so
+    // no refill follows the wake.
     configure(&mut gba, 1, 0x0200_0000, 0x0400_00A0, 4, 0xB600);
+    gba.bus.write32(0x0400_00A0, 0);
     // IE & IF already set: the halted step wakes the CPU (IME stays 0).
     gba.bus.io.ie = 0x0001;
     gba.bus.io.request_interrupt(0x0001);
@@ -498,5 +501,48 @@ fn the_opcode_fetch_after_a_gamepak_dma_is_non_sequential() {
         gba.step(),
         5,
         "the fetch after a GamePak DMA must be non-sequential"
+    );
+}
+
+/// An HBlank DMA starts during the instruction whose cycles crossed into
+/// HBlank, so the CPU stops right after that instruction. Its stall was
+/// charged to the step after, or - when that step's opcode fetch took one
+/// cycle, as in IWRAM - the step after that: the "starts two cycles after
+/// the enabling store" rule of immediate transfers was applied to it too.
+#[test]
+fn an_hblank_dma_stalls_the_cpu_after_the_instruction_it_started_in() {
+    let mut gba = spinning_gba();
+    for i in 0..0x800 {
+        gba.bus.write32(0x0300_0000 + 4 * i, 0xE1A0_0000); // mov r0, r0
+    }
+    gba.cpu.registers[15] = 0x0300_0000;
+    // DMA3, EWRAM -> EWRAM, 4 words, HBlank, no repeat.
+    configure(
+        &mut gba,
+        3,
+        0x0200_0000,
+        0x0200_0100,
+        4,
+        0x8000 | 0x2000 | WORD,
+    );
+    // The PPU's own HBlank edge at cycle 960, where the DMA fires; the
+    // DISPSTAT flag follows 46 cycles later.
+    let hblank = |gba: &Gba| gba.ppu.hblank;
+    let mut costs = Vec::new();
+    while !hblank(&gba) {
+        costs.push(gba.step());
+    }
+    // The step that entered HBlank, then the next two.
+    let entered = *costs.last().unwrap();
+    let next = [gba.step(), gba.step()];
+    assert!(
+        costs[..costs.len() - 1].iter().all(|&c| c == 1),
+        "no stall before HBlank"
+    );
+    assert_eq!(
+        (entered, next),
+        (1 + 8 * 6 + 2, [1, 1]),
+        "the transfer (4 EWRAM word reads and writes + 2I) belongs to the \
+         instruction it started in"
     );
 }

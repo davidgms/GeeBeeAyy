@@ -184,20 +184,12 @@ impl Gba {
         // step.
         self.apply_dma_writes();
         // The CPU stops while a DMA owns the bus (GBATEK, DMA Transfers):
-        // this instruction's transfers, and the HBlank, VBlank and sound ones
-        // the last step's ticks ran. A transfer starts two cycles after it
-        // is enabled ("wait 2 clock cycles"), so when the next opcode fetch
-        // takes one cycle that instruction's first access goes before it,
-        // and the stall lands after that instruction instead (mGBA suite,
-        // DMA timing, the IWRAM and prefetched columns).
-        let mut stall = std::mem::take(&mut self.dma.stall);
-        if let Some(lead) = self.dma.stall_gamepak.take() {
-            // It takes the GamePak bus from the prefetch buffer, and moves
-            // the cartridge's address counter off the code: the next opcode
-            // fetch the buffer does not hold is non-sequential.
-            stall += self.cpu.prefetch_handover(lead);
-            self.cpu.fetch_n = true;
-        }
+        // here, the transfers this instruction enabled. One starts two
+        // cycles after it is enabled ("wait 2 clock cycles"), so when the
+        // next opcode fetch takes one cycle that instruction's first access
+        // goes before it, and the stall lands after that instruction instead
+        // (mGBA suite, DMA timing, the IWRAM and prefetched columns).
+        let stall = self.take_dma_stall();
         if stall != 0 {
             if self.cpu.next_fetch_cycles(&self.bus) < 2 {
                 self.dma_stall = stall;
@@ -210,7 +202,7 @@ impl Gba {
         // cycle, so none of this instruction's cycles belong to a timer it
         // starts, and an overflow in that last cycle still reloads the old
         // value (mGBA suite, timer-IRQ test).
-        let timer_irq = self.timer.tick(cycles, &mut self.bus);
+        let mut timer_irq = self.timer.tick(cycles, &mut self.bus);
         self.apply_timer_writes();
         // Same order as the timers: a transfer started by this instruction
         // owns none of its cycles.
@@ -225,6 +217,27 @@ impl Gba {
         self.apu.tick(cycles);
 
         self.post_tick();
+
+        // The HBlank, VBlank and sound transfers those ticks ran started
+        // during this instruction, so the CPU stops for them before the next
+        // one - not after it, and with no two-cycle start rule: no store of
+        // the CPU's enabled them. Run the rest of the machine through them
+        // here, which can start more (an HBlank inside a long transfer).
+        loop {
+            let late = self.take_dma_stall();
+            if late == 0 {
+                break;
+            }
+            let at = (self.cycles - before) as u32;
+            self.cycles += u64::from(late);
+            let irq = self.timer.tick(late, &mut self.bus);
+            timer_irq = timer_irq.or(irq.map(|i| at + i));
+            let irq = self.bus.tick_sio(late);
+            sio_irq = sio_irq.or(irq.map(|i| at + i));
+            self.ppu.tick(late, &mut self.bus, &mut self.dma);
+            self.apu.tick(late);
+            self.post_tick();
+        }
 
         // Deliver IRQs to CPU, `IRQ_DELAY` cycles after the line went high.
         if self.bus.io.interrupt_pending() {
@@ -242,6 +255,19 @@ impl Gba {
         }
 
         (self.cycles - before) as u32
+    }
+
+    /// The CPU cycles the DMA transfers since the last call stall it for.
+    fn take_dma_stall(&mut self) -> u32 {
+        let mut stall = std::mem::take(&mut self.dma.stall);
+        if let Some(lead) = self.dma.stall_gamepak.take() {
+            // It takes the GamePak bus from the prefetch buffer, and moves
+            // the cartridge's address counter off the code: the next opcode
+            // fetch the buffer does not hold is non-sequential.
+            stall += self.cpu.prefetch_handover(lead);
+            self.cpu.fetch_n = true;
+        }
+        stall
     }
 
     pub fn run_frame(&mut self) {
