@@ -473,3 +473,30 @@ fn a_sound_dma_during_halt_is_not_charged_after_the_wake() {
         "a transfer that ran during HALT was charged to the code after it"
     );
 }
+
+/// A DMA on the GamePak bus moves the cartridge's address counter, so the
+/// CPU's next ROM opcode fetch the prefetch buffer does not hold restarts
+/// with a non-sequential access. Nothing told the CPU, and that fetch was
+/// charged S. THUMB code in ROM, prefetch off, WAITCNT 0: S is 3 cycles, N 5.
+/// The transfer is enabled by a bus write rather than a CPU store, because a
+/// store already makes the next fetch N on its own.
+#[test]
+fn the_opcode_fetch_after_a_gamepak_dma_is_non_sequential() {
+    let mut gba = Gba::new();
+    gba.load_rom(&vec![0u8; 0x400]).expect("ROM should load"); // lsls r0, r0, #0
+    gba.bus.write16(0x0400_0204, 0x0000);
+    gba.cpu.cpsr |= 0x20;
+    gba.cpu.registers[15] = 0x0800_0100;
+    gba.step();
+    assert_eq!(gba.step(), 3, "a sequential THUMB fetch from WS0");
+
+    // DMA3, ROM -> EWRAM, one halfword, immediate: it runs after the next
+    // instruction and stalls the CPU there.
+    configure(&mut gba, 3, 0x0800_0000, 0x0200_0000, 1, 0x8000);
+    gba.step();
+    assert_eq!(
+        gba.step(),
+        5,
+        "the fetch after a GamePak DMA must be non-sequential"
+    );
+}

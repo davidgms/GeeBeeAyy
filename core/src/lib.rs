@@ -192,8 +192,11 @@ impl Gba {
         // DMA timing, the IWRAM and prefetched columns).
         let mut stall = std::mem::take(&mut self.dma.stall);
         if let Some(lead) = self.dma.stall_gamepak.take() {
-            // It takes the GamePak bus from the prefetch buffer.
+            // It takes the GamePak bus from the prefetch buffer, and moves
+            // the cartridge's address counter off the code: the next opcode
+            // fetch the buffer does not hold is non-sequential.
             stall += self.cpu.prefetch_handover(lead);
+            self.cpu.fetch_n = true;
         }
         if stall != 0 {
             if self.cpu.next_fetch_cycles(&self.bus) < 2 {
