@@ -860,3 +860,161 @@ fn muls_sets_carry_from_the_last_booth_digit() {
         assert_eq!(cpu.cpsr & (1 << 29) != 0, carry, "THUMB mul by {rs:#010x}");
     }
 }
+
+/// Prime the registers and memory the cycle tables below rely on: r0 a code
+/// address (THUMB bit set for THUMB), r1 a data address holding code
+/// addresses, r2 = 0x10, r3 = 0, and two code addresses on the stack.
+fn prime(cpu: &mut Cpu, bus: &mut MemoryBus, thumb: bool) {
+    cpu.registers[0] = BASE + 0x100 + u32::from(thumb);
+    cpu.registers[1] = BASE + 0x200;
+    cpu.registers[2] = 0x10;
+    cpu.registers[3] = 0;
+    for at in [BASE + 0x200, BASE + 0x204, 0x0300_7F00, 0x0300_7F04] {
+        bus.write32(at, BASE + 0x100 + u32::from(thumb));
+    }
+}
+
+/// Cycles per instruction with every access in 1-cycle memory (IWRAM), per
+/// GBATEK's ARM CPU Instruction Cycle Times. This is the accounting every
+/// fitted timing constant in the core was measured against, so a change to
+/// how cycles are counted must leave it alone unless an entry here is itself
+/// the subject of the change. Before 2026-10-07 THUMB hi-register operations
+/// (`nop` is `mov r8, r8`) all cost 3, stores with a register offset and
+/// `push` one too many, `pop {pc}` skipped its refill, the first half of
+/// `bl` cost 3, multiplies ignored their operand and shifts by a register
+/// had no internal cycle.
+#[test]
+fn arm_instruction_cycles_in_one_cycle_memory() {
+    let cases: &[(u32, u32, &str)] = &[
+        (0xE1A0_0001, 1, "mov r0, r1"),
+        (0xE080_0211, 2, "add r0, r0, r1, lsl r2"),
+        (0xE1A0_F000, 3, "mov pc, r0"),
+        (0x01A0_0001, 1, "moveq r0, r1 (not taken)"),
+        (0xE000_0291, 2, "mul r0, r1, r2"),
+        (0xE083_0291, 3, "umull r0, r3, r1, r2"),
+        (0xE591_2000, 3, "ldr r2, [r1]"),
+        (0xE591_F000, 5, "ldr pc, [r1]"),
+        (0xE581_2000, 2, "str r2, [r1]"),
+        (0xE1D1_20B0, 3, "ldrh r2, [r1]"),
+        (0xE1C1_20B0, 2, "strh r2, [r1]"),
+        (0xE891_000C, 4, "ldmia r1, {r2, r3}"),
+        (0xE891_8004, 6, "ldmia r1, {r2, pc}"),
+        (0xE881_000C, 3, "stmia r1, {r2, r3}"),
+        (0xE101_2093, 4, "swp r2, r3, [r1]"),
+        (0xEA00_0000, 3, "b"),
+        (0xE12F_FF10, 3, "bx r0"),
+        (0xE10F_0000, 1, "mrs r0, cpsr"),
+        (0xEF06_0000, 3, "swi 0x06"),
+    ];
+    for &(op, want, text) in cases {
+        let (mut cpu, mut bus) = setup_arm(&[op]);
+        prime(&mut cpu, &mut bus, false);
+        assert_eq!(cpu.step(&mut bus), want, "{text}");
+    }
+}
+
+#[test]
+fn thumb_instruction_cycles_in_one_cycle_memory() {
+    let cases: &[(u16, u32, &str)] = &[
+        (0x2001, 1, "mov r0, #1"),
+        (0x4088, 2, "lsl r0, r1"),
+        (0x4348, 5, "mul r0, r1"),
+        (0x46C0, 1, "mov r8, r8"),
+        (0x4687, 3, "mov pc, r0"),
+        (0x4700, 3, "bx r0"),
+        (0x4A00, 3, "ldr r2, [pc, #0]"),
+        (0x58CA, 3, "ldr r2, [r1, r3]"),
+        (0x50CA, 2, "str r2, [r1, r3]"),
+        (0x680A, 3, "ldr r2, [r1]"),
+        (0x600A, 2, "str r2, [r1]"),
+        (0xB40C, 3, "push {r2, r3}"),
+        (0xBC0C, 4, "pop {r2, r3}"),
+        (0xBD04, 6, "pop {r2, pc}"),
+        (0xC90C, 4, "ldmia r1!, {r2, r3}"),
+        (0xC10C, 3, "stmia r1!, {r2, r3}"),
+        (0xE000, 3, "b"),
+        (0xD100, 3, "bne (taken)"),
+        (0xD000, 1, "beq (not taken)"),
+        (0xF000, 1, "bl, first half"),
+        (0xF800, 3, "bl, second half"),
+        (0xDF06, 3, "swi 0x06"),
+    ];
+    for &(op, want, text) in cases {
+        let (mut cpu, mut bus) = setup_thumb(&[op]);
+        prime(&mut cpu, &mut bus, true);
+        assert_eq!(cpu.step(&mut bus), want, "{text}");
+    }
+}
+
+/// Multiply cycles follow the multiplier's (Rs; THUMB: Rd) significant bytes:
+/// MUL 1S+mI, MLA and xMULL 1S+(m+1)I, xMLAL 1S+(m+2)I, with m = 1-4 from
+/// how many top bytes are all zero or (signed forms) all one. The expected
+/// values are the IWRAM column of the mGBA suite's timing table
+/// (`src/timing.c`, recorded on hardware; MIT, see THIRD_PARTY_NOTICES.md):
+/// its tests multiply 0xFF by each of these.
+#[test]
+fn multiply_cycles_follow_the_multiplier() {
+    const MULTIPLIERS: [u32; 10] = [
+        0x0000_0000,
+        0x0000_0078,
+        0x0000_5678,
+        0x0034_5678,
+        0x1234_5678,
+        0xFF00_0000,
+        0xFFFF_0000,
+        0xFFFF_FF00,
+        0xFFFF_FFFF,
+        0xFFFF_FFFF,
+    ];
+    // (encoding with Rs = r3, Rm = r2, cycles per multiplier)
+    let arm: [(u32, [u32; 10], &str); 5] = [
+        (
+            0xE003_0392,
+            [2, 2, 3, 4, 5, 4, 3, 2, 2, 2],
+            "mul r3, r2, r3",
+        ),
+        (
+            0xE0C5_4392,
+            [3, 3, 4, 5, 6, 5, 4, 3, 3, 3],
+            "smull r4, r5, r2, r3",
+        ),
+        (
+            0xE0E5_4392,
+            [4, 4, 5, 6, 7, 6, 5, 4, 4, 4],
+            "smlal r4, r5, r2, r3",
+        ),
+        (
+            0xE085_4392,
+            [3, 3, 4, 5, 6, 6, 6, 6, 6, 6],
+            "umull r4, r5, r2, r3",
+        ),
+        (
+            0xE0A5_4392,
+            [4, 4, 5, 6, 7, 7, 7, 7, 7, 7],
+            "umlal r4, r5, r2, r3",
+        ),
+    ];
+    for (op, cycles, text) in arm {
+        for (i, (&rs, &want)) in MULTIPLIERS.iter().zip(&cycles).enumerate() {
+            let (mut cpu, mut bus) = setup_arm(&[op]);
+            cpu.registers[2] = if i == 9 { 0 } else { 0xFF };
+            cpu.registers[3] = rs;
+            assert_eq!(cpu.step(&mut bus), want, "{text} by {rs:#010x}");
+        }
+    }
+    // mla r2, r3, r2, r3: Rs is r2 = 0xFF, so m = 1 whatever r3 holds.
+    for &rs in &MULTIPLIERS {
+        let (mut cpu, mut bus) = setup_arm(&[0xE022_3293]);
+        cpu.registers[2] = 0xFF;
+        cpu.registers[3] = rs;
+        assert_eq!(cpu.step(&mut bus), 3, "mla by {rs:#010x}");
+    }
+    // THUMB mul r3, r2: Rd (r3) is the multiplier.
+    let thumb = [2, 2, 3, 4, 5, 4, 3, 2, 2, 2];
+    for (i, (&rs, &want)) in MULTIPLIERS.iter().zip(&thumb).enumerate() {
+        let (mut cpu, mut bus) = setup_thumb(&[0x4353]);
+        cpu.registers[2] = if i == 9 { 0 } else { 0xFF };
+        cpu.registers[3] = rs;
+        assert_eq!(cpu.step(&mut bus), want, "THUMB mul by {rs:#010x}");
+    }
+}

@@ -1,3 +1,5 @@
+mod timing;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SioMode {
     Normal8,
@@ -22,7 +24,9 @@ pub struct MemoryBus {
     /// nothing else. It used to hang off `Gba`, where nothing on the memory
     /// path could call it, so save memory was unreachable.
     pub cart: super::cart::Cartridge,
-    pub waitcnt: u16,
+    /// WAITCNT, private so every write goes through [`Self::set_waitcnt`]
+    /// and rebuilds the wait table.
+    waitcnt: u16,
     pub sound_writes: Vec<(u32, u8)>,
     /// Channels whose DMAxCNT_H was written since `Gba::step` last looked.
     /// The bus cannot apply them itself: an immediate transfer runs inside
@@ -55,6 +59,8 @@ pub struct MemoryBus {
     /// SIOCNT was written since `Gba::step` last looked; see
     /// [`Self::apply_sio_write`].
     pub(crate) sio_written: bool,
+    /// What each CPU access costs, per region; see [`timing`].
+    wait: timing::WaitTable,
 }
 
 /// The BIOS read latch after boot or SoftReset: the opcode at [0x0DC+8].
@@ -93,6 +99,7 @@ impl MemoryBus {
             bios_latch: 0,
             sio_cycles: 0,
             sio_written: false,
+            wait: timing::WaitTable::from_waitcnt(0),
         };
         bus.init_bios();
         // KEYINPUT is active low ("0=Pressed, 1=Released", GBATEK Keypad Input),
@@ -116,7 +123,7 @@ impl MemoryBus {
         self.palette.fill(0);
         self.vram.fill(0);
         self.oam.fill(0);
-        self.waitcnt = 0;
+        self.set_waitcnt(0);
         self.sound_writes.clear();
         self.dma_writes.clear();
         self.timer_writes.clear();
@@ -649,9 +656,9 @@ impl MemoryBus {
                         self.io.halt = true;
                     }
                 } else if offset == 0x204 {
-                    self.waitcnt = (self.waitcnt & 0xFF00) | (value as u16);
+                    self.set_waitcnt((self.waitcnt & 0xFF00) | (value as u16));
                 } else if offset == 0x205 {
-                    self.waitcnt = (self.waitcnt & 0x00FF) | ((value as u16) << 8);
+                    self.set_waitcnt((self.waitcnt & 0x00FF) | ((value as u16) << 8));
                 } else if (0x120..0x160).contains(&offset) && self.sio_store(offset, value) {
                     return;
                 }
@@ -735,71 +742,34 @@ impl MemoryBus {
         self.rom = data.to_vec();
     }
 
-    pub fn read_cycles(&self, address: u32, is_32bit: bool) -> u32 {
-        match address {
-            0x0000_0000..=0x0000_3FFF => 1,
-            0x0200_0000..=0x0203_FFFF => {
-                if is_32bit {
-                    6
-                } else {
-                    3
-                }
-            }
-            0x0300_0000..=0x0300_7FFF => {
-                if is_32bit {
-                    2
-                } else {
-                    1
-                }
-            }
-            0x0400_0000..=0x0400_03FE => 1,
-            0x0500_0000..=0x0500_03FF => 1,
-            0x0600_0000..=0x0601_7FFF => 1,
-            0x0700_0000..=0x0700_03FF => 1,
-            0x0800_0000..=0x09FF_FFFF => {
-                let ws = (self.waitcnt >> 2) & 3;
-                if is_32bit {
-                    ws as u32 * 2 + 6
-                } else {
-                    ws as u32 + 3
-                }
-            }
-            0x0A00_0000..=0x0BFF_FFFF => {
-                let ws = (self.waitcnt >> 5) & 3;
-                if is_32bit {
-                    ws as u32 * 2 + 6
-                } else {
-                    ws as u32 + 3
-                }
-            }
-            0x0C00_0000..=0x0DFF_FFFF => {
-                let ws = (self.waitcnt >> 8) & 3;
-                if is_32bit {
-                    ws as u32 * 2 + 6
-                } else {
-                    ws as u32 + 3
-                }
-            }
-            _ => 1,
-        }
+    /// Cycles a CPU access to `address` costs: a halfword or byte, or a
+    /// word; non-sequential, or sequential to the previous access.
+    ///
+    /// GBATEK, GBA Memory Map: the GamePak's sequential burst cannot cross a
+    /// 128 KiB boundary, so an access that lands on one is non-sequential
+    /// whatever came before.
+    #[inline]
+    pub(crate) fn access_cycles(&self, address: u32, word: bool, seq: bool) -> u32 {
+        let seq = seq && !(address & 0x1_FFFF == 0 && (0x08..0x0E).contains(&(address >> 24)));
+        self.wait.cost(address, word, seq)
     }
 
-    pub fn write_cycles(&self, address: u32, is_32bit: bool) -> u32 {
-        match address {
-            0x0200_0000..=0x0203_FFFF => {
-                if is_32bit {
-                    6
-                } else {
-                    3
-                }
-            }
-            0x0300_0000..=0x0300_7FFF => 1,
-            0x0400_0000..=0x0400_03FE => 1,
-            0x0500_0000..=0x0500_03FF => 1,
-            0x0600_0000..=0x0601_7FFF => 2,
-            0x0700_0000..=0x0700_03FF => 1,
-            _ => 1,
-        }
+    /// WAITCNT as last written.
+    pub fn waitcnt(&self) -> u16 {
+        self.waitcnt
+    }
+
+    /// Write WAITCNT and rebuild the wait table from it. Everything that sets
+    /// it - the CPU's store, reset, a save-state load - comes through here.
+    pub(crate) fn set_waitcnt(&mut self, value: u16) {
+        self.waitcnt = value;
+        self.wait = timing::WaitTable::from_waitcnt(value);
+    }
+
+    /// Whether the GamePak prefetch buffer is enabled (WAITCNT bit 14).
+    #[inline]
+    pub(crate) fn prefetch_enabled(&self) -> bool {
+        self.waitcnt & 0x4000 != 0
     }
 
     pub fn drain_sound_writes(&mut self) -> Vec<(u32, u8)> {

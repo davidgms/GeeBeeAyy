@@ -304,7 +304,7 @@ fn ticking_a_slice_at_once_matches_ticking_it_cycle_by_cycle() {
             // one slice, so only the stepped run's earliest is a lower bound.
             assert_eq!(want_irq.is_some(), got_irq.is_some(), "{at}: IRQ raised");
             assert!(want_irq >= got_irq, "{at}: IRQ before the first one");
-            assert_eq!(bulk.counters(), stepped.counters(), "{at}: counters");
+            assert_eq!(bulk.counters(1), stepped.counters(1), "{at}: counters");
             let raw = |t: &Timer| [0, 1, 2, 3].map(|i| t.counter(i));
             assert_eq!(raw(&bulk), raw(&stepped), "{at}: raw counters");
             assert_eq!(

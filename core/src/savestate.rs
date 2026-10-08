@@ -124,7 +124,7 @@ impl SaveState {
         write_u16(&mut buf, gba.bus.io.ime);
         write_bool(&mut buf, gba.bus.io.halt);
 
-        write_u16(&mut buf, gba.bus.waitcnt);
+        write_u16(&mut buf, gba.bus.waitcnt());
         // The whole I/O register file. Absent from v2, so DISPCNT, the
         // background scroll registers and everything else came back as
         // whatever the fresh instance happened to hold.
@@ -291,7 +291,9 @@ impl SaveState {
         gba.bus.io.ime = read_u16(&mut cursor)?;
         gba.bus.io.halt = read_bool(&mut cursor)?;
 
-        gba.bus.waitcnt = read_u16(&mut cursor)?;
+        // Through the setter: the wait table is derived from it.
+        let waitcnt = read_u16(&mut cursor)?;
+        gba.bus.set_waitcnt(waitcnt);
         read_exact_vec(&mut cursor, gba.bus.io_regs_data_mut())?;
         read_exact_vec(&mut cursor, gba.bus.ewram_data_mut())?;
         read_exact_vec(&mut cursor, gba.bus.iwram_data_mut())?;

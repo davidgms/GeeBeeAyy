@@ -5,6 +5,9 @@ use crate::memory::MemoryBus;
 ///
 /// The condition check is already done by the caller (mod.rs).
 /// This function dispatches based on bits [27:4] and [7:4].
+///
+/// Returns the cycles of its data accesses and internal cycles; the opcode
+/// fetch and any pipeline refill are charged by `Cpu::step`.
 pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     // Software Interrupt.
     //
@@ -17,7 +20,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     if (instruction >> 24) & 0xF == 0xF {
         let comment = (instruction >> 16) & 0xFF;
         cpu.swi(comment, bus);
-        return 3;
+        return 0;
     }
 
     // Branch and Exchange (BX) / Branch with Link and Exchange (BLX Rm)
@@ -36,8 +39,8 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     if (instruction >> 4) & 0xF == 0x9 {
         let opcode_bits = (instruction >> 20) & 0xFF;
         match opcode_bits {
-            0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu),
-            0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu),
+            0b0000_0000..=0b0000_0011 => return multiply(instruction, cpu, bus),
+            0b0000_1000..=0b0000_1111 => return multiply_long(instruction, cpu, bus),
             // SWP is 00010 B 00, so bits[27:20] are 0x10 for the word form and
             // 0x14 for the byte form. The old range stopped at 0x13, so
             // every SWPB fell through and was decoded as an MSR.
@@ -86,7 +89,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         && ((instruction >> 25) & 1 == 1
             || !((instruction >> 4) & 1 == 1 && (instruction >> 7) & 1 == 1))
     {
-        return data_processing(instruction, cpu);
+        return data_processing(instruction, cpu, bus);
     }
 
     // Single Data Transfer - bits [27:26]=01
@@ -100,7 +103,7 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         && (instruction >> 7) & 1 == 1
     {
         // Undefined instruction - treat as NOP for now
-        return 1;
+        return 0;
     }
 
     // Block Data Transfer - bits [27:25]=100
@@ -109,20 +112,20 @@ pub fn execute(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
     }
 
     // Branch - bits [27:25]=101
+    // Coprocessor data transfer / SWI already handled; anything else
+    // unhandled is a NOP.
     if (instruction >> 25) & 0x7 == 0b101 {
-        return branch(instruction, cpu);
+        branch(instruction, cpu)
+    } else {
+        0
     }
-
-    // Coprocessor data transfer / SWI already handled
-    // For unhandled instructions, treat as NOP
-    1
 }
 
 // ---------------------------------------------------------------------------
 // Data Processing
 // ---------------------------------------------------------------------------
 
-fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
+fn data_processing(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
     let opcode = (instruction >> 21) & 0xF;
     let s_flag = (instruction >> 20) & 1 == 1;
     let rn = ((instruction >> 16) & 0xF) as usize;
@@ -144,7 +147,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
             _ => cpu.cpsr,
         };
         cpu.set_cpsr(spsr);
-        return 1;
+        return 0;
     }
 
     // A register-specified shift costs an extra cycle, so every R15 read in
@@ -156,7 +159,12 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.reg(rn)
     };
 
-    // Shift operand2
+    // Shift operand2. A shift by a register costs an internal cycle.
+    let cycles = if register_specified_shift {
+        cpu.idle_cycles(bus, 1)
+    } else {
+        0
+    };
     let shifted = cpu.shift_operand2(instruction, immediate);
     let op2 = shifted.value;
 
@@ -200,12 +208,12 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
         0b1000 => {
             let result = rn_val & op2;
             cpu.set_flag_nz_data(result, shifted.carry_out);
-            return 1;
+            return cycles;
         }
         0b1001 => {
             let result = rn_val ^ op2;
             cpu.set_flag_nz_data(result, shifted.carry_out);
-            return 1;
+            return cycles;
         }
         0b1010 => {
             let result = rn_val.wrapping_sub(op2);
@@ -216,7 +224,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
                 carry,
                 overflow_sub(rn_val, op2, result),
             );
-            return 1;
+            return cycles;
         }
         0b1011 => {
             let result = rn_val.wrapping_add(op2);
@@ -227,7 +235,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
                 carry,
                 overflow_add(rn_val, op2, result),
             );
-            return 1;
+            return cycles;
         }
         0b1100 => (rn_val | op2, true, shifted.carry_out, cpu.flag_v()),
         0b1101 => {
@@ -258,13 +266,7 @@ fn data_processing(instruction: u32, cpu: &mut Cpu) -> u32 {
             }
         }
     }
-
-    // Writing PC costs the 1S+1N pipeline refill on top of the 1S.
-    if rd == 15 {
-        3
-    } else {
-        1
-    }
+    cycles
 }
 
 pub fn overflow_add(op1: u32, op2: u32, result: u32) -> bool {
@@ -285,7 +287,7 @@ pub fn overflow_sub(op1: u32, op2: u32, result: u32) -> bool {
 // Multiply
 // ---------------------------------------------------------------------------
 
-fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
+fn multiply(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
     let accumulate = (instruction >> 21) & 1 == 1;
     let set_flags = (instruction >> 20) & 1 == 1;
     let rd = ((instruction >> 16) & 0xF) as usize;
@@ -309,11 +311,28 @@ fn multiply(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.set_flags(n, z, c, cpu.flag_v());
     }
 
-    // MUL takes 1S + mI cycles, approximate as 4
-    4
+    // MUL is 1S+mI, MLA 1S+(m+1)I.
+    cpu.idle_cycles(bus, multiplier_cycles(rs_val, true) + u32::from(accumulate))
 }
 
-fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
+/// The `m` of GBATEK's multiply timings: the multiplier array retires 8 bits
+/// of the multiplier (Rs; THUMB: Rd) per cycle and stops once the rest are
+/// all zero - or, for the signed forms, all one.
+pub(crate) fn multiplier_cycles(multiplier: u32, signed: bool) -> u32 {
+    let rest = if signed && multiplier >> 31 != 0 {
+        !multiplier
+    } else {
+        multiplier
+    };
+    match rest {
+        0..=0xFF => 1,
+        0x100..=0xFFFF => 2,
+        0x1_0000..=0xFF_FFFF => 3,
+        _ => 4,
+    }
+}
+
+fn multiply_long(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
     // cond 00001 U A S RdHi RdLo Rs 1001 Rm
     // U = 1 is the *signed* form (SMULL/SMLAL); U = 0 is unsigned.
     let signed = (instruction >> 22) & 1 == 1;
@@ -351,8 +370,11 @@ fn multiply_long(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.set_flags(n, z, c, cpu.flag_v());
     }
 
-    // Long multiply takes 1S + mI, approximate as 5
-    5
+    // UMULL/SMULL take 1S+(m+1)I, UMLAL/SMLAL 1S+(m+2)I.
+    cpu.idle_cycles(
+        bus,
+        multiplier_cycles(rs_val, signed) + 1 + u32::from(accumulate),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -567,8 +589,10 @@ fn swap(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
         cpu.set_reg(rd, mem_val);
     }
 
-    // SWP takes 1S + 2N + 1I, approximate as 4
-    4
+    // SWP takes 1S + 2N + 1I.
+    cpu.data_cycles(bus, addr, !byte_swap, false)
+        + cpu.data_cycles(bus, addr, !byte_swap, false)
+        + cpu.idle_cycles(bus, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -593,7 +617,7 @@ fn mrs(instruction: u32, cpu: &mut Cpu) -> u32 {
     };
 
     cpu.set_reg(rd, psr_val);
-    1
+    0
 }
 
 fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
@@ -653,8 +677,7 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
     } else {
         cpu.set_cpsr((cpu.cpsr & !mask) | (new_psr & mask));
     }
-
-    1
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +685,7 @@ fn msr(instruction: u32, cpu: &mut Cpu) -> u32 {
 // ---------------------------------------------------------------------------
 
 fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
+    let mut cycles = 0;
     // Bit 25 is the I flag: 0 = 12-bit immediate offset, 1 = shifted register.
     // These two were swapped, so every `ldr rd, [rn, #imm]` took Rm as its
     // offset instead. It hid for a long time because the common
@@ -716,7 +740,11 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
     let pre_index = (instruction >> 24) & 1 == 1;
     let addr = if pre_index { offset_addr } else { base };
 
+    // ARM7TDMI TRM: LDR is 1S+1N+1I and STR 2N - the opcode fetch, the data
+    // access, and for a load an internal cycle to write the register.
+    cycles += cpu.data_cycles(bus, addr, !byte_transfer, false);
     if load {
+        cycles += cpu.idle_cycles(bus, 1);
         if byte_transfer {
             let val = bus.read8(addr);
             cpu.set_reg(rd, val as u32);
@@ -743,14 +771,7 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
     if (!pre_index || write_back) && !(load && rd == rn) {
         cpu.set_reg(rn, offset_addr);
     }
-
-    // ARM7TDMI TRM: LDR is 1S+1N+1I, plus 1S+1N to refill the pipeline when
-    // it loads PC.
-    match (load, rd) {
-        (true, 15) => 5,
-        (true, _) => 3,
-        (false, _) => 2,
-    }
+    cycles
 }
 
 // ---------------------------------------------------------------------------
@@ -758,6 +779,7 @@ fn single_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) ->
 // ---------------------------------------------------------------------------
 
 fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
+    let mut cycles = 0;
     let pre_index = (instruction >> 24) & 1 == 1;
     let up = (instruction >> 23) & 1 == 1;
     let imm_offset = (instruction >> 22) & 1 == 1;
@@ -782,7 +804,9 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
     };
     let addr = if pre_index { offset_addr } else { base };
 
+    cycles += cpu.data_cycles(bus, addr, false, false);
     if load {
+        cycles += cpu.idle_cycles(bus, 1);
         let val = match sh {
             // LDRH from an odd address reads the aligned halfword and rotates
             // the result right by 8, the same way a misaligned LDR rotates.
@@ -807,12 +831,7 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
     if (!pre_index || write_back) && !(load && rd == rn) {
         cpu.set_reg(rn, offset_addr);
     }
-
-    if load {
-        3
-    } else {
-        2
-    }
+    cycles
 }
 
 // ---------------------------------------------------------------------------
@@ -820,6 +839,7 @@ fn halfword_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) 
 // ---------------------------------------------------------------------------
 
 fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> u32 {
+    let mut cycles = 0;
     let pre_index = (instruction >> 24) & 1 == 1;
     let write_back = (instruction >> 21) & 1 == 1;
     let load = (instruction >> 20) & 1 == 1;
@@ -857,8 +877,12 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
     // so it does not qualify.
     let user_bank = s_bit && reg_list & (1 << 15) == 0 && !empty_list;
 
+    // LDM is nS+1N+1I and STM (n-1)S+2N: the first transfer non-sequential,
+    // the rest sequential, and a load ends with an internal cycle.
     if empty_list {
+        cycles += cpu.data_cycles(bus, addr, true, false);
         if load {
+            cycles += cpu.idle_cycles(bus, 1);
             let val = bus.read32(addr);
             cpu.set_reg(15, val);
         } else {
@@ -872,12 +896,14 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
             };
             cpu.set_reg(rn, new_base);
         }
-        return if load { 2 + reg_count } else { 1 + reg_count };
+        return cycles;
     }
 
+    let start = addr;
     if load {
         for i in 0..16u32 {
             if reg_list & (1 << i) != 0 {
+                cycles += cpu.data_cycles(bus, addr, true, addr != start);
                 let val = bus.read32(addr);
                 if user_bank {
                     cpu.set_user_reg(i as usize, val);
@@ -887,6 +913,9 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                 addr = addr.wrapping_add(4);
             }
         }
+        // The internal cycle comes after the transfers, which matters to the
+        // prefetch buffer when one of them was on the GamePak.
+        cycles += cpu.idle_cycles(bus, 1);
         if s_bit && reg_list & (1 << 15) != 0 {
             let spsr = match cpu.mode() {
                 super::Mode::Fiq => cpu.spsr_fiq,
@@ -922,6 +951,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
                 } else {
                     cpu.reg(i as usize)
                 };
+                cycles += cpu.data_cycles(bus, addr, true, addr != start);
                 bus.write32(addr, val);
                 addr = addr.wrapping_add(4);
             }
@@ -939,14 +969,7 @@ fn block_data_transfer(instruction: u32, cpu: &mut Cpu, bus: &mut MemoryBus) -> 
         };
         cpu.set_reg(rn, new_base);
     }
-
-    // LDM is nS+1N+1I, plus the 1S+1N pipeline refill when PC is loaded.
-    if load {
-        let refill = if reg_list & (1 << 15) != 0 { 2 } else { 0 };
-        2 + reg_count + refill
-    } else {
-        1 + reg_count
-    }
+    cycles
 }
 
 // ---------------------------------------------------------------------------
@@ -973,8 +996,7 @@ fn branch(instruction: u32, cpu: &mut Cpu) -> u32 {
 
     let target = pc.wrapping_add(offset as u32);
     cpu.set_reg(15, target);
-
-    3
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -993,8 +1015,7 @@ fn branch_exchange(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.cpsr &= !0x20; // Clear THUMB bit
         cpu.set_reg(15, addr & !3);
     }
-
-    3
+    0
 }
 
 fn branch_link_exchange_rm(instruction: u32, cpu: &mut Cpu) -> u32 {
@@ -1010,6 +1031,5 @@ fn branch_link_exchange_rm(instruction: u32, cpu: &mut Cpu) -> u32 {
         cpu.cpsr &= !0x20;
         cpu.set_reg(15, addr & !3);
     }
-
-    3
+    0
 }

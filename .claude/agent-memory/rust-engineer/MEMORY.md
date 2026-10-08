@@ -27,3 +27,5 @@ here pointing at it.
 - **2026-10-04** - [Licence check before porting (NBA is GPL, mGBA MPL); source without auth; suite table -> test](2026-10-04-reference-sources-and-hardware-tables.md)
 - **2026-10-04** - [BIOS math coefficients, multiply carry model, BIOS read latch (project memory)](../../memory.md)
 - **2026-10-07** - [SIO regs/timing, Halt return 30, HBlank flag 1006, misc-edge log swaps got/expected (project memory)](../../memory.md)
+- **2026-10-08** - [Gates need --no-fail-fast; neutral-refactor trace hashing; A/B method](2026-10-08-gates-and-perf-ab-method.md)
+- **2026-10-08** - [Wait states/prefetch/DMA stall rules and perf traps (project memory)](../../memory.md)

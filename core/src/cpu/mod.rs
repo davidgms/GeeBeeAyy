@@ -1,5 +1,8 @@
 pub mod arm;
+mod prefetch;
 pub mod thumb;
+
+use crate::memory::MemoryBus;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -36,10 +39,19 @@ pub struct Cpu {
     pub spsr_und: u32,
     pub halted: bool,
     /// Set when an instruction writes R15, so `step` knows not to advance PC itself.
-    branched: bool,
+    pub(crate) branched: bool,
     /// Cycles owed by an exception entry, or by HLE BIOS code that ran in no
     /// time, charged to the next `step`.
     pub(crate) entry_cycles: u32,
+    /// The next opcode fetch is non-sequential: the instruction before it
+    /// made a data access, which takes the bus off the code, or (GBATEK,
+    /// prefetch disable bug) ran internal cycles in ROM with the GamePak
+    /// prefetch buffer off. Only ROM, where N and S differ, can tell.
+    /// Transient, like `branched`, so not part of a save state.
+    pub(crate) fetch_n: bool,
+    /// The GamePak prefetch buffer. Transient: a save state restores with it
+    /// empty, which costs at most a few cycles of one opcode fetch.
+    prefetch: prefetch::Prefetch,
 }
 
 pub struct BarrelShiftResult {
@@ -73,6 +85,8 @@ impl Cpu {
             halted: false,
             branched: false,
             entry_cycles: 0,
+            fetch_n: false,
+            prefetch: prefetch::Prefetch::default(),
         }
     }
 
@@ -167,15 +181,22 @@ impl Cpu {
         }
 
         // R15 reads as the address of the instruction plus two fetches while it
-        // executes: +8 in ARM, +4 in THUMB.
-        let cycles = if is_thumb {
+        // executes: +8 in ARM, +4 in THUMB. Each instruction pays for the
+        // prefetch of that address; the decoders return what their data
+        // accesses and internal cycles cost. Returned rather than added to a
+        // field as they go: a running total in memory measured ~7% slower
+        // per frame on Mario Tennis.
+        let seq = !std::mem::take(&mut self.fetch_n);
+        let mut cycles = if is_thumb {
             let instruction = bus.read16(pc);
             self.registers[15] = pc.wrapping_add(4);
-            self.execute_thumb(instruction, bus)
+            self.fetch_cycles(bus, pc.wrapping_add(4), false, seq)
+                + self.execute_thumb(instruction, bus)
         } else {
             let instruction = bus.read32(pc);
             self.registers[15] = pc.wrapping_add(8);
-            self.execute_arm(instruction, bus)
+            self.fetch_cycles(bus, pc.wrapping_add(8), true, seq)
+                + self.execute_arm(instruction, bus)
         };
 
         // Only advance to the next instruction when the instruction itself did
@@ -188,7 +209,108 @@ impl Cpu {
         // flipped the T bit as part of this instruction.
         self.align_pc();
 
+        // Any write to PC refills the pipeline at the target, in the state
+        // the instruction left: one place for every branch, load to PC and
+        // exception return.
+        if self.branched {
+            let (target, word) = (self.registers[15], self.cpsr & 0x20 == 0);
+            cycles +=
+                bus.access_cycles(target, word, false) + bus.access_cycles(target, word, true);
+            self.fetch_n = false;
+            // The buffer starts over behind the two opcodes just fetched.
+            let width = if word { 4 } else { 2 };
+            self.restart_prefetch(bus, target.wrapping_add(2 * width));
+        }
+
         cycles + entry
+    }
+
+    /// What the next instruction's opcode fetch will cost, for a read that
+    /// happens after it (see `Timer::counters`).
+    pub(crate) fn next_fetch_cycles(&self, bus: &MemoryBus) -> u32 {
+        let thumb = self.cpsr & 0x20 != 0;
+        let address = self.registers[15].wrapping_add(if thumb { 4 } else { 8 });
+        // On a copy: this only looks.
+        let mut prefetch = self.prefetch;
+        if prefetch.active && bus.prefetch_enabled() {
+            if let Some(cycles) = prefetch.fetch(address, !thumb) {
+                return cycles;
+            }
+        }
+        bus.access_cycles(address, !thumb, !self.fetch_n)
+    }
+
+    /// An opcode fetch: from the prefetch buffer if it has the opcode,
+    /// otherwise an ordinary access, behind which the buffer starts over.
+    #[inline]
+    fn fetch_cycles(&mut self, bus: &MemoryBus, address: u32, word: bool, seq: bool) -> u32 {
+        if self.prefetch.active && bus.prefetch_enabled() {
+            if let Some(cycles) = self.prefetch.fetch(address, word) {
+                return cycles;
+            }
+        }
+        let cycles = bus.access_cycles(address, word, seq);
+        self.restart_prefetch(bus, address.wrapping_add(if word { 4 } else { 2 }));
+        cycles
+    }
+
+    /// A DMA takes the GamePak bus `lead` cycles in: what it waits for the
+    /// prefetch buffer, which fetches on through those cycles. The buffer
+    /// keeps what it holds; the mGBA suite's DMA timings show the opcode
+    /// after the transfer still coming out of it.
+    pub(crate) fn prefetch_handover(&self, lead: u32) -> u32 {
+        let mut prefetch = self.prefetch;
+        prefetch.advance(lead);
+        prefetch.handover()
+    }
+
+    /// Point the prefetch buffer at `next`, empty, if opcodes there come from
+    /// ROM with the buffer enabled; otherwise leave it stopped.
+    #[inline]
+    fn restart_prefetch(&mut self, bus: &MemoryBus, next: u32) {
+        if prefetch::gamepak(next) && bus.prefetch_enabled() {
+            // `| 2`: the halfword time itself, never the 128 KiB boundary's N.
+            self.prefetch
+                .restart(next, bus.access_cycles(next | 2, false, true));
+        } else {
+            self.prefetch.active = false;
+        }
+    }
+
+    /// Cycles of a data access, which also leaves the next opcode fetch
+    /// non-sequential.
+    #[inline]
+    pub(crate) fn data_cycles(
+        &mut self,
+        bus: &MemoryBus,
+        address: u32,
+        word: bool,
+        seq: bool,
+    ) -> u32 {
+        self.fetch_n = true;
+        let mut cycles = bus.access_cycles(address, word, seq);
+        if self.prefetch.active {
+            if prefetch::gamepak(address) {
+                cycles += self.prefetch.stop();
+            } else {
+                self.prefetch.advance(cycles);
+            }
+        }
+        cycles
+    }
+
+    /// `cycles` internal cycles with no data access. GBATEK's prefetch
+    /// disable bug: with the GamePak prefetch buffer off, a ROM opcode with
+    /// internal cycles that does not write R15 makes the next opcode fetch
+    /// non-sequential. Outside ROM N and S cost the same, so the flag is
+    /// harmless there.
+    #[inline]
+    pub(crate) fn idle_cycles(&mut self, bus: &MemoryBus, cycles: u32) -> u32 {
+        if !bus.prefetch_enabled() {
+            self.fetch_n = true;
+        }
+        self.prefetch.advance(cycles);
+        cycles
     }
 
     /// Force PC alignment for the current instruction set: halfword in THUMB,
@@ -203,10 +325,11 @@ impl Cpu {
 
     pub fn execute_arm(&mut self, instruction: u32, bus: &mut super::memory::MemoryBus) -> u32 {
         let cond = (instruction >> 28) & 0xF;
-        if !self.condition_met(cond) {
-            return 1;
+        if self.condition_met(cond) {
+            arm::execute(instruction, self, bus)
+        } else {
+            0
         }
-        arm::execute(instruction, self, bus)
     }
 
     pub fn execute_thumb(&mut self, instruction: u16, bus: &mut super::memory::MemoryBus) -> u32 {
@@ -527,8 +650,16 @@ impl Cpu {
 
     /// SWI handler - calls BIOS HLE
     pub fn swi(&mut self, comment: u32, bus: &mut super::memory::MemoryBus) {
+        let back = if self.cpsr & 0x20 != 0 { 2 } else { 4 };
         // Software interrupt: call BIOS HLE
         super::bios::handle_swi(comment, self, bus);
+        // The BIOS returns with `movs pc, lr`, a refill at the caller's next
+        // instruction. Writing PC here charges it there, in the caller's
+        // region, unless the HLE already sent PC somewhere else (SoftReset,
+        // or IntrWait re-running its own SWI).
+        if !self.branched {
+            self.set_reg(15, self.registers[15].wrapping_sub(back));
+        }
         // What the real BIOS's SWI epilogue (or SoftReset) leaves in the
         // BIOS read latch; the HLE runs no BIOS code to fetch it.
         bus.bios_latch = if comment == 0 {
@@ -562,6 +693,7 @@ impl Cpu {
         self.spsr_irq = old_cpsr;
         self.registers[14] = return_addr.wrapping_add(4);
         self.registers[15] = 0x0000_0018;
+        self.fetch_n = false;
         // ARM7TDMI TRM: exception entry is 2S+1N, the pipeline refill at the
         // vector. Charged to the vector's first instruction.
         self.entry_cycles = 3;

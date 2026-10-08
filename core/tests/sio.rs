@@ -142,9 +142,10 @@ fn a_normal_mode_internal_clock_transfer_finishes_after_its_bits() {
         let mut gba = spinning_gba();
         let took = transfer(&mut gba, siocnt, 10_000)
             .unwrap_or_else(|| panic!("SIOCNT {siocnt:04X}: the transfer never finished"));
-        // `b .` from ROM takes a few cycles a step, so the end is seen late.
+        // `b .` from ROM is one step of 20 cycles at WAITCNT 0 (S fetch 6,
+        // refill N 8 + S 6), so the end is seen up to a step late.
         assert!(
-            (cycles..cycles + 12).contains(&took),
+            (cycles..=cycles + 20).contains(&took),
             "SIOCNT {siocnt:04X}: finished after {took} cycles, want {cycles}"
         );
         assert_ne!(gba.bus.read16(0x0400_0202) & 0x80, 0, "no serial IRQ");

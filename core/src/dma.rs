@@ -62,6 +62,39 @@ impl DmaChannel {
 pub struct Dma {
     pub channels: [DmaChannel; 4],
     hblank_fired: bool,
+    /// CPU cycles the transfers run since `Gba::step` last looked have
+    /// taken: the CPU is stopped while a DMA owns the bus. Transient, so not
+    /// part of a save state.
+    pub(crate) stall: u32,
+    /// Whether one of those transfers used the GamePak bus, and if so the
+    /// cycles the first such transfer spent elsewhere before it did (a read
+    /// from RAM ahead of a write to ROM).
+    pub(crate) stall_gamepak: Option<u32>,
+}
+
+fn gamepak(address: u32) -> bool {
+    (0x08..0x10).contains(&(address >> 24))
+}
+
+/// Cycles a transfer of `count` units takes the bus for: GBATEK, DMA
+/// Transfer Cycles, 2N + 2(n-1)S + xI - each unit a read and a write, the
+/// first of each non-sequential - with x = 2. GBATEK gives x = 4 when both
+/// ends are on the GamePak; the mGBA suite's hardware values instead fit a
+/// sequential first write and x = 2 there (ROM to ROM, 16 halfwords at
+/// WAITCNT 0: 100 cycles, not 104).
+fn transfer_cycles(
+    bus: &super::memory::MemoryBus,
+    source: u32,
+    dest: u32,
+    count: u32,
+    word: bool,
+) -> u32 {
+    let both = gamepak(source) && gamepak(dest);
+    let read = bus.access_cycles(source, word, false)
+        + (count - 1) * bus.access_cycles(source | 2, word, true);
+    let write =
+        bus.access_cycles(dest, word, both) + (count - 1) * bus.access_cycles(dest | 2, word, true);
+    read + write + 2
 }
 
 impl Default for Dma {
@@ -75,6 +108,8 @@ impl Dma {
         Self {
             channels: Default::default(),
             hblank_fired: false,
+            stall: 0,
+            stall_gamepak: None,
         }
     }
 
@@ -187,6 +222,12 @@ impl Dma {
         // it.
         bus.eeprom_begin_dma(ch.dest, count as usize);
         bus.eeprom_begin_dma(ch.source, count as usize);
+        self.stall += transfer_cycles(bus, ch.source, ch.dest, count, word);
+        if self.stall_gamepak.is_none() && gamepak(ch.dest) && !gamepak(ch.source) {
+            self.stall_gamepak = Some(bus.access_cycles(ch.source, word, false));
+        } else if self.stall_gamepak.is_none() && gamepak(ch.source) {
+            self.stall_gamepak = Some(0);
+        }
 
         for _ in 0..count {
             ch.fetch(bus, word);
@@ -309,6 +350,10 @@ impl Dma {
             return None;
         }
 
+        self.stall += transfer_cycles(bus, ch.source, ch.dest, 4, true);
+        if self.stall_gamepak.is_none() && gamepak(ch.source) {
+            self.stall_gamepak = Some(0);
+        }
         let mut data = Vec::with_capacity(16);
         for _ in 0..4 {
             // The same source rules as an ordinary transfer: bits 7-8 pick
