@@ -1317,3 +1317,47 @@ sub-suite moved. Suite source (MIT): codeload.github.com/mgba-emu/suite.
   wants the wake ~35 cycles later (an HBlank IRQ near cycle 995-1002, as
   mGBA has it, would do it but moves DMA/render timing too), and the
   1235-vs-1232 delta between two identical halts has no explanation yet.
+
+## 2026-10-08 - Wait states, prefetch, DMA stalls: Timing 236 -> 1880/2020
+
+Branch `fix/wait-states`, design `docs/research/wait-states-design.md`. mGBA
+suite 5208 -> 6852/6998; no other sub-suite moved, Timer IRQ 90, count-up
+936 and SIO timing 4 held without re-fitting (IWRAM/BIOS stay 1 cycle).
+
+- **Cycle accounting**: decoders return their data + internal cycles,
+  `Cpu::step` adds the opcode fetch (pc + 2L) and one central refill (N+S at
+  the target) whenever PC was written. Costs come from
+  `MemoryBus::access_cycles` over a 256-entry table (`memory/timing.rs`)
+  rebuilt by `set_waitcnt` (store, reset, save-state load). Measured traps:
+  a running total kept in a struct field cost ~7% per frame on Mario Tennis
+  (store-forwarding chain), a boxed table ~3%, and a second `match op` at the
+  end of THUMB `format4_alu` ~6% (it broke the jump table). The refactor was
+  proven neutral by hashing every step's (PC, cycles) over 1500 frames of
+  eight ROMs against the base build.
+- **Fixed counts (were wrong before)**: THUMB hi-register ops (`nop` =
+  `mov r8, r8`) cost 3 whatever they did (`thumb.rs` format 5); register-
+  offset stores and `push` one too many; `pop {pc}` had no refill; the first
+  half of `bl` cost 3; multiplies ignored `m`; shifts by register had no I.
+- **Rules from the suite's table, not GBATEK** (all in tests/timing.rs):
+  the opcode fetch after any data access is N (after a refill it is S); a
+  load samples I/O after its opcode fetch, so `TMxCNT_L` is published ahead
+  by the next fetch's cost (`Timer::counters(fetch)`, 1 in IWRAM = the old
+  fit). Prefetch buffer (`cpu/prefetch.rs`): fills one halfword per S16 on
+  every cycle the CPU leaves the GamePak bus; a buffered fetch is 1 cycle,
+  ARM included if the second half is ready by the end of that cycle; an
+  in-flight halfword costs what it has left; a GamePak data access stops and
+  empties it and pays +1 if the halfword in flight had exactly 1 cycle left;
+  LDM/POP's I cycle comes after the transfers. DMA: 2N + 2(n-1)S + 2I, with
+  the write sequential between two GamePak ends (GBATEK's 4I does not fit);
+  the stall lands after the next instruction when that one's fetch is 1
+  cycle (start latency 2); a GamePak DMA pays the same +1 handover but
+  leaves the buffer intact, evaluated after any RAM read that precedes it.
+- **Left**: the 140 BIOS Div/Sqrt/ArcTan/CpuSet cells (real BIOS body cost,
+  declined). Games now get hardware CPU speed: Mario Tennis 142.5k -> 84k
+  steps/frame (-20% host cost), Yggdra +10% host cost per frame. Celeste
+  first draws on frame 12, not before 8 (`tests/ppu.rs` render runs 30).
+- **The suite's SRAM log stops at 0x8000 bytes** (`savprintf` in its
+  `main.c`), which is why it cut off in the multiply tests; the old probe
+  read 64 KiB but the log is 32 KiB. `temp/tprobe` finds savprintf's static
+  `location` in RAM and rewinds it to read the whole timing log.
+

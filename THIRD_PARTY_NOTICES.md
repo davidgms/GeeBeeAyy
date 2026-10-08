@@ -8,6 +8,7 @@ carry their own licence files in their packages.
 | Component | Where | Upstream | Licence |
 |---|---|---|---|
 | ARM7TDMI multiplication carry-flag model | `core/src/cpu/arm.rs` (section "Multiply carry flag"), altered: translated from C to Rust | https://github.com/zaydlang/multiplication-algorithm | zlib |
+| mGBA test suite hardware tables | `core/tests/timing.rs`, `core/tests/cpu.rs` (expected values copied from `src/timing.c`) | https://github.com/mgba-emu/suite | MIT |
 | rcheevos | `android/app/src/main/cpp/rcheevos` (git submodule) | https://github.com/RetroAchievements/rcheevos | MIT |
 | Pixelify Sans font | `android/app/src/main/res/font/pixelify_sans_*.ttf` | https://github.com/eifetx/Pixelify-Sans | SIL Open Font License 1.1 |
 
@@ -26,6 +27,33 @@ Permission is granted to anyone to use this software for any purpose, including 
     1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
     2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
     3. This notice may not be removed or altered from any source distribution.
+```
+
+## mGBA test suite
+
+Hardware-recorded expected values from the suite's timing table, embedded
+as test data. No suite code is included.
+
+```
+Copyright (c) 2015 Jeffrey Pfau
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## rcheevos
