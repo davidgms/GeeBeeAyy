@@ -138,10 +138,6 @@ impl Gba {
             self.apply_dma_writes();
             self.apply_timer_writes();
             self.ppu.tick(step, &mut self.bus, &mut self.dma);
-            // A transfer while the CPU is halted stops nothing that runs.
-            self.dma.stall = 0;
-            self.dma.stall_gamepak = None;
-            self.dma_stall = 0;
             self.timer.tick(step, &mut self.bus);
             self.bus.tick_sio(step);
             self.apu.tick(step);
@@ -154,6 +150,13 @@ impl Gba {
             // starved except during the brief run between interrupts, which
             // is audible as a thump once a frame instead of music.
             self.post_tick();
+            // A transfer while the CPU is halted stops nothing that runs.
+            // After `post_tick`, which runs the sound FIFO refills: cleared
+            // before it, the refill of the step that wakes the CPU was
+            // charged to the first instruction after the wake.
+            self.dma.stall = 0;
+            self.dma.stall_gamepak = None;
+            self.dma_stall = 0;
 
             // GBATEK: HALT ends when an *enabled* interrupt occurs, judged on
             // IE & IF alone. IME gates whether the CPU jumps to the handler,

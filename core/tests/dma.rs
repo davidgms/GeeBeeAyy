@@ -442,3 +442,34 @@ fn a_repeating_dma_reloads_its_count_from_the_register() {
         "the repeat must copy CNT_L's four units, not the two latched at enable"
     );
 }
+
+// --- Stalls: what a transfer costs the CPU ------------------------------------
+
+/// A sound DMA that refills the FIFO while the CPU is halted stops nothing
+/// that runs, so the CPU owes it nothing once an interrupt wakes it. The
+/// halted step cleared the pending stall *before* `post_tick` ran the FIFO
+/// refills, so the refill of the waking step survived and was charged to the
+/// first instruction after the wake: two IWRAM `mov`s cost 1 and 31.
+#[test]
+fn a_sound_dma_during_halt_is_not_charged_after_the_wake() {
+    let mut gba = spinning_gba();
+    for i in 0..2 {
+        gba.bus.write32(0x0300_0000 + 4 * i, 0xE1A0_0000); // mov r0, r0
+    }
+    gba.cpu.registers[15] = 0x0300_0000;
+    // DMA1: EWRAM -> FIFO A, 32-bit, repeat, timing 3. The FIFO starts
+    // empty, so the halted step's `post_tick` refills it.
+    configure(&mut gba, 1, 0x0200_0000, 0x0400_00A0, 4, 0xB600);
+    // IE & IF already set: the halted step wakes the CPU (IME stays 0).
+    gba.bus.io.ie = 0x0001;
+    gba.bus.io.request_interrupt(0x0001);
+    gba.bus.io.halt = true;
+
+    gba.step();
+    assert!(!gba.bus.io.halt, "IE & IF should have ended the HALT");
+    assert_eq!(
+        [gba.step(), gba.step()],
+        [1, 1],
+        "a transfer that ran during HALT was charged to the code after it"
+    );
+}
