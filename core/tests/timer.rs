@@ -243,6 +243,24 @@ fn lowering_the_prescaler_of_a_running_timer_keeps_counting() {
     assert_eq!(timer.counter(0), 3);
 }
 
+/// The counter a load reads is published one opcode fetch ahead
+/// (`Timer::counters`). A fetch can be longer than the timer's period - a
+/// ROM fetch is 9 cycles at the slowest WAITCNT, reload 0xFFFF overflows
+/// every cycle - so the published value has to wrap as often as the timer
+/// does. It used to wrap once: 0xFFFF + 9 published 0x0007.
+#[test]
+fn a_counter_published_ahead_wraps_as_often_as_the_timer_does() {
+    let mut timer = Timer::new();
+    timer.set_reload(0, 0xFFFF);
+    timer.set_control(0, ENABLE);
+    assert_eq!(timer.counters(9)[0], 0xFFFF);
+
+    // Period 16, 40 counts ahead: two overflows, then 8 into the third.
+    timer.set_reload(1, 0xFFF0);
+    timer.set_control(1, ENABLE);
+    assert_eq!(timer.counters(40)[1], 0xFFF8);
+}
+
 /// `Timer::tick` skips straight to the end of a slice when no overflow falls
 /// in it. That shortcut must be invisible: ticking a slice in one call has to
 /// leave every counter, overflow count and IF bit exactly where ticking it one

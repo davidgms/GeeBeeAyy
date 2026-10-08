@@ -21,3 +21,8 @@ When run isolated in `.claude/worktrees/agent-*`:
   `raw.githubusercontent.com` URL, or any path containing a `source` dir, is
   refused as "names git". Put loops in a `temp/*.sh` and run it with `sh`;
   rename an extracted `source/` dir; single plain `curl` calls pass.
+- **`cd core && cargo ... ; cd .. && git commit` in one call is refused**
+  ("changes directory to a location computed at runtime before running
+  git"). Run git as its own call with `cd <absolute worktree root> && git`.
+- Reference emulator sources are already on disk, no download needed:
+  `/home/david/projects/GeeBeeAyy/temp/emulators-research/{mgba,nanoboyadvance}/src/`.

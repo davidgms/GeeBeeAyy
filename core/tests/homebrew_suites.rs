@@ -29,9 +29,10 @@
 //!   routine. The harness catches that routine's entry and reads the mask, so
 //!   the verdict is the ROM's own, without reading the bitmap screen. Exact.
 //! - **mGBA suite** only reports "passes/total" per sub-suite as text on its
-//!   BG1 tilemap. The harness drives the menu and reads that text. It is a
-//!   **reported score, not an assertion**: several sub-suites measure cycle
-//!   timing that this interpreter does not model, so 100% is not the bar.
+//!   BG1 tilemap. The harness drives the menu and reads that text. 100% is
+//!   not the bar - several sub-suites measure cycle timing this interpreter
+//!   does not model - so the gate is a per-sub-suite floor: no score may
+//!   drop below the one recorded in `MGBA_FLOOR`.
 
 use std::collections::BTreeMap;
 
@@ -318,55 +319,119 @@ fn mgba_score(gba: &Gba) -> Option<(u32, u32)> {
     Some((pass.trim().parse().ok()?, total.trim().parse().ok()?))
 }
 
-/// Reported score, never asserted - see the module comment. Ignored because
-/// a test that cannot fail only costs time in the default run; read it with
+type SubSuite = (String, Option<(u32, u32)>);
+
+/// Each sub-suite's `(name, score)`, in menu order, or `None` without the
+/// ROM. A score is `None` when the sub-suite showed none in time (the video
+/// suite never does) or panicked in the core.
+fn mgba_scores() -> Option<Vec<SubSuite>> {
+    load("mgba-suite")?;
+    // A fresh machine per sub-suite, each on its own thread, so one that
+    // hangs or panics costs only itself. A panic is a core bug worth
+    // reporting, not a reason to lose the other scores.
+    let scores = std::thread::scope(|s| {
+        let runs: Vec<_> = (0..MGBA_SUITES)
+            .map(|index| {
+                s.spawn(move || {
+                    let mut gba = load("mgba-suite").expect("present a moment ago");
+                    gba.run_frames(30);
+                    for _ in 0..index {
+                        press(&mut gba, KEY_DOWN);
+                    }
+                    press(&mut gba, KEY_A);
+                    let mut score = None;
+                    for _ in 0..MGBA_SUITE_FRAMES / 10 {
+                        gba.run_frames(10);
+                        score = mgba_score(&gba);
+                        if score.is_some() {
+                            break;
+                        }
+                    }
+                    let name = mgba_text_row(&gba, 1)
+                        .get(..20)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    (name, score)
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .map(|run| {
+                run.join()
+                    .unwrap_or_else(|_| ("PANICKED in the core (see above)".into(), None))
+            })
+            .collect()
+    });
+    Some(scores)
+}
+
+/// The full report; read it with
 /// `cargo test --release --test homebrew_suites -- --ignored --nocapture`.
+/// Ignored because `mgba_suite_does_not_regress` already runs the same thing
+/// as a gate.
 #[test]
-#[ignore = "score report, not a gate; run with --ignored --nocapture"]
+#[ignore = "score report; run with --ignored --nocapture"]
 fn mgba_suite_score() {
-    if load("mgba-suite").is_none() {
+    let Some(scores) = mgba_scores() else {
         return;
-    }
+    };
     let (mut passed, mut total) = (0, 0);
-    for index in 0..MGBA_SUITES {
-        // A fresh machine per sub-suite, so one that hangs or panics costs
-        // only itself. A panic is a core bug worth reporting, not a reason to
-        // lose the other scores.
-        let run = std::panic::catch_unwind(|| {
-            let mut gba = load("mgba-suite").expect("present a moment ago");
-            gba.run_frames(30);
-            for _ in 0..index {
-                press(&mut gba, KEY_DOWN);
-            }
-            press(&mut gba, KEY_A);
-            let mut score = None;
-            for _ in 0..MGBA_SUITE_FRAMES / 10 {
-                gba.run_frames(10);
-                score = mgba_score(&gba);
-                if score.is_some() {
-                    break;
-                }
-            }
-            let name = mgba_text_row(&gba, 1)
-                .get(..20)
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            (name, score)
-        });
-        match run {
-            Ok((name, Some((p, t)))) => {
+    for (index, (name, score)) in scores.iter().enumerate() {
+        match score {
+            Some((p, t)) => {
                 eprintln!("mGBA suite {index:2} {name:<20} {p:4}/{t}");
                 passed += p;
                 total += t;
             }
             // The video suite has no count at all; it is judged by eye.
-            Ok((name, None)) => eprintln!(
+            None => eprintln!(
                 "mGBA suite {index:2} {name:<20} no score within {MGBA_SUITE_FRAMES} frames \
-                 (hung, or a visual-only suite)"
+                 (hung, panicked, or a visual-only suite)"
             ),
-            Err(_) => eprintln!("mGBA suite {index:2} PANICKED in the core (see above)"),
         }
     }
     eprintln!("mGBA suite total: {passed}/{total}");
+}
+
+/// Passes per sub-suite as of 2026-10-08 (6852/6998), in menu order; the
+/// video suite (13) has no score. Raise a number when a fix gains cells,
+/// never lower one to make a change pass.
+const MGBA_FLOOR: [u32; MGBA_SUITES - 1] = [
+    1552, // Memory
+    130,  // I/O read
+    1880, // Timing
+    936,  // Timer count-up
+    90,   // Timer IRQ
+    140,  // Shifter
+    93,   // Carry
+    72,   // Multiply long
+    615,  // BIOS math
+    1244, // DMA
+    90,   // SIO register R/W
+    4,    // SIO timing
+    6,    // Misc. edge cases
+];
+
+/// No sub-suite may score below its floor. Skips without the ROM, like the
+/// FuzzARM gates. About 4 s in a release build.
+#[test]
+fn mgba_suite_does_not_regress() {
+    let Some(scores) = mgba_scores() else {
+        return;
+    };
+    let regressions: Vec<String> = MGBA_FLOOR
+        .iter()
+        .zip(&scores)
+        .enumerate()
+        .filter_map(|(index, (&floor, (name, score)))| {
+            let passed = score.map_or(0, |(p, _)| p);
+            (passed < floor).then(|| format!("{index:2} {name}: {passed} < {floor}"))
+        })
+        .collect();
+    assert!(
+        regressions.is_empty(),
+        "mGBA suite regressed:\n{}",
+        regressions.join("\n")
+    );
 }

@@ -11,7 +11,7 @@ Newest last. Each line points at the file holding the detail.
 - **2026-08-30** - [`git checkout <file>` is blocked by the sandbox classifier](2026-08-30-git-checkout-file-is-blocked-by-the-sandbox-classifier.md)
 - **2026-09-10** - [A sprite's priority beats a lower OAM index, and GBATEK says otherwise](2026-09-10-a-sprite-s-priority-beats-a-lower-oam-index-and-gbatek-says-.md)
 - **2026-10-01** - [Probing the core without touching the repo](2026-10-01-probing-the-core-without-touching-the-repo.md)
-- **2026-10-01** - [Worktree: heredoc/git-substring Bash refusals; temp/roms absent so ROM tests skip](2026-10-01-worktree-sandbox-quirks-heredocs-and-rom-fixtures.md)
+- **2026-10-01** - [Worktree: heredoc/cd+git Bash refusals; temp/roms absent; reference emulator sources on disk](2026-10-01-worktree-sandbox-quirks-heredocs-and-rom-fixtures.md)
 
 Durable facts about the project itself go to `.claude/memory.md` or
 `docs/` instead, so every agent and every human gets them; leave a line
@@ -29,3 +29,4 @@ here pointing at it.
 - **2026-10-07** - [SIO regs/timing, Halt return 30, HBlank flag 1006, misc-edge log swaps got/expected (project memory)](../../memory.md)
 - **2026-10-08** - [Gates need --no-fail-fast; neutral-refactor trace hashing; A/B method](2026-10-08-gates-and-perf-ab-method.md)
 - **2026-10-08** - [Wait states/prefetch/DMA stall rules and perf traps (project memory)](../../memory.md)
+- **2026-10-08** - [Phase 4.5 review: late DMA stalls resolved in-step, GamePak DMA -> N fetch, suite floor gate (project memory)](../../memory.md)

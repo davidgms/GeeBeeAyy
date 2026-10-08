@@ -155,11 +155,14 @@ impl Timer {
         }
         let run = cycles.saturating_sub(self.start_delay[i]);
         let next = self.counters[i] + (self.tick_counters[i] + run) / self.prescaler[i];
-        // ponytail: one wrap at most; a reload that overflows again within
-        // one opcode fetch reads off by its period.
+        // Past 0x10000 the counter cycles through reload..=0xFFFF, as often
+        // as the fetch is long: reload 0xFFFF overflows every count.
         match next {
             0..=0xFFFF => next as u16,
-            _ => (self.reloads[i] + next - 0x10000) as u16,
+            _ => {
+                let reload = self.reloads[i];
+                (reload + (next - 0x10000) % (0x10000 - reload)) as u16
+            }
         }
     }
 
