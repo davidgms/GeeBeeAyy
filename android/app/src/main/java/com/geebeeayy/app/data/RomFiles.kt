@@ -37,7 +37,8 @@ object RomFiles {
      * offered. Better than deleting something that belongs to another game.
      */
     private fun stateKey(rom: File): String? =
-        RomHeader.read(rom)?.stateKey()
+        RomHeader.read(rom)?.stateKey()?.takeIf { it != "ROM" }
+            ?: RomBytes.read(rom.path)?.let { RomHeader.stateKey(it) }
 
     /** True if every file was removed. */
     fun deleteSaveData(context: Context, romPath: String): Boolean =

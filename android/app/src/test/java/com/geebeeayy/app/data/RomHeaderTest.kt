@@ -41,6 +41,17 @@ class RomHeaderTest {
     }
 
     @Test
+    fun `carts with neither field key on a checksum of the whole image`() {
+        val a = cart("", "") + byteArrayOf(1)
+        val b = cart("", "") + byteArrayOf(2)
+        assertEquals("ROM_7827F38C", RomHeader.stateKey(a))
+        assertEquals(RomHeader.stateKey(a), RomHeader.stateKey(a.copyOf()))
+        assert(RomHeader.stateKey(a) != RomHeader.stateKey(b))
+        // A cart with a header keys exactly as it always has.
+        assertEquals("YGGDRA_UNION_BYUE", RomHeader.stateKey(cart("YGGDRA UNION", "BYUE")))
+    }
+
+    @Test
     fun `a cart with neither falls back to a fixed name`() {
         // Upper-cased like every other key, which is why the device has a
         // `ROM_slot0.state` sitting next to the real ones.
