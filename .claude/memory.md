@@ -1361,3 +1361,34 @@ suite 5208 -> 6852/6998; no other sub-suite moved, Timer IRQ 90, count-up
   read 64 KiB but the log is 32 KiB. `temp/tprobe` finds savprintf's static
   `location` in RAM and rewinds it to read the whole timing log.
 
+
+## 2026-10-08 - Phase 4.5 review: DMA stall placement, HALT, timer wrap, suite gate
+
+Branch `fix/phase-4-5-review`. Suite unchanged at 6852/6998; frame buffers
+of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
+
+- **Corrects the entry above**: the "stall lands after the next instruction
+  when its fetch is 1 cycle" rule now applies to *immediate* DMAs only.
+  HBlank, VBlank and sound transfers run by a step's ticks are resolved at
+  the end of that same step (`Gba::step`, the `loop` after `post_tick`): the
+  machine is ticked through the stall right there, which can start more
+  transfers. They used to be charged one or two instructions late, and their
+  prefetch handover read the buffer after the wrong instruction.
+- `Gba::take_dma_stall` is the one place a stall is consumed; a GamePak DMA
+  (`stall_gamepak`) also sets `cpu.fetch_n`, so the next ROM opcode fetch
+  the buffer does not hold is N. NanoBoyAdvance goes further (`bus.cc`:
+  *any* DMA makes the next CPU ROM access N); no hardware table here
+  separates the two, and the mGBA DMA timing rows cannot - their DMAs are
+  enabled by a store, which already makes the next fetch N.
+- The halted path clears stalls **after** `post_tick`: the sound FIFO
+  refills run there, and a refill on the waking step was charged to the
+  first instruction after the wake (~30 cycles).
+- `Timer::counter_after` wraps modulo the period (`0x10000 - reload`); it
+  wrapped once, so reload 0xFFFF published 0x0007 over a 9-cycle fetch.
+- Test traps: the FIFO requests a refill whenever it holds <= 16 bytes, so
+  one refill from empty leaves it still requesting - pre-fill a word to
+  isolate a single refill. DISPSTAT's HBlank flag rises at cycle 1006, the
+  HBlank DMA at 960: detect the DMA's step with `gba.ppu.hblank`.
+- `homebrew_suites.rs` `mgba_suite_does_not_regress` gates every sub-suite
+  on `MGBA_FLOOR` (raise a floor when a fix gains cells). Sub-suites run on
+  scoped threads: ~3 s release, ~47 s debug; skips without the ROM (CI).
