@@ -638,11 +638,21 @@ and their PR and issue history.
 - [x] **DMA 1056/1244 -> 1244/1244, Memory 1346 -> 1462** (#65; total 4715).
       Per-channel DMA latch, ROM sources always increment, unit alignment.
       Save state version 8; v6 and v7 still load.
-- [ ] **Memory 1462/1552** - out-of-bounds ROM reads should return
-      `(address >> 1) & 0xFFFF`; CPU reads of the BIOS from outside it should
-      return the last BIOS opcode.
-- [ ] **BIOS math 305/615, Multiply long 52/72, SIO, Timing** - Timing needs
-      per-access wait states.
+- [x] **Memory 1462 -> 1552/1552, BIOS math 305 -> 615/615, Multiply long
+      52 -> 72/72** (#67). Out-of-bounds ROM reads, BIOS open bus, the BIOS
+      math functions, and the multiply carry flag from
+      `zaydlang/multiplication-algorithm` (zlib, notice in
+      `THIRD_PARTY_NOTICES.md`).
+- [x] **SIO 90/90 and 4/4, Misc 6/12** (#68). Save state version 9.
+- [x] **Timing 1880/2020** (#69; total 6852/6998). Per-region wait states,
+      the prefetch buffer and the DMA stall, following
+      [`docs/research/wait-states-design.md`](docs/research/wait-states-design.md).
+      Tested on the Mi 10T Pro: Yggdra, Mario Tennis, Celeste and 240p at
+      60 fps; Mario Tennis CPU 82-100% of a core over 2 minutes.
+- [x] **Declined: Timing's last 140 cells** - they time the real BIOS's own
+      math routines. The HLE BIOS runs none of that code.
+- [x] **Deferred: Misc 6/12** - the rest needs DMA inside an instruction,
+      cycle-exact ROM timing, and an unexplained 3-cycle Halt difference.
 - [x] **Per-instruction cost rose ~10% in #60** - won back and more in #62:
       Mario Tennis 9.40 -> 7.64 ms per frame on the host (8.54 before #60);
       on the Mi 10T Pro CPU fell from 121-135% to 106-110% of a core.
