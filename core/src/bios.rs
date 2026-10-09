@@ -355,24 +355,33 @@ fn handle_cpu_fast_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     true
 }
 
+/// Most entries one BgAffineSet / ObjAffineSet call processes.
+///
+/// r2 is a full guest u32, and four billion entries kept the emulation thread
+/// inside one SWI for minutes. Real calls fill one matrix per background or
+/// sprite, or at most one per scanline for an HBlank DMA table (228). 65536
+/// BgAffineSet entries are 1 MB of output, four times all of EWRAM, so no
+/// call a game can make use of is cut short.
+const AFFINE_SET_MAX: u32 = 0x1_0000;
+
 fn handle_bg_affine_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
-    let count = cpu.reg(2);
+    let count = cpu.reg(2).min(AFFINE_SET_MAX);
     for i in 0..count {
-        let src_off = src + i * 20;
-        let dst_off = dst + i * 16;
+        let src_off = src.wrapping_add(i * 20);
+        let dst_off = dst.wrapping_add(i * 16);
         let _orig_x = bus.read32(src_off) as i32;
-        let _orig_y = bus.read32(src_off + 4) as i32;
-        let _aff_x = bus.read32(src_off + 8) as i32;
-        let _aff_y = bus.read32(src_off + 12) as i32;
-        let _theta = bus.read16(src_off + 16) as i16;
+        let _orig_y = bus.read32(src_off.wrapping_add(4)) as i32;
+        let _aff_x = bus.read32(src_off.wrapping_add(8)) as i32;
+        let _aff_y = bus.read32(src_off.wrapping_add(12)) as i32;
+        let _theta = bus.read16(src_off.wrapping_add(16)) as i16;
         bus.write16(dst_off, 0x0100);
-        bus.write16(dst_off + 2, 0);
-        bus.write16(dst_off + 4, 0);
-        bus.write16(dst_off + 6, 0x0100);
-        bus.write32(dst_off + 8, 0);
-        bus.write32(dst_off + 12, 0);
+        bus.write16(dst_off.wrapping_add(2), 0);
+        bus.write16(dst_off.wrapping_add(4), 0);
+        bus.write16(dst_off.wrapping_add(6), 0x0100);
+        bus.write32(dst_off.wrapping_add(8), 0);
+        bus.write32(dst_off.wrapping_add(12), 0);
     }
     true
 }
@@ -380,16 +389,18 @@ fn handle_bg_affine_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 fn handle_obj_affine_set(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let src = cpu.reg(0);
     let dst = cpu.reg(1);
-    let count = cpu.reg(2);
-    let stride = cpu.reg(3) as i32;
+    let count = cpu.reg(2).min(AFFINE_SET_MAX);
+    let stride = cpu.reg(3);
     for i in 0..count {
-        let _src_off = src + i * 4;
-        let _sx = bus.read16(src + i * 4) as i16 as i32;
-        let _sy = bus.read16(src + i * 4 + 2) as i16 as i32;
-        let _theta = bus.read16(src + i * 4 + 4) as i16;
-        let dst_off = (dst as i32 + stride * i as i32) as u32;
+        let src_off = src.wrapping_add(i * 4);
+        let _sx = bus.read16(src_off) as i16 as i32;
+        let _sy = bus.read16(src_off.wrapping_add(2)) as i16 as i32;
+        let _theta = bus.read16(src_off.wrapping_add(4)) as i16;
+        // A negative stride is two's complement, so wrapping u32 maths is the
+        // signed offset.
+        let dst_off = dst.wrapping_add(stride.wrapping_mul(i));
         bus.write16(dst_off, 0x0100);
-        bus.write16(dst_off + 2, 0);
+        bus.write16(dst_off.wrapping_add(2), 0);
     }
     true
 }
@@ -399,11 +410,11 @@ fn handle_bit_unpack(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let dst = cpu.reg(1);
     let mut offset = 0u32;
     loop {
-        let val = bus.read8(src + offset);
+        let val = bus.read8(src.wrapping_add(offset));
         if val == 0 {
             break;
         }
-        bus.write8(dst + offset, val);
+        bus.write8(dst.wrapping_add(offset), val);
         offset += 1;
         if offset > 0x10000 {
             break;
@@ -478,18 +489,18 @@ fn write_block(dst: u32, data: &[u8], bus: &mut MemoryBus) {
 fn lz77_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
     let size = decompressed_size(bus.read32(src));
     let mut out: Vec<u8> = Vec::with_capacity(size);
-    let mut src_pos = src + 4;
+    let mut src_pos = src.wrapping_add(4);
     while out.len() < size {
         let flags = bus.read8(src_pos);
-        src_pos += 1;
+        src_pos = src_pos.wrapping_add(1);
         for bit in 0..8 {
             if out.len() >= size {
                 break;
             }
             if flags & (0x80 >> bit) != 0 {
                 let byte1 = bus.read8(src_pos);
-                let byte2 = bus.read8(src_pos + 1);
-                src_pos += 2;
+                let byte2 = bus.read8(src_pos.wrapping_add(1));
+                src_pos = src_pos.wrapping_add(2);
                 let length = ((byte1 >> 4) & 0x0F) as usize + 3;
                 // Disp is the full 12 bits, and the +1 applies to the whole
                 // displacement: `x | y + 1` would bind the +1 to y alone.
@@ -507,7 +518,7 @@ fn lz77_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
                 }
             } else {
                 out.push(bus.read8(src_pos));
-                src_pos += 1;
+                src_pos = src_pos.wrapping_add(1);
             }
         }
     }
@@ -535,14 +546,14 @@ fn handle_rl_uncomp_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
 fn rl_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
     let size = decompressed_size(bus.read32(src));
     let mut out: Vec<u8> = Vec::with_capacity(size);
-    let mut src_pos = src + 4;
+    let mut src_pos = src.wrapping_add(4);
     while out.len() < size {
         let flag = bus.read8(src_pos);
-        src_pos += 1;
+        src_pos = src_pos.wrapping_add(1);
         if flag & 0x80 != 0 {
             // Compressed run: one byte repeated N+3 times.
             let val = bus.read8(src_pos);
-            src_pos += 1;
+            src_pos = src_pos.wrapping_add(1);
             for _ in 0..(flag & 0x7F) as usize + 3 {
                 if out.len() >= size {
                     break;
@@ -556,7 +567,7 @@ fn rl_decompress(src: u32, dst: u32, bus: &mut MemoryBus) {
                     break;
                 }
                 out.push(bus.read8(src_pos));
-                src_pos += 1;
+                src_pos = src_pos.wrapping_add(1);
             }
         }
     }
@@ -580,8 +591,8 @@ fn handle_diff8bit_unfilter_wram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let size = decompressed_size(bus.read32(src)) as u32;
     let mut sum = 0u8;
     for i in 0..size {
-        sum = sum.wrapping_add(bus.read8(src + 4 + i));
-        bus.write8(dst + i, sum);
+        sum = sum.wrapping_add(bus.read8(src.wrapping_add(4).wrapping_add(i)));
+        bus.write8(dst.wrapping_add(i), sum);
     }
     true
 }
@@ -602,15 +613,15 @@ fn handle_diff8bit_unfilter_vram(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let mut sum = 0u8;
     let mut pending = 0u16;
     for i in 0..size {
-        sum = sum.wrapping_add(bus.read8(src + 4 + i));
+        sum = sum.wrapping_add(bus.read8(src.wrapping_add(4).wrapping_add(i)));
         if i % 2 == 0 {
             pending = sum as u16;
         } else {
-            bus.write16(dst + i - 1, pending | ((sum as u16) << 8));
+            bus.write16(dst.wrapping_add(i - 1), pending | ((sum as u16) << 8));
         }
     }
     if size % 2 == 1 {
-        bus.write16(dst + size - 1, pending);
+        bus.write16(dst.wrapping_add(size - 1), pending);
     }
     true
 }
@@ -627,8 +638,8 @@ fn handle_diff16bit_unfilter(cpu: &mut Cpu, bus: &mut MemoryBus) -> bool {
     let size = decompressed_size(bus.read32(src)) as u32;
     let mut sum = 0u16;
     for i in 0..(size / 2) {
-        sum = sum.wrapping_add(bus.read16(src + 4 + i * 2));
-        bus.write16(dst + i * 2, sum);
+        sum = sum.wrapping_add(bus.read16(src.wrapping_add(4).wrapping_add(i * 2)));
+        bus.write16(dst.wrapping_add(i * 2), sum);
     }
     true
 }

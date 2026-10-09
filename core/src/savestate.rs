@@ -18,7 +18,9 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// returns). v6 and v7 still load, with the latches cleared.
 /// v9 appended the cycles left in a serial transfer. Older states load with
 /// no transfer running.
-const SAVE_VERSION: u32 = 9;
+/// v10 appended the CRC-32 of the ROM the state was taken on, and a state
+/// for another ROM is refused. Older states carry none and load as before.
+const SAVE_VERSION: u32 = 10;
 
 /// Bytes the v8 DMA latch block takes at the end of a state.
 #[cfg(test)]
@@ -27,6 +29,10 @@ const DMA_LATCHES_LEN: usize = 16;
 /// Bytes the v9 serial transfer counter takes at the end of a state.
 #[cfg(test)]
 const SIO_LEN: usize = 4;
+
+/// Bytes the v10 ROM identity takes at the end of a state.
+#[cfg(test)]
+const ROM_ID_LEN: usize = 4;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -161,6 +167,8 @@ impl SaveState {
 
         write_u32(&mut buf, gba.bus.sio_cycles);
 
+        write_u32(&mut buf, gba.bus.cart.rom_crc());
+
         SaveState { data: buf }
     }
 
@@ -259,6 +267,11 @@ impl SaveState {
         for i in 0..4 {
             gba.timer.counters[i] = read_u32(&mut cursor)?;
             gba.timer.reloads[i] = read_u32(&mut cursor)?;
+            // Both are 16-bit registers. A reload of 0x10000 divided by zero
+            // in `counter_after` on every step; past that it underflowed.
+            if gba.timer.counters[i] > 0xFFFF || gba.timer.reloads[i] > 0xFFFF {
+                return Err(SaveStateError::Corrupt("timer counter or reload"));
+            }
             gba.timer.controls[i] = read_u16(&mut cursor)?;
             gba.timer.prescaler[i] = read_u32(&mut cursor)?;
             // The four the hardware has (GBATEK, TMxCNT_H bits 0-1). Zero is
@@ -327,6 +340,11 @@ impl SaveState {
 
         // Global
         gba.cycles = read_u64(&mut cursor)?;
+        // 2^62 cycles is 8,700 years of play. Near u64::MAX the frame target
+        // wrapped below `cycles` and every frame returned without stepping.
+        if gba.cycles > 1 << 62 {
+            return Err(SaveStateError::Corrupt("cycle count"));
+        }
 
         if version >= 7 {
             let mut chip = [0u8; crate::cart::CHIP_STATE_LEN];
@@ -350,6 +368,14 @@ impl SaveState {
         } else {
             0
         };
+
+        // Last in the file, so checked last; the rollback undoes everything
+        // applied above. Without it a ROM hack's state - same header as the
+        // original, so the frontend offers the same slots - loaded and
+        // replaced this cart's battery save with the other game's.
+        if version >= 10 && read_u32(&mut cursor)? != gba.bus.cart.rom_crc() {
+            return Err(SaveStateError::DifferentRom);
+        }
 
         Ok(())
     }
@@ -380,6 +406,8 @@ pub enum SaveStateError {
     /// a panic, which aborts the app through FFI, and a zero prescaler is an
     /// infinite loop in the timer. Rejected here, the restore rolls back.
     Corrupt(&'static str),
+    /// The state was taken on another ROM (its CRC-32 differs).
+    DifferentRom,
 }
 
 impl From<io::Error> for SaveStateError {
@@ -589,7 +617,7 @@ mod tests {
     fn a_hostile_chip_state_is_rejected() {
         let mut state = SaveState::create(&machine_with(b"EEPROM_V124"));
         let len = state.data.len();
-        let chip_at = len - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
+        let chip_at = len - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
         let chip = &mut state.data[chip_at..];
         chip[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes()); // EEPROM block
         let mut target = machine_with(b"EEPROM_V124");
@@ -625,7 +653,7 @@ mod tests {
         let mut state = SaveState::create(&Gba::new());
         state
             .data
-            .truncate(state.data.len() - SIO_LEN - DMA_LATCHES_LEN);
+            .truncate(state.data.len() - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN);
         state.data[4..8].copy_from_slice(&7u32.to_le_bytes());
         let mut target = Gba::new();
         target.dma.channels[1].latch = 0xDEAD_BEEF;
@@ -637,9 +665,9 @@ mod tests {
     #[test]
     fn a_version_6_state_still_loads() {
         let mut state = SaveState::create(&machine_with(b"FLASH1M_V103"));
-        state
-            .data
-            .truncate(state.data.len() - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN);
+        state.data.truncate(
+            state.data.len() - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN,
+        );
         state.data[4..8].copy_from_slice(&6u32.to_le_bytes());
         assert!(state.restore(&mut machine_with(b"FLASH1M_V103")).is_ok());
     }
@@ -658,7 +686,7 @@ mod tests {
     #[test]
     fn a_version_8_state_still_loads_with_no_serial_transfer() {
         let mut state = SaveState::create(&Gba::new());
-        state.data.truncate(state.data.len() - SIO_LEN);
+        state.data.truncate(state.data.len() - ROM_ID_LEN - SIO_LEN);
         state.data[4..8].copy_from_slice(&8u32.to_le_bytes());
         let mut target = Gba::new();
         target.bus.sio_cycles = 99;

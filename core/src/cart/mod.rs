@@ -51,6 +51,37 @@ pub struct Cartridge {
     /// was given 512 bytes, its 14-bit addresses masked to 6, and block 100
     /// written over block 36. The Minish Cap is exactly that cart.
     eeprom_large: bool,
+    /// CRC-32 of the ROM image, taken once at load. A save state records it so
+    /// a state from another ROM - a hack sharing its original's header - is
+    /// refused instead of replacing this cart's battery save.
+    rom_crc: u32,
+}
+
+/// CRC-32 (IEEE, the zip/`java.util.zip.CRC32` one), table built at compile
+/// time. Hand-rolled because the core takes no dependency it can avoid.
+pub(crate) fn crc32(data: &[u8]) -> u32 {
+    const TABLE: [u32; 256] = {
+        let mut table = [0u32; 256];
+        let mut i = 0;
+        while i < 256 {
+            let mut c = i as u32;
+            let mut k = 0;
+            while k < 8 {
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+                k += 1;
+            }
+            table[i] = c;
+            i += 1;
+        }
+        table
+    };
+    !data.iter().fold(!0u32, |c, &b| {
+        TABLE[((c ^ u32::from(b)) & 0xFF) as usize] ^ (c >> 8)
+    })
 }
 
 /// Bytes of [`Cartridge::chip_state`] in a save state.
@@ -86,6 +117,7 @@ impl Cartridge {
             eeprom_state: EepromState::new(),
             eeprom_addr_bits: None,
             eeprom_large: false,
+            rom_crc: crc32(&[]),
         }
     }
 
@@ -145,6 +177,7 @@ impl Cartridge {
             eeprom_state: EepromState::new(),
             eeprom_addr_bits: None,
             eeprom_large: save_type == SaveType::Eeprom8k,
+            rom_crc: crc32(data),
         })
     }
 
@@ -473,6 +506,11 @@ impl Cartridge {
         }
     }
 
+    /// CRC-32 of the loaded ROM image.
+    pub(crate) fn rom_crc(&self) -> u32 {
+        self.rom_crc
+    }
+
     /// The save chip's volatile state - Flash command state, bank and ID
     /// mode, and where the EEPROM's serial protocol stands - for a save state.
     /// `save_data` carries only the memory; without this a state taken
@@ -532,6 +570,23 @@ impl Cartridge {
         // 8 KB is the largest chip: 1024 blocks of 8 bytes, 68 read-back bits.
         if b[6] > 64 || addr >= 1024 || b[9] >= 68 {
             return Err("EEPROM serial state");
+        }
+        // Each counting phase ends when `count` reaches its length, compared
+        // with `==`: a count already there never matches again and the chip
+        // stays wedged. The other phases do not count at all.
+        let addr_bits = match (b[3], b[4]) {
+            (0, 0) => 6,
+            (0, _) => 14,
+            (bits, _) => bits,
+        };
+        let count_ok = match phase {
+            EepromPhase::Opcode => b[6] < 2,
+            EepromPhase::Address { .. } => b[6] < addr_bits,
+            EepromPhase::WriteData => b[6] < 64,
+            _ => b[6] == 0,
+        };
+        if !count_ok {
+            return Err("EEPROM count past its phase");
         }
         self.flash_state = b[0];
         self.flash_bank = b[1] as usize;
@@ -755,5 +810,16 @@ impl EepromState {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The standard CRC-32 check value, so the identity matches what any
+    /// other tool (zip, `java.util.zip.CRC32`) computes for the same ROM.
+    #[test]
+    fn crc32_matches_the_standard_check_value() {
+        assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
+        assert_eq!(super::crc32(&[]), 0);
     }
 }

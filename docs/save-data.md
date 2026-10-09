@@ -109,6 +109,13 @@ once the other way round - a rejected state left a hybrid of two machines -
 and the frontends still carried "reload the ROM" wording long after the core
 stopped needing it.)
 
+`state_write` also returns `-1` for a state that parses but describes a machine
+that cannot exist (timer reload past 16 bits, `cycles` past 2^62, an APU sample
+accumulator past one period, an EEPROM count past its phase), and, from state
+v10, for a state taken on a different ROM: v10 appends the ROM's CRC-32 and a
+mismatch is refused, because the state carries the battery save and would
+otherwise replace this cart's. v6-v9 states carry no CRC and still load.
+
 There is deliberately **no path-taking FFI**. Android hands out content URIs
 and file descriptors, not paths the core can `fs::write`. Storage policy is the
 frontend's job; bytes in, bytes out is the only honest boundary.

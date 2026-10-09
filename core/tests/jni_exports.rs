@@ -76,3 +76,27 @@ fn load_rom_rejects_a_buffer_too_short_to_index() {
         geebeeayy_core::ffi::geebeeayy_destroy(handle);
     }
 }
+
+/// The JNI wrappers that parse a state or battery-save file must go through
+/// the C ABI functions, which wrap the parse in `guarded`: a panic unwinding
+/// out of an `extern "system"` function aborts the app (Phase 5 audit
+/// CORE-5). The JNI block only compiles for Android, so this reads the source.
+#[test]
+fn jni_state_and_save_writes_go_through_the_guarded_c_abi() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ffi = std::fs::read_to_string(root.join("src/ffi.rs")).expect("ffi.rs");
+    for (jni, c_abi) in [
+        ("nativeStateWrite", "geebeeayy_state_write("),
+        ("nativeSaveWrite", "geebeeayy_save_write("),
+    ] {
+        let start = ffi
+            .find(&format!("fn Java_com_geebeeayy_app_engine_GbaEngine_{jni}"))
+            .unwrap_or_else(|| panic!("{jni} not found"));
+        let body = &ffi[start..];
+        let body = &body[..body.find("\n    }\n").expect("end of function")];
+        assert!(
+            body.contains(c_abi),
+            "{jni} parses outside `guarded`; call {c_abi}..) instead"
+        );
+    }
+}
