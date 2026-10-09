@@ -506,15 +506,15 @@ impl Cartridge {
         }
     }
 
-    /// The save chip's volatile state - Flash command state, bank and ID
-    /// mode, and where the EEPROM's serial protocol stands - for a save state.
-    /// `save_data` carries only the memory; without this a state taken
-    /// mid-command resumed with the chip idle and bank 0 selected.
     /// CRC-32 of the loaded ROM image.
     pub(crate) fn rom_crc(&self) -> u32 {
         self.rom_crc
     }
 
+    /// The save chip's volatile state - Flash command state, bank and ID
+    /// mode, and where the EEPROM's serial protocol stands - for a save state.
+    /// `save_data` carries only the memory; without this a state taken
+    /// mid-command resumed with the chip idle and bank 0 selected.
     pub(crate) fn chip_state(&self) -> [u8; CHIP_STATE_LEN] {
         let e = &self.eeprom_state;
         let phase = match e.phase {
