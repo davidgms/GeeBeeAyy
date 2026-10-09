@@ -30,3 +30,4 @@ here pointing at it.
 - **2026-10-08** - [Gates need --no-fail-fast; neutral-refactor trace hashing; A/B method](2026-10-08-gates-and-perf-ab-method.md)
 - **2026-10-08** - [Wait states/prefetch/DMA stall rules and perf traps (project memory)](../../memory.md)
 - **2026-10-08** - [Phase 4.5 review: late DMA stalls resolved in-step, GamePak DMA -> N fetch, suite floor gate (project memory)](../../memory.md)
+- [Phase 5 probes and memory cap](2026-10-08-phase5-probes-and-memory-cap.md) - prlimit 4 GB on every run; targeted edits beat random state fuzz; ASan cannot run under the cap; rcheevos host harness
