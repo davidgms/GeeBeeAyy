@@ -1392,3 +1392,30 @@ of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
 - `homebrew_suites.rs` `mgba_suite_does_not_regress` gates every sub-suite
   on `MGBA_FLOOR` (raise a floor when a fix gains cells). Sub-suites run on
   scoped threads: ~3 s release, ~47 s debug; skips without the ROM (CI).
+
+## 2026-10-08 - Phase 5 state-restore fixes: state v10 carries the ROM CRC-32
+
+- **Save state v10** appends the CRC-32 (IEEE, `cart::crc32`, same value as
+  `java.util.zip.CRC32`) of the ROM, cached in `Cartridge::rom_crc` at
+  `from_bytes`. `restore_unchecked` checks it **last** and returns
+  `SaveStateError::DifferentRom`; the rollback undoes the parse. v6-v9 states
+  have no CRC and still load onto any ROM.
+- **Every tail-relative offset moved by 4.** The Phase 5 probes
+  (`temp/phase5/probes`) hard-code v9 tails (`len - 4 - 16 - 18`, `len - 38`);
+  against a v10 state they edit the wrong bytes and report false "ok"s.
+  Head-relative offsets (timer block 115453, APU blob length 511886,
+  `sample_accum` 511890) are unchanged. `core/tests/state_restore.rs` has
+  the current offsets as constants.
+- Restore now rejects what `tick`/`step` can never produce: `sample_accum >=
+  GBA_CLOCK`, NR10 `sweep_shift > 7`, timer counter/reload `> 0xFFFF`,
+  `cycles > 2^62`, and an EEPROM `count` at or past the end of its phase
+  (Opcode < 2, Address < effective addr bits, WriteData < 64, others == 0).
+  Counters with no tight legitimate bound (`length_counter`, envelope/sweep
+  ticks, `envelope_tick_counter`) saturate instead of being validated.
+- HLE BgAffineSet/ObjAffineSet cap r2 at `AFFINE_SET_MAX` (0x10000) and every
+  guest-address add in `bios.rs` wraps. Both affine handlers are still stubs
+  that write identity matrices; ObjAffineSet also reads its source at a
+  4-byte stride where GBATEK says 8. Accuracy debt, not fixed here.
+- JNI `nativeStateWrite`/`nativeSaveWrite` call the C ABI functions, so
+  `guarded` lives in one place; `tests/jni_exports.rs` checks it by reading
+  `ffi.rs`, since the JNI block never compiles on the host.

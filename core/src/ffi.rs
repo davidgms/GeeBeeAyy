@@ -830,13 +830,12 @@ pub mod android {
         if handle == 0 {
             return -1;
         }
-        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
         let Ok(bytes) = (unsafe { env.get_array_elements(&data, ReleaseMode::NoCopyBack) }) else {
             return -1;
         };
-        let buf: Vec<u8> = bytes.iter().map(|&b| b as u8).collect();
-        gba.inner.load_save(&buf);
-        0
+        // Through the C ABI, so the parse runs inside `guarded`.
+        let (ptr, len) = (bytes.as_ptr() as *const u8, bytes.len());
+        unsafe { geebeeayy_save_write(handle as *mut c_void, ptr, len) }
     }
 
     #[no_mangle]
@@ -921,15 +920,11 @@ pub mod android {
         if handle == 0 {
             return -1;
         }
-        let gba = unsafe { &mut *(handle as *mut GbaHandle) };
         let Ok(bytes) = (unsafe { env.get_array_elements(&data, ReleaseMode::NoCopyBack) }) else {
             return -1;
         };
-        let buf: Vec<u8> = bytes.iter().map(|&b| b as u8).collect();
-        let state = crate::savestate::SaveState { data: buf };
-        match gba.inner.load_state(&state) {
-            Ok(()) => 0,
-            Err(_) => -1,
-        }
+        // Through the C ABI, so the parse runs inside `guarded`.
+        let (ptr, len) = (bytes.as_ptr() as *const u8, bytes.len());
+        unsafe { geebeeayy_state_write(handle as *mut c_void, ptr, len) }
     }
 }

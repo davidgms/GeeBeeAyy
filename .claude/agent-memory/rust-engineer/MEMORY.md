@@ -31,3 +31,5 @@ here pointing at it.
 - **2026-10-08** - [Wait states/prefetch/DMA stall rules and perf traps (project memory)](../../memory.md)
 - **2026-10-08** - [Phase 4.5 review: late DMA stalls resolved in-step, GamePak DMA -> N fetch, suite floor gate (project memory)](../../memory.md)
 - [Phase 5 probes and memory cap](2026-10-08-phase5-probes-and-memory-cap.md) - prlimit 4 GB on every run; targeted edits beat random state fuzz; ASan cannot run under the cap; rcheevos host harness
+- **2026-10-08** - [Layout-changing state fix goes first; anchor offset tests on a known value](2026-10-08-state-layout-tests-order-and-anchors.md)
+- **2026-10-08** - [State v10 ROM CRC, restore validation rules, probe tail offsets now 4 off (project memory)](../../memory.md)

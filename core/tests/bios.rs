@@ -821,3 +821,44 @@ fn cpu_set_halfwords_from_an_odd_source_are_rotated() {
     cpu.step(&mut bus);
     assert_eq!(bus.read32(DEST), 0x00FE_00FA);
 }
+
+// ---------------------------------------------------------------------------
+// Guest-controlled counts and addresses (Phase 5 audit CORE-1, EMU-CORE-21)
+// ---------------------------------------------------------------------------
+
+/// swi.log: BgAffineSet and ObjAffineSet with r2 = 0xFFFFFFFF ran four billion
+/// iterations inside one `Cpu::step` (20 s timeout, emulation thread stuck),
+/// and with addresses near the top of the map the plain `+` overflowed - a
+/// debug-build panic on the first entry. Both must return, quickly.
+#[test]
+fn affine_sets_with_a_huge_count_at_the_top_of_the_map_return() {
+    let started = std::time::Instant::now();
+    run_swi(0x0E, [0xFFFF_FFF0, 0xFFFF_FFF0, 0xFFFF_FFFF, 0]);
+    run_swi(0x0F, [0xFFFF_FFF0, 0xFFFF_FFF0, 0xFFFF_FFFF, 0x7FFF_FFFF]);
+    assert!(
+        started.elapsed().as_secs() < 10,
+        "the affine count is not bounded"
+    );
+}
+
+/// emu-debug.log: BitUnPack's `dst + offset` (dst = 0xFFFFFFF0), and the
+/// LZ77 and RL `src + 4` (src = 0xFFFFFFFC), overflowed in a debug build.
+/// The address bus wraps; so must the HLE.
+#[test]
+fn decompressors_wrap_addresses_at_the_top_of_the_map() {
+    let mut bus = MemoryBus::new();
+    bus.write32(BASE, arm_swi(0x10));
+    for i in 0..32 {
+        bus.write8(DATA + i, 0x11);
+    }
+    let mut cpu = Cpu::new();
+    cpu.registers[15] = BASE;
+    cpu.registers[13] = 0x0300_7F00;
+    cpu.registers[0] = DATA;
+    cpu.registers[1] = 0xFFFF_FFF0;
+    cpu.step(&mut bus);
+
+    for swi in [0x11, 0x12, 0x14, 0x15, 0x16, 0x17, 0x18] {
+        run_swi(swi, [0xFFFF_FFFC, 0xFFFF_FFF0, 0, 0]);
+    }
+}

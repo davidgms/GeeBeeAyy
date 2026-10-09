@@ -638,7 +638,8 @@ impl Apu {
 
         // Envelope timer: tick every ~8 scanlines (59.73 Hz)
         // 1232 cycles/scanline * 8 = 9856 cycles
-        self.envelope_tick_counter += cycles;
+        // Saturating: a restored value near u32::MAX must not overflow.
+        self.envelope_tick_counter = self.envelope_tick_counter.saturating_add(cycles);
         if self.envelope_tick_counter >= 9856 {
             self.envelope_tick_counter -= 9856;
             self.tick_envelopes();
@@ -723,7 +724,7 @@ impl Apu {
     fn tick_envelopes(&mut self) {
         // Channel 1 envelope
         if self.ch1.enabled && self.ch1.envelope_period > 0 {
-            self.ch1.envelope_timer += 1;
+            self.ch1.envelope_timer = self.ch1.envelope_timer.saturating_add(1);
             if self.ch1.envelope_timer >= self.ch1.envelope_period {
                 self.ch1.envelope_timer = 0;
                 if self.ch1.envelope_dir == 1 && self.ch1.volume_cur < 15 {
@@ -735,7 +736,7 @@ impl Apu {
         }
         // Channel 2 envelope
         if self.ch2.enabled && self.ch2.envelope_period > 0 {
-            self.ch2.envelope_timer += 1;
+            self.ch2.envelope_timer = self.ch2.envelope_timer.saturating_add(1);
             if self.ch2.envelope_timer >= self.ch2.envelope_period {
                 self.ch2.envelope_timer = 0;
                 if self.ch2.envelope_dir == 1 && self.ch2.volume_cur < 15 {
@@ -747,7 +748,7 @@ impl Apu {
         }
         // Channel 4 envelope
         if self.ch4.enabled && self.ch4.envelope_period > 0 {
-            self.ch4.envelope_timer += 1;
+            self.ch4.envelope_timer = self.ch4.envelope_timer.saturating_add(1);
             if self.ch4.envelope_timer >= self.ch4.envelope_period {
                 self.ch4.envelope_timer = 0;
                 if self.ch4.envelope_dir == 1 && self.ch4.volume_cur < 15 {
@@ -762,7 +763,7 @@ impl Apu {
     fn tick_sweep(&mut self) {
         // Channel 1 sweep
         if self.ch1.enabled && self.ch1.sweep_enabled && self.ch1.sweep_timer > 0 {
-            self.ch1.sweep_tick += 1;
+            self.ch1.sweep_tick = self.ch1.sweep_tick.saturating_add(1);
             if self.ch1.sweep_tick >= self.ch1.sweep_timer {
                 self.ch1.sweep_tick = 0;
                 let delta = self.ch1.freq_divider >> self.ch1.sweep_shift;
@@ -782,25 +783,25 @@ impl Apu {
 
     fn tick_length_counters(&mut self) {
         if self.ch1.enabled && self.ch1.length_enabled {
-            self.ch1.length_counter += 1;
+            self.ch1.length_counter = self.ch1.length_counter.saturating_add(1);
             if self.ch1.length_counter >= 64 {
                 self.ch1.enabled = false;
             }
         }
         if self.ch2.enabled && self.ch2.length_enabled {
-            self.ch2.length_counter += 1;
+            self.ch2.length_counter = self.ch2.length_counter.saturating_add(1);
             if self.ch2.length_counter >= 64 {
                 self.ch2.enabled = false;
             }
         }
         if self.ch3.enabled && self.ch3.length_enabled {
-            self.ch3.length_counter += 1;
+            self.ch3.length_counter = self.ch3.length_counter.saturating_add(1);
             if self.ch3.length_counter >= 256 {
                 self.ch3.enabled = false;
             }
         }
         if self.ch4.enabled && self.ch4.length_enabled {
-            self.ch4.length_counter += 1;
+            self.ch4.length_counter = self.ch4.length_counter.saturating_add(1);
             if self.ch4.length_counter >= 64 {
                 self.ch4.enabled = false;
             }
@@ -859,6 +860,10 @@ impl SoundChannel1 {
         self.enabled = take(cur, 1)?[0] != 0;
         self.sweep_enabled = take(cur, 1)?[0] != 0;
         self.sweep_shift = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
+        // Three bits in NR10; 16 or more is a shift by the u16's own width.
+        if self.sweep_shift > 7 {
+            return None;
+        }
         self.sweep_dir = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
         self.sweep_timer = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
         self.sweep_tick = u8::from_le_bytes(take(cur, 1)?.try_into().ok()?);
@@ -1039,6 +1044,12 @@ impl Apu {
 
     fn read_state(&mut self, cur: &mut &[u8]) -> Option<()> {
         self.sample_accum = u64::from_le_bytes(take(cur, 8)?.try_into().ok()?);
+        // `tick` always leaves it below one sample period. A larger one made
+        // the next tick push one sample per GBA_CLOCK in it - 10^12 of them
+        // for one edited byte, and an allocation abort nothing can catch.
+        if self.sample_accum >= GBA_CLOCK {
+            return None;
+        }
         self.ch1.read_state(cur)?;
         self.ch2.read_state(cur)?;
         self.ch3.read_state(cur)?;
@@ -1111,5 +1122,48 @@ mod tests {
                 "read={read} write={write} count={count} must be refused"
             );
         }
+    }
+
+    /// NR10's shift is three bits. A restored 16 or more shifted a u16 by its
+    /// own width in `tick_sweep` - a debug-build panic (CORE-8).
+    #[test]
+    fn a_sweep_shift_past_three_bits_is_rejected() {
+        let mut apu = Apu::new();
+        apu.ch1.sweep_shift = 7;
+        assert!(Apu::new().restore(&apu.snapshot()));
+        apu.ch1.sweep_shift = 16;
+        assert!(!Apu::new().restore(&apu.snapshot()));
+    }
+
+    /// Small counters restored at their type's maximum overflowed on the next
+    /// increment in a debug build (CORE-8). Release wrapped; both must run.
+    #[test]
+    fn restored_counters_at_their_maximum_do_not_overflow() {
+        let mut apu = Apu::new();
+        apu.sound_on = true;
+        apu.envelope_tick_counter = u32::MAX - 1;
+        apu.ch1.envelope_period = 255;
+        apu.ch2.envelope_period = 255;
+        apu.ch4.envelope_period = 255;
+        apu.ch1.enabled = true;
+        apu.ch1.sweep_enabled = true;
+        apu.ch1.sweep_timer = 255;
+        apu.ch1.sweep_tick = 255;
+        apu.ch1.envelope_timer = 255;
+        apu.ch1.length_enabled = true;
+        apu.ch1.length_counter = u16::MAX;
+        apu.ch2.enabled = true;
+        apu.ch2.envelope_timer = 255;
+        apu.ch2.length_enabled = true;
+        apu.ch2.length_counter = u16::MAX;
+        apu.ch3.enabled = true;
+        apu.ch3.length_enabled = true;
+        apu.ch3.length_counter = u16::MAX;
+        apu.ch4.enabled = true;
+        apu.ch4.envelope_timer = 255;
+        apu.ch4.length_enabled = true;
+        apu.ch4.length_counter = u16::MAX;
+        apu.tick(16);
+        apu.tick(16);
     }
 }
