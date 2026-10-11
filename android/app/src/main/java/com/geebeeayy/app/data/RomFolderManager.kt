@@ -1,11 +1,78 @@
 package com.geebeeayy.app.data
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
+import android.util.Log
 import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
+/**
+ * The configured ROM folders. Each is either a document-tree Uri string
+ * (what the picker returns, and what persists across reboots) or, from before
+ * that, an absolute path. Both scan; a path under shared storage is shown in
+ * Settings as needing a re-pick, and [addTree] swaps it for the tree.
+ */
 class RomFolderManager(private val context: Context) {
     companion object {
         private const val TAG = "GeeBeeAyy/RomFolders"
+
+        private val PROJECTION = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
+
+        private const val GRANT = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+
+        private val unavailableFlow = MutableStateFlow<Set<String>>(emptySet())
+
+        /** Tree folders whose last scan could not read the root: revoked, or the volume is gone. */
+        val unavailable: StateFlow<Set<String>> get() = unavailableFlow
+
+        /** A folder as a player reads it: the path, or the volume and path inside a tree. */
+        fun folderLabel(folder: String): String =
+            if (RomBytes.isPath(folder)) {
+                folder
+            } else {
+                docIdLabel(DocumentsContract.getTreeDocumentId(Uri.parse(folder)))
+            }
+
+        /**
+         * Where the picker should start to re-pick [folder]: the folder itself
+         * when it is a path on a volume the provider serves, a tree's own Uri
+         * when it went unavailable, else null.
+         */
+        fun repickStart(folder: String): Uri? = when {
+            !RomBytes.isPath(folder) -> Uri.parse(folder)
+            else -> legacyDocId(folder)?.let {
+                DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, it)
+            }
+        }
+
+        /** One listing of a directory in a tree; null when it cannot be read. */
+        internal fun listChildren(context: Context, tree: Uri, docId: String): List<DocChild>? = runCatching {
+            val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
+            context.contentResolver.query(uri, PROJECTION, null, null, null)?.use { c ->
+                buildList {
+                    while (c.moveToNext()) {
+                        add(
+                            DocChild(
+                                docId = c.getString(0),
+                                name = c.getString(1).orEmpty(),
+                                mime = c.getString(2).orEmpty(),
+                                size = if (c.isNull(3)) null else c.getLong(3),
+                                modified = if (c.isNull(4)) 0L else c.getLong(4),
+                            ),
+                        )
+                    }
+                }
+            }
+        }.onFailure { Log.w(TAG, "cannot list $docId: $it") }.getOrNull()
     }
 
     private val prefs = context.getSharedPreferences("rom_folders", Context.MODE_PRIVATE)
@@ -13,7 +80,7 @@ class RomFolderManager(private val context: Context) {
     private val favorites = Favorites(context)
 
     /**
-     * The configured folders, sorted.
+     * The configured folders (tree Uris and legacy paths), sorted.
      *
      * The backing store is a `Set`, whose iteration order is arbitrary, so
      * anything that means "the first folder" - the homebrew downloader's
@@ -29,25 +96,99 @@ class RomFolderManager(private val context: Context) {
         prefs.edit().putStringSet("folders", current).apply()
     }
 
-    fun removeFolder(path: String) {
+    /** Removes [folder], releasing the grant when it is a tree. */
+    fun removeFolder(folder: String) {
         val current = getFolderPaths().toMutableSet()
-        current.remove(path)
+        current.remove(folder)
         prefs.edit().putStringSet("folders", current).apply()
+        if (!RomBytes.isPath(folder)) {
+            runCatching { context.contentResolver.releasePersistableUriPermission(Uri.parse(folder), GRANT) }
+        }
+    }
+
+    /**
+     * Add a picked tree. Keeps the grant across reboots, and when the tree is
+     * exactly a legacy path folder re-picked, replaces that folder and moves
+     * its games' last-played times and stars onto the new ids.
+     *
+     * @return false if the grant could not be kept, in which case nothing changed.
+     */
+    fun addTree(tree: Uri): Boolean {
+        try {
+            context.contentResolver.takePersistableUriPermission(tree, GRANT)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "grant not kept for $tree", e)
+            return false
+        }
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val current = getFolderPaths().toMutableSet()
+        for (path in current.filter { RomBytes.isPath(it) && legacyDocId(it) == rootId }) {
+            val moved = rekeyPaths(lastPlayed.paths() + favorites.paths(), path) { docId ->
+                DocumentsContract.buildDocumentUriUsingTree(tree, docId).toString()
+            }
+            lastPlayed.rekey(moved)
+            favorites.rekey(moved)
+            current.remove(path)
+        }
+        current.add(tree.toString())
+        prefs.edit().putStringSet("folders", current).apply()
+        return true
     }
 
     fun hasFolders(): Boolean = getFolderPaths().isNotEmpty()
 
+    /** Blocking: call it off the main thread. */
     fun scanAllFolders(): List<RomEntry> {
         val folders = getFolderPaths()
         val roms = mutableListOf<RomEntry>()
+        val siblings = HashMap<String, Siblings>()
+        val down = mutableSetOf<String>()
         for (folderPath in folders) {
-            val folder = File(folderPath)
-            if (folder.isDirectory) {
-                scanDirectory(folder, roms)
+            if (RomBytes.isPath(folderPath)) {
+                val folder = File(folderPath)
+                if (folder.isDirectory) {
+                    scanDirectory(folder, roms)
+                }
+            } else if (!scanTreeFolder(Uri.parse(folderPath), roms, siblings)) {
+                down += folderPath
             }
         }
+        unavailableFlow.value = down
+        RomSiblings.replace(siblings)
         roms += missingEntries(roms.map { it.filePath }.toSet())
         return roms.sortedBy { it.name.lowercase() }
+    }
+
+    /** @return false if the tree's root could not be read. */
+    private fun scanTreeFolder(tree: Uri, roms: MutableList<RomEntry>, siblings: MutableMap<String, Siblings>): Boolean {
+        val found = scanTree(DocumentsContract.getTreeDocumentId(tree)) { listChildren(context, tree, it) }
+            ?: return false
+        fun uriOf(docId: String) = DocumentsContract.buildDocumentUriUsingTree(tree, docId).toString()
+        for (r in found) {
+            val id = uriOf(r.rom.docId)
+            val size = r.rom.size ?: 0L
+            roms.add(
+                RomEntry(
+                    name = displayName(r.rom.name),
+                    fileName = r.rom.name,
+                    size = formatSize(size),
+                    sizeBytes = size,
+                    dateModifiedMillis = r.rom.modified,
+                    filePath = id,
+                    lastPlayedMillis = lastPlayed.get(id),
+                    isFavorite = favorites.isFavorite(id),
+                    folderLabel = r.folderLabel,
+                ),
+            )
+            siblings[id] = Siblings(
+                name = r.rom.name,
+                saveUri = r.save?.let { uriOf(it.docId) },
+                saveSize = r.save?.size,
+                saveModified = r.save?.modified ?: 0L,
+                coverUri = r.cover?.let { uriOf(it.docId) },
+            )
+        }
+        return true
     }
 
     /**
@@ -57,20 +198,27 @@ class RomFolderManager(private val context: Context) {
      * it, so this cannot invent a row for a file that was merely glanced at.
      * The alternative - dropping them - makes a game disappear silently, which
      * reads as the app having lost it rather than as a card being out.
+     *
+     * A document id is missing when the scan did not list it: asking its
+     * provider about each one would be a query per played game on every scan.
      */
     private fun missingEntries(found: Set<String>): List<RomEntry> =
         lastPlayed.paths()
             .filterNot { it in found }
-            .filterNot { File(it).isFile }
-            .map { path ->
-                val file = File(path)
+            .filterNot { RomBytes.isPath(it) && File(it).isFile }
+            .map { id ->
+                val name = if (RomBytes.isPath(id)) {
+                    File(id).name
+                } else {
+                    runCatching { docIdName(DocumentsContract.getDocumentId(Uri.parse(id))) }.getOrDefault("")
+                }
                 RomEntry(
-                    name = displayName(file.name),
-                    fileName = file.name,
+                    name = displayName(name),
+                    fileName = name,
                     size = "-",
-                    filePath = path,
-                    lastPlayedMillis = lastPlayed.get(path),
-                    isFavorite = favorites.isFavorite(path),
+                    filePath = id,
+                    lastPlayedMillis = lastPlayed.get(id),
+                    isFavorite = favorites.isFavorite(id),
                     exists = false,
                 )
             }
@@ -85,11 +233,7 @@ class RomFolderManager(private val context: Context) {
                 scanDirectory(file, roms)
             } else if (file.isFile) {
                 val name = file.name
-                // Zips too: a downloaded ROM arrives in one, and the cart is
-                // pulled out when the game is opened rather than on the scan,
-                // which would read every archive in the folder to list it.
-                val extensions = RomBytes.ROM_EXTENSIONS + RomBytes.ZIP_EXTENSION
-                if (extensions.any { name.endsWith(".$it", ignoreCase = true) }) {
+                if (isRomName(name)) {
                     roms.add(
                         RomEntry(
                             name = displayName(name),

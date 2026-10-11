@@ -422,8 +422,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             _isLoading.value = true
             _errorMessage.value = null
             try {
-                val file = File(filePath)
-                if (RomBytes.isPath(filePath) && !file.exists()) {
+                if (RomBytes.isPath(filePath) && !File(filePath).exists()) {
                     Log.e(TAG, "ROM not found: $filePath")
                     _errorMessage.value = "ROM file not found"
                     _isLoading.value = false
@@ -471,7 +470,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         showPerformance = settings.getShowPerformance()
                         _performance.value = null
                         audio.setVolume(settings.getVolume())
-                        resolveSavePaths(file, data).also { if (it) loadExistingSave() }
+                        resolveSavePaths(filePath, data).also { if (it) loadExistingSave() }
                     }
                     if (!saveReady) {
                         romLoaded = false
@@ -508,7 +507,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * assignment plus a header read, no engine calls, so it is safe on the
      * loading coroutine's IO thread.
      */
-    private fun resolveSavePaths(romFile: File, romData: ByteArray): Boolean {
+    private fun resolveSavePaths(romId: String, romData: ByteArray): Boolean {
         val key = computeRomStateKey(romData)
         romStateKey = key
         // Ask RetroAchievements what this cart is. The hash is the identity
@@ -525,7 +524,10 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // A failed import stops the launch: started without its save, the
         // game's first in-game save would be newer than the old one and the
         // import would then keep the empty game over the player's progress.
-        if (!importLegacySave(RomFiles.legacySave(romFile), save)) {
+        // Null: a document ROM the scan has not described yet. Nothing is
+        // marked, so a later scan or launch still brings its `.sav` in.
+        val legacy = RomFiles.legacySaveFor(getApplication(), romId)
+        if (legacy != null && !importLegacySave(legacy, save)) {
             Log.w(TAG, "battery save import failed")
             RaEngine.unloadGame()
             RaEngine.attachEmulator(0L)
@@ -892,6 +894,47 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * Deliberately not upscaled: a screenshot is a record of what the emulator
      * produced, and the scaling is a display choice the viewer can make again.
      */
+    /** MediaStore on API 29+, where no storage permission is needed; a plain file before that. */
+    private fun saveScreenshot(bitmap: android.graphics.Bitmap, name: String) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val resolver = getApplication<Application>().contentResolver
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/GeeBeeAyy")
+                put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw java.io.IOException("MediaStore refused the file")
+            try {
+                resolver.openOutputStream(uri)!!.use { stream ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                }
+                resolver.update(
+                    uri,
+                    android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                    },
+                    null,
+                    null,
+                )
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            }
+        } else {
+            val dir = File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_PICTURES,
+                ),
+                "GeeBeeAyy",
+            ).apply { mkdirs() }
+            File(dir, name).outputStream().use { stream ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+            }
+        }
+    }
+
     fun takeScreenshot() {
         val frame = _frameBuffer.value
         if (frame == null || frame.size < GbaEngine.FRAME_BUFFER_SIZE) {
@@ -914,16 +957,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888,
             )
             val message = try {
-                val dir = File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_PICTURES,
-                    ),
-                    "GeeBeeAyy",
-                ).apply { mkdirs() }
-                val out = File(dir, name)
-                out.outputStream().use { stream ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
-                }
+                saveScreenshot(bitmap, name)
                 "Screenshot saved to Pictures/GeeBeeAyy"
             } catch (e: Exception) {
                 Log.e(TAG, "Screenshot failed", e)

@@ -42,6 +42,8 @@ import com.geebeeayy.app.data.RelativeTime
 import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFiles
+import com.geebeeayy.app.data.RomFolderManager
+import android.widget.Toast
 import com.geebeeayy.app.data.RomPlaceholder
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
@@ -193,9 +195,13 @@ fun RomBrowserScreen(
         containerColor = NightVoid
     ) { padding ->
         if (roms.isEmpty()) {
-            EmptyState(modifier = Modifier.padding(padding))
+            Column(modifier = Modifier.padding(padding)) {
+                UnavailableFoldersBanner()
+                EmptyState(modifier = Modifier.weight(1f))
+            }
         } else {
             Column(modifier = Modifier.padding(padding)) {
+                UnavailableFoldersBanner()
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -332,7 +338,7 @@ fun RomBrowserScreen(
     confirmDeleteSaves?.let { rom ->
         // Off the main thread: a cart with no header title is keyed by a CRC
         // of the whole image, which for a zip means inflating up to 32 MB.
-        val files by produceState<List<File>?>(null, rom.filePath) {
+        val files by produceState<List<RomFiles.SaveFile>?>(null, rom.filePath) {
             value = withContext(Dispatchers.IO) { RomFiles.saveData(context, rom.filePath) }
         }
         val found = files ?: return@let
@@ -353,7 +359,7 @@ fun RomBrowserScreen(
                 confirmDeleteSaves = null
                 scope.launch {
                     // The files the player was shown, not a fresh lookup.
-                    withContext(Dispatchers.IO) { found.forEach { it.delete() } }
+                    withContext(Dispatchers.IO) { found.forEach { RomFiles.delete(context, it) } }
                     onRefresh()
                 }
             },
@@ -382,7 +388,13 @@ fun RomBrowserScreen(
                 scope.launch {
                     // Reads the cart's header to find its saves; same reason
                     // as the save-data dialog for keeping it off the main thread.
-                    if (rom.exists) withContext(Dispatchers.IO) { RomFiles.deleteRom(context, rom.filePath) }
+                    val deleted = !rom.exists ||
+                        withContext(Dispatchers.IO) { RomFiles.deleteRom(context, rom.filePath) }
+                    // A provider that will not delete is its own error; a
+                    // path that fails stays as silent as it always was.
+                    if (!deleted && !RomBytes.isPath(rom.filePath)) {
+                        Toast.makeText(context, "Could not delete ${rom.fileName}", Toast.LENGTH_LONG).show()
+                    }
                     onRefresh()
                 }
             },
@@ -633,6 +645,26 @@ fun RomCard(
     }
 }
 
+/**
+ * Tells the player a ROM folder could not be read (its access was revoked, or
+ * its card is out). The folder is kept: a card coming back works again.
+ */
+@Composable
+private fun UnavailableFoldersBanner() {
+    val down by RomFolderManager.unavailable.collectAsState()
+    if (down.isEmpty()) return
+    Text(
+        text = "Folder unavailable: " + down.joinToString { RomFolderManager.folderLabel(it) } +
+            ". Pick it again in Settings.",
+        color = Error,
+        fontSize = 13.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(NightPanel)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
 @Composable
 fun EmptyState(modifier: Modifier = Modifier) {
     Column(
@@ -703,7 +735,7 @@ fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 InfoRow("Name", rom.name)
                 InfoRow("File", rom.fileName)
-                InfoRow("Location", File(rom.filePath).parent ?: "-")
+                InfoRow("Location", rom.folderLabel ?: File(rom.filePath).takeIf { RomBytes.isPath(rom.filePath) }?.parent ?: "-")
                 InfoRow("File size", rom.size)
                 InfoRow("Cartridge title", header?.title?.ifBlank { "-" } ?: "Reading...")
                 InfoRow("Game code", header?.gameCode?.ifBlank { "-" } ?: "Reading...")

@@ -17,17 +17,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.geebeeayy.app.data.HomebrewCatalog
 import com.geebeeayy.app.data.HomebrewDownloader
 import com.geebeeayy.app.data.HomebrewEntry
+import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
  * The built-in catalogue of freely distributable homebrew and test ROMs.
@@ -47,17 +48,20 @@ fun HomebrewScreen(
     // nothing to choose; with several, picking silently was how a download
     // ended up somewhere the player was not looking.
     var destinationPath by remember(folders) { mutableStateOf(folders.firstOrNull()) }
-    val destination = destinationPath?.let { File(it) }
+    val destination = destinationPath
+    val context = LocalContext.current
     var busy by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var message by remember { mutableStateOf<String?>(null) }
     val present = remember { mutableStateMapOf<String, Boolean>() }
 
     LaunchedEffect(destination) {
-        HomebrewCatalog.entries.forEach { entry ->
-            present[entry.fileName] =
-                destination != null && File(destination, entry.fileName).isFile
+        val names = if (destination == null) {
+            emptySet()
+        } else {
+            withContext(Dispatchers.IO) { HomebrewDownloader.existing(context, destination) }
         }
+        HomebrewCatalog.entries.forEach { entry -> present[entry.fileName] = entry.fileName in names }
     }
 
     Column(
@@ -107,7 +111,7 @@ fun HomebrewScreen(
                         selected = selected,
                         onClick = { destinationPath = path },
                         enabled = busy == null,
-                        label = { Text(path.substringAfterLast('/'), fontSize = 12.sp) },
+                        label = { Text(RomFolderManager.folderLabel(path).substringAfterLast('/'), fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = NightPanel,
                             labelColor = PineGlowMist,
@@ -148,7 +152,7 @@ fun HomebrewScreen(
                         message = null
                         scope.launch {
                             val result = withContext(Dispatchers.IO) {
-                                HomebrewDownloader.download(entry, destination) { p ->
+                                HomebrewDownloader.download(context, entry, destination) { p ->
                                     progress = p
                                 }
                             }

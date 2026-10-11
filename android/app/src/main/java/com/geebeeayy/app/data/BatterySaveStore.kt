@@ -87,7 +87,25 @@ class BatterySaveStore(
 internal val SAVE_WRITE_LOCK = Any()
 
 /** The largest GBA save is 128 KB of flash; anything far past it is not one. */
-private const val MAX_SAVE_BYTES = 1L shl 20
+internal const val MAX_SAVE_BYTES = 1L shl 20
+
+/**
+ * The `.sav` that used to live beside the ROM, as far as an import needs to
+ * know it: a file, or a document whose size and time came from the scan.
+ * [read] is only called once the size is known to be a plausible save.
+ */
+internal class LegacySave(
+    val exists: Boolean,
+    val size: Long,
+    val lastModified: Long,
+    val read: () -> ByteArray,
+)
+
+internal fun File.asLegacySave() =
+    LegacySave(exists(), if (isFile) length() else 0L, lastModified()) { readBytes() }
+
+internal fun importLegacySave(legacy: File, private: File): Boolean =
+    importLegacySave(legacy.asLegacySave(), private)
 
 /**
  * Bring the `.sav` that used to live beside the ROM into app storage, once.
@@ -105,21 +123,21 @@ private const val MAX_SAVE_BYTES = 1L shl 20
  *
  * @return false if the import failed and should be retried.
  */
-internal fun importLegacySave(legacy: File, private: File): Boolean = synchronized(SAVE_WRITE_LOCK) {
+internal fun importLegacySave(legacy: LegacySave, private: File): Boolean = synchronized(SAVE_WRITE_LOCK) {
     val marker = File(private.parentFile, "${private.name}.imported")
     if (marker.exists()) return true
     val privateExists = private.isFile && private.length() > 0
-    if (!legacy.exists()) {
+    if (!legacy.exists) {
         // Nothing to bring in. Marked only once a private save exists to
         // protect - `exists()` is also false on an I/O error, and marking
         // then would skip a real save forever.
         return !privateExists || markImported(marker)
     }
-    val size = legacy.takeIf { it.isFile }?.length() ?: 0L
+    val size = legacy.size
     if (size in 1..MAX_SAVE_BYTES) {
-        val privateIsNewer = privateExists && private.lastModified() >= legacy.lastModified()
+        val privateIsNewer = privateExists && private.lastModified() >= legacy.lastModified
         if (!privateIsNewer) {
-            val bytes = runCatching { legacy.readBytes() }.getOrNull() ?: return false
+            val bytes = runCatching { legacy.read() }.getOrNull() ?: return false
             if (privateExists) {
                 val kept = File(private.parentFile, "${private.name}.before-import")
                 if (!atomicWrite(kept, private.readBytes())) return false

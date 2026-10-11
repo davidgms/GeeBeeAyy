@@ -3,7 +3,7 @@ package com.geebeeayy.app.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
-import android.provider.DocumentsContract
+
 import android.provider.Settings as AndroidSettings
 import android.view.KeyEvent
 import android.view.InputDevice
@@ -36,7 +36,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.collectAsState
 import com.geebeeayy.app.data.CoverArt
 import com.geebeeayy.app.data.DisplaySettings
+import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.data.RomFolderManager
+import com.geebeeayy.app.data.legacyDocId
 import com.geebeeayy.app.data.ScreenOrientation
 import com.geebeeayy.app.data.ScaleMode
 import com.geebeeayy.app.data.ScreenFilter
@@ -44,7 +46,7 @@ import com.geebeeayy.app.engine.AudioOutput
 import com.geebeeayy.app.ui.findActivity
 import com.geebeeayy.app.ui.orientationFor
 import com.geebeeayy.app.ui.theme.*
-import java.io.File
+
 
 /**
  * The ratios offered, with 0 meaning unlimited.
@@ -131,34 +133,23 @@ fun SettingsScreen(
     var interframeBlend by remember { mutableStateOf(displaySettings.getInterframeBlend()) }
     var folderError by remember { mutableStateOf<String?>(null) }
 
+    // The picker keeps the tree Uri (and a persistable grant) instead of
+    // turning it into a path, which is what stops working without all-files
+    // access. A re-pick starts where the old folder was.
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            // A non-primary volume (an SD card) has a docId like
-            // "1A2B-3C4D:Roms", which maps to /storage/<volume>/... rather
-            // than /storage/emulated/0. Only "primary:" used to be handled and
-            // everything else fell through in silence, so picking a folder on
-            // a card closed the dialog and added nothing, with no explanation.
-            val docId = DocumentsContract.getTreeDocumentId(it)
-            val volume = docId.substringBefore(':', "")
-            val relative = docId.substringAfter(':', "")
-            val path = when {
-                volume == "primary" -> "/storage/emulated/0/$relative"
-                volume.isNotEmpty() -> "/storage/$volume/$relative"
-                else -> ""
-            }.trimEnd('/')
-            val folder = if (path.isEmpty()) null else File(path)
-            if (folder != null && folder.isDirectory && folder.canRead()) {
-                folderManager.addFolder(path)
+            if (folderManager.addTree(it)) {
                 folders = folderManager.getFolderPaths()
                 onFoldersChanged()
                 folderError = null
             } else {
-                folderError = "Could not read that folder. Pick one on internal storage."
+                folderError = "Could not keep access to that folder. Try picking it again."
             }
         }
     }
+    val unavailable by RomFolderManager.unavailable.collectAsState()
 
     Scaffold(
         topBar = {
@@ -206,7 +197,15 @@ fun SettingsScreen(
                     }
                 } else {
                     folders.forEach { path ->
-                        val displayName = File(path).name
+                        val displayName = RomFolderManager.folderLabel(path).substringAfterLast('/')
+                        // A path folder on shared storage still scans for now,
+                        // but will not once the app loses all-files access.
+                        val repick = RomBytes.isPath(path) && legacyDocId(path) != null
+                        val problem = when {
+                            repick -> "Needs re-pick: tap to grant access again"
+                            path in unavailable -> "Folder unavailable: tap to pick it again"
+                            else -> null
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -220,17 +219,26 @@ fun SettingsScreen(
                                 modifier = Modifier.size(24.dp)
                             )
                             Spacer(modifier = Modifier.width(16.dp))
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable(enabled = problem != null) {
+                                        folderPicker.launch(RomFolderManager.repickStart(path))
+                                    },
+                            ) {
                                 Text(
                                     text = displayName,
                                     fontSize = 14.sp,
                                     color = PineGlowMist,
                                 )
                                 Text(
-                                    text = path,
+                                    text = RomFolderManager.folderLabel(path),
                                     fontSize = 11.sp,
                                     color = PineGlowMist.copy(alpha = 0.4f),
                                 )
+                                problem?.let {
+                                    Text(text = it, fontSize = 11.sp, color = Error)
+                                }
                             }
                             IconButton(onClick = {
                                 folderManager.removeFolder(path)
