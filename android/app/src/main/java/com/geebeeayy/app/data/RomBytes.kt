@@ -7,8 +7,7 @@ import android.util.Log
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
-import java.net.URLDecoder
-import java.net.URLEncoder
+import java.util.Base64
 import java.util.zip.ZipFile
 
 /**
@@ -62,12 +61,15 @@ object RomBytes {
     const val MAX_ROM_BYTES = 32L * 1024 * 1024
 
     /**
-     * An id as a nav-route segment, and back. A document Uri carries `%` and
-     * `/`, so the route must see it encoded exactly once on the way in.
+     * An id as a nav-route segment, and back. Base64url, not percent encoding:
+     * Navigation decodes a path argument itself, so a percent-encoded document
+     * Uri arrived decoded twice (`%3A` became `:`) and the provider refused it.
+     * Base64url has no `%`, `/` or `+` for that extra decode to touch.
      */
-    fun encodeId(id: String): String = URLEncoder.encode(id, "UTF-8")
+    fun encodeId(id: String): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(id.toByteArray(Charsets.UTF_8))
 
-    fun decodeId(encoded: String): String = URLDecoder.decode(encoded, "UTF-8")
+    fun decodeId(encoded: String): String = String(Base64.getUrlDecoder().decode(encoded), Charsets.UTF_8)
 
     /** The one place an id is opened: a path as a file, anything else as a document Uri. */
     fun open(context: Context, id: String): InputStream =
