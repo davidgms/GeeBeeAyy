@@ -14,6 +14,9 @@ for Gradle and other JVM programs, which cannot start under `prlimit --as`.
 Back up `files/states` and `files/saves` first, and use 240p, never a player's
 game.
 
+- [x] **H3 - second ROM after the first, on the device** (2026-10-11, #75):
+  240p then `sram.gba` with RA signed in, CheckJNI on, 0 aborts. The
+  ThreadSanitizer run below is still open.
 - [ ] **H3 - RA race on a device.** Deliver an RA server response while
   `nativeLoadRom` runs, and a second ROM loaded after the first (upstream
   RetroArch hit a crash on the second game). Needs a scripted login-then-load
@@ -34,8 +37,11 @@ game.
   login prompt, not a loop.
 - [ ] **Process death during a save.** `adb shell am kill com.geebeeayy.app`
   while a state is written; confirm the atomic write leaves the old file.
-- [ ] **B1 - SAF behaviour** (only after the SAF rewrite): revoked grant,
-  moved or deleted folder, Android 11, 13 and 14.
+- [x] **B1 - SAF on the main phone** (2026-10-11, #80, #81): both folders
+  re-picked, favourites and last-played re-keyed, saves intact, games open,
+  homebrew and screenshot through SAF and MediaStore, no storage permission.
+- [ ] **B1 - SAF edge cases**: revoked grant, moved or deleted folder,
+  Android 11, 13 and 14, a provider other than external storage.
 
 ## Needs a tool we do not have installed
 

@@ -165,6 +165,29 @@ since RetroAchievements and cover art.
 5. B1 SAF rewrite, which also closes M5, L9, L12. The user's call on scope.
 6. B2 to B5 before any Play submission.
 
+### Status (2026-10-11)
+
+| Step | Closed | Merged in |
+|---|---|---|
+| 1 | H1, M2, M3, M14, L1, L2, L13, CORE-8 | #74 |
+| 2 | H3, M8, M11, M12, L3, L8 | #75 |
+| 3 | M1, M4 | #76 |
+| 4 | H2, M6, M9, M10, L6 | #77 |
+| 5 | B1, M5, L9, L12 | #78 (private battery saves), #79 (ROM ids), #80 (SAF folders), #81 (permission removed) |
+| 6 | open | - |
+
+Step 5 notes, for whoever picks this up:
+- Battery saves live only in `files/saves/<state key>.sav`. The `.sav` beside
+  a ROM is imported once (`importLegacySave`, marker `<key>.sav.imported`) and
+  never written or deleted by the app afterwards. Players who copied that file
+  to a PC lose the automatic copy; an explicit export button is not built.
+- Two carts with the same header key (a `.gba` and a `.zip` of one game) now
+  share one battery save, as they already shared save states.
+- Screenshots on Android 9 and older go to the app's own folder, outside the
+  gallery.
+- Still unverified on a device: revoked grant, moved or deleted folder,
+  Android 11 and 13 (see the pending-tests file).
+
 ## Second pass: the security history of other emulators
 
 Sources: the local copies in `temp/emulators-research/` (mGBA `CHANGES`,
