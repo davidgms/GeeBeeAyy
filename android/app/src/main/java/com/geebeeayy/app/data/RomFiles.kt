@@ -22,7 +22,9 @@ object RomFiles {
         files += legacySave(rom)
         val key = stateKey(rom)
         if (key != null) {
-            files += privateSave(context, key)
+            val save = privateSave(context, key)
+            files += save
+            files += File(save.parentFile, "${save.name}.before-import")
             val states = File(context.filesDir, "states")
             states.listFiles()?.filterTo(files) { it.name.startsWith("${key}_slot") }
         }
@@ -47,8 +49,10 @@ object RomFiles {
      * Import every `.sav` still beside a cart into app storage, once each.
      * Runs on every scan, so saves for carts the player has not opened since
      * the update are moved too, while the app can still read the folder.
-     * Cheap after the first run: a cart with no `.sav` beside it is skipped
-     * before its header is read, and an imported one stops at its marker.
+     * A cart with no `.sav` beside it is skipped before its header is read.
+     * ponytail: a cart that has one is re-keyed on every scan (a full read
+     * for a header-less cart) because the legacy file is never deleted;
+     * cache the key per path if a library with many such carts gets slow.
      */
     fun importLegacySaves(context: Context, roms: List<RomEntry>) {
         roms.filter { legacySave(File(it.filePath)).isFile }
@@ -58,7 +62,9 @@ object RomFiles {
                 // Two copies of one cart (a .gba and a .zip of it) had a .sav
                 // each and now share one key. The copy played last is the
                 // save the player last saw; the other stays where it is.
-                val chosen = carts.maxBy { it.lastPlayedMillis ?: 0L }
+                val chosen = carts.maxWith(
+                    compareBy({ it.lastPlayedMillis ?: 0L }, { legacySave(File(it.filePath)).lastModified() }),
+                )
                 importLegacySave(legacySave(File(chosen.filePath)), privateSave(context, key))
             }
     }
@@ -67,9 +73,15 @@ object RomFiles {
         RomHeader.read(rom)?.stateKey()?.takeIf { it != "ROM" }
             ?: runCatching { RomBytes.read(rom.path) }.getOrNull()?.let { RomHeader.stateKey(it) }
 
-    /** True if every file was removed. */
+    /**
+     * True if every file was removed. Every file is tried, the app's own
+     * first: a `.sav` beside the ROM that will not delete must not leave
+     * the private save behind.
+     */
     fun deleteSaveData(context: Context, romPath: String): Boolean =
-        saveData(context, romPath).all { it.delete() }
+        synchronized(SAVE_WRITE_LOCK) {
+            saveData(context, romPath).sortedBy { it == legacySave(File(romPath)) }.map { it.delete() }.all { it }
+        }
 
     /** Removes the cart itself and everything keyed to it. */
     fun deleteRom(context: Context, romPath: String): Boolean {

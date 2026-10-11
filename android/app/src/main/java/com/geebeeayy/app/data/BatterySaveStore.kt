@@ -61,7 +61,8 @@ class BatterySaveStore(
     /**
      * Write whatever is pending. One flush at a time.
      *
-     * `@Synchronized` is what keeps two writers off the same temp file. And the
+     * [SAVE_WRITE_LOCK] is what keeps two writers off the same temp file -
+     * another flush, or an import running from a library scan. And the
      * slot is cleared with **compare-and-set** against the bytes that were
      * written, not unconditionally: if the game saved again during the write,
      * those newer bytes are still pending afterwards, for the next flush,
@@ -69,15 +70,21 @@ class BatterySaveStore(
      *
      * @return true if the save on disk is now up to date.
      */
-    @Synchronized
-    fun flush(): Boolean {
+    fun flush(): Boolean = synchronized(SAVE_WRITE_LOCK) {
         val bytes = pending.get() ?: return true
         val written = atomicWrite(file, bytes)
         afterWrite?.invoke()
         if (written) pending.compareAndSet(bytes, null)
-        return written
+        written
     }
 }
+
+/**
+ * One writer at a time for every battery save: a flush, a scan-time import
+ * and a game-start import all write `<key>.sav` through the same `.tmp`.
+ * ponytail: one global lock, per-key locks if saves ever get large or many.
+ */
+internal val SAVE_WRITE_LOCK = Any()
 
 /** The largest GBA save is 128 KB of flash; anything far past it is not one. */
 private const val MAX_SAVE_BYTES = 1L shl 20
@@ -98,16 +105,22 @@ private const val MAX_SAVE_BYTES = 1L shl 20
  *
  * @return false if the import failed and should be retried.
  */
-internal fun importLegacySave(legacy: File, private: File): Boolean {
+internal fun importLegacySave(legacy: File, private: File): Boolean = synchronized(SAVE_WRITE_LOCK) {
     val marker = File(private.parentFile, "${private.name}.imported")
     if (marker.exists()) return true
+    val privateExists = private.isFile && private.length() > 0
+    if (!legacy.exists()) {
+        // Nothing to bring in. Marked only once a private save exists to
+        // protect - `exists()` is also false on an I/O error, and marking
+        // then would skip a real save forever.
+        return !privateExists || markImported(marker)
+    }
     val size = legacy.takeIf { it.isFile }?.length() ?: 0L
     if (size in 1..MAX_SAVE_BYTES) {
-        val privateIsNewer = private.isFile && private.length() > 0 &&
-            private.lastModified() >= legacy.lastModified()
+        val privateIsNewer = privateExists && private.lastModified() >= legacy.lastModified()
         if (!privateIsNewer) {
             val bytes = runCatching { legacy.readBytes() }.getOrNull() ?: return false
-            if (private.isFile && private.length() > 0) {
+            if (privateExists) {
                 val kept = File(private.parentFile, "${private.name}.before-import")
                 if (!atomicWrite(kept, private.readBytes())) return false
             }
@@ -115,9 +128,12 @@ internal fun importLegacySave(legacy: File, private: File): Boolean {
             if (!private.readBytes().contentEquals(bytes)) return false
         }
     }
-    return runCatching { marker.parentFile?.mkdirs(); marker.createNewFile() || marker.exists() }
-        .getOrDefault(false)
+    markImported(marker)
 }
+
+private fun markImported(marker: File): Boolean =
+    runCatching { marker.parentFile?.mkdirs(); marker.createNewFile() || marker.exists() }
+        .getOrDefault(false)
 
 /**
  * Write [bytes] to [target] so a crash or power loss leaves the old file or

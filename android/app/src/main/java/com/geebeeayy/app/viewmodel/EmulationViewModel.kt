@@ -355,7 +355,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * This cart's battery save: where it lives, what is waiting to be written,
      * and the one-writer-at-a-time flush. Null until the ROM is resolved.
-     * See [BatterySaveStore] for the three ways the old fields here lost it.
+     * See [BatterySaveStore] for the ways the old fields here lost it.
      */
     @Volatile
     private var batterySave: BatterySaveStore? = null
@@ -456,7 +456,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     romLoaded = true
                     loadedRomPath = filePath
                     LastPlayed(getApplication()).record(filePath)
-                    engineLock.withLock {
+                    val saveReady = engineLock.withLock {
                         // A fresh ROM means a fresh history; the ring is
                         // allocated here rather than at create() so a cold
                         // handle costs nothing.
@@ -471,8 +471,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                         showPerformance = settings.getShowPerformance()
                         _performance.value = null
                         audio.setVolume(settings.getVolume())
-                        resolveSavePaths(file, data)
-                        loadExistingSave()
+                        resolveSavePaths(file, data).also { if (it) loadExistingSave() }
+                    }
+                    if (!saveReady) {
+                        romLoaded = false
+                        _errorMessage.value = "Could not read this game's battery save. Nothing was changed; try again."
+                        _isLoading.value = false
+                        return@launch
                     }
                     _isLoading.value = false
                     startEmulation()
@@ -503,7 +508,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * assignment plus a header read, no engine calls, so it is safe on the
      * loading coroutine's IO thread.
      */
-    private fun resolveSavePaths(romFile: File, romData: ByteArray) {
+    private fun resolveSavePaths(romFile: File, romData: ByteArray): Boolean {
         val key = computeRomStateKey(romData)
         romStateKey = key
         // Ask RetroAchievements what this cart is. The hash is the identity
@@ -517,11 +522,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         }
         val save = RomFiles.privateSave(getApplication(), key)
         // A cart opened straight after the update, before any scan reached it.
-        // A failed import is logged, not fatal: the next launch retries it.
+        // A failed import stops the launch: started without its save, the
+        // game's first in-game save would be newer than the old one and the
+        // import would then keep the empty game over the player's progress.
         if (!importLegacySave(RomFiles.legacySave(romFile), save)) {
-            Log.w(TAG, "battery save import failed, will retry")
+            Log.w(TAG, "battery save import failed")
+            RaEngine.unloadGame()
+            RaEngine.attachEmulator(0L)
+            return false
         }
         batterySave = BatterySaveStore(save)
+        return true
     }
 
     /**
@@ -798,7 +809,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     private fun flushPendingSave() {
         val store = batterySave ?: return
         if (!store.flush()) {
-            Log.e(TAG, "Battery save write failed beside the ROM and in app storage")
+            Log.e(TAG, "Battery save write failed")
         }
     }
 

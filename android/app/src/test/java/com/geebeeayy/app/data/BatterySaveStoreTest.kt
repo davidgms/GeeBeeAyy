@@ -181,6 +181,23 @@ class BatterySaveStoreTest {
     }
 
     @Test
+    fun `no file beside the rom and no save yet leaves no marker`() {
+        assertTrue(importLegacySave(legacyFile(), saveFile()))
+        write(legacyFile(), byteArrayOf(8), 1_000_000L)
+        importLegacySave(legacyFile(), saveFile())
+        assertArrayEquals("a save that shows up later is still brought in", byteArrayOf(8), saveFile().readBytes())
+    }
+
+    @Test
+    fun `no file beside the rom but a private save marks it, so nothing planted later wins`() {
+        write(saveFile(), byteArrayOf(1), 1_000_000L)
+        importLegacySave(legacyFile(), saveFile())
+        write(legacyFile(), byteArrayOf(6), System.currentTimeMillis() + 60_000)
+        importLegacySave(legacyFile(), saveFile())
+        assertArrayEquals(byteArrayOf(1), saveFile().readBytes())
+    }
+
+    @Test
     fun `no temp file is left behind`() {
         val store = BatterySaveStore(saveFile())
         store.submit(byteArrayOf(7))
