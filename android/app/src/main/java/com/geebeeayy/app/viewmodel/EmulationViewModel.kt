@@ -423,13 +423,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             _errorMessage.value = null
             try {
                 val file = File(filePath)
-                if (!file.exists()) {
+                if (RomBytes.isPath(filePath) && !file.exists()) {
                     Log.e(TAG, "ROM not found: $filePath")
                     _errorMessage.value = "ROM file not found"
                     _isLoading.value = false
                     return@launch
                 }
-                val data = RomBytes.read(filePath)
+                val data = RomBytes.read(getApplication(), filePath)
                 if (data == null) {
                     _errorMessage.value = "No .gba, .agb or .bin inside that zip"
                     _isLoading.value = false

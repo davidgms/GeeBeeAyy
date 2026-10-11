@@ -1419,3 +1419,16 @@ of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
 - JNI `nativeStateWrite`/`nativeSaveWrite` call the C ABI functions, so
   `guarded` lives in one place; `tests/jni_exports.rs` checks it by reading
   `ffi.rs`, since the JNI block never compiles on the host.
+
+## 2026-10-11 - Building the Android app in a git worktree
+
+- A new worktree has an empty `android/app/src/main/cpp/rcheevos/` submodule
+  and no `jniLibs`. Run `git submodule update --init
+  android/app/src/main/cpp/rcheevos` and copy
+  `android/app/src/main/jniLibs` from the main checkout (gitignored).
+- If CMake already configured against the empty submodule, delete
+  `android/app/.cxx` and `android/app/build/intermediates/cxx`, or the link
+  fails with undefined `rc_client_*` symbols: the source glob was evaluated
+  empty and cached.
+- Never copy the main checkout's rcheevos folder in: its `.git` pointer file
+  breaks every git command in the worktree.

@@ -1,6 +1,6 @@
 package com.geebeeayy.app.data
 
-import java.io.File
+import android.content.Context
 import java.util.zip.CRC32
 
 /**
@@ -61,7 +61,7 @@ data class RomHeader(val title: String, val gameCode: String) {
          * and the header is the first 176 bytes of it; a zipped cart is
          * inflated only that far.
          */
-        fun read(file: File): RomHeader? =
-            runCatching { RomBytes.head(file.path, MIN_BYTES)?.let { from(it) } }.getOrNull()
+        fun read(context: Context, id: String): RomHeader? =
+            runCatching { RomBytes.head(context, id, MIN_BYTES)?.let { from(it) } }.getOrNull()
     }
 }

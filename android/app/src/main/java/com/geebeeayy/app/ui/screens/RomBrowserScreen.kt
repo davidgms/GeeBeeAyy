@@ -677,18 +677,19 @@ fun EmptyState(modifier: Modifier = Modifier) {
  */
 @Composable
 fun RomInfoDialog(rom: RomEntry, onDismiss: () -> Unit) {
+    val context = LocalContext.current
     var header by remember(rom.filePath) { mutableStateOf<RomHeader?>(null) }
     // The identity RetroAchievements keys on, for a cart that has one. Read
     // here rather than at scan time: it hashes the whole ROM, which is up to
     // 32 MB, and nothing needs it until somebody asks for this dialog.
     var raHash by remember(rom.filePath) { mutableStateOf<String?>(null) }
     LaunchedEffect(rom.filePath) {
-        header = withContext(Dispatchers.IO) { RomHeader.read(File(rom.filePath)) }
+        header = withContext(Dispatchers.IO) { RomHeader.read(context, rom.filePath) }
         raHash = withContext(Dispatchers.IO) {
             // The cart's bytes, not the file's. For a zip those differ, and the
             // archive's hash is not the identity RetroAchievements keys on -
             // the dialog showed a number the server would never recognise.
-            runCatching { RomBytes.read(rom.filePath)?.let(RaEngine::hashRom) }.getOrNull()
+            runCatching { RomBytes.read(context, rom.filePath)?.let(RaEngine::hashRom) }.getOrNull()
         }
     }
 

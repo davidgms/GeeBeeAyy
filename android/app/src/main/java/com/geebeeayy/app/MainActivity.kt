@@ -28,6 +28,7 @@ import com.geebeeayy.app.ui.theme.LocalControlFontScale
 import com.geebeeayy.app.ui.theme.LocalControlPalette
 import com.geebeeayy.app.ui.theme.LocalDpadCardinalHalf
 import com.geebeeayy.app.data.DisplaySettings
+import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.data.RomFiles
@@ -156,7 +157,7 @@ fun GeeBeeAyyNavHost() {
             RomBrowserScreen(
                 roms = romList,
                 onRomClick = { rom ->
-                    navController.navigate("emulation/${java.net.URLEncoder.encode(rom.filePath, "UTF-8")}")
+                    navController.navigate("emulation/${RomBytes.encodeId(rom.filePath)}")
                 },
                 onSettingsClick = {
                     navController.navigate("settings")
@@ -183,7 +184,7 @@ fun GeeBeeAyyNavHost() {
             arguments = listOf(navArgument("filePath") { type = NavType.StringType })
         ) { backStackEntry ->
             val encodedPath = backStackEntry.arguments?.getString("filePath") ?: ""
-            val filePath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
+            val filePath = RomBytes.decodeId(encodedPath)
             val viewModel: EmulationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
             // Read once per navigation to this route rather than observed live: the only way
             // to change it is the Settings screen, which is a separate back-stack entry, so
