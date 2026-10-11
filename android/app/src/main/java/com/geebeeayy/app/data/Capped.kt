@@ -6,7 +6,8 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /** A read went past its byte ceiling. */
-class TooLargeException(val limit: Long) : IOException("File is over ${limit shr 20} MB")
+class TooLargeException(val limit: Long) :
+    IOException(if (limit >= 1 shl 20) "File is over ${limit shr 20} MB" else "File is over $limit bytes")
 
 /**
  * Copy at most [limit] bytes, and throw [TooLargeException] past it.

@@ -329,13 +329,16 @@ object RaEngine {
                 outputStream.use { it.write(postData.toByteArray()) }
             }
         }
-        val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-        // The largest achievement set is a few MB of JSON; past the cap the
-        // request fails like a dropped connection rather than filling memory.
-        val body = stream?.use { it.readCapped(MAX_RESPONSE_BYTES) } ?: ByteArray(0)
-        connection.disconnect()
-        return status to body
+        try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            // The largest achievement set is a few MB of JSON; past the cap the
+            // request fails like a dropped connection rather than filling memory.
+            val body = stream?.use { it.readCapped(MAX_RESPONSE_BYTES) } ?: ByteArray(0)
+            return status to body
+        } finally {
+            connection.disconnect()
+        }
     }
 
     @JvmStatic

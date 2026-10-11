@@ -46,7 +46,12 @@ object RomBytes {
      * not read", and worth a different message.
      */
     fun read(path: String): ByteArray? {
-        if (!isZip(path) && File(path).length() > MAX_ROM_BYTES) throw TooLargeException(MAX_ROM_BYTES)
+        if (!isZip(path)) {
+            // Checked up front, then read in one sized allocation: a capped
+            // stream would peak at twice the cart while it copies out.
+            if (File(path).length() > MAX_ROM_BYTES) throw TooLargeException(MAX_ROM_BYTES)
+            return File(path).readBytes()
+        }
         return withCart(path) { it.readCapped(MAX_ROM_BYTES) }
     }
 

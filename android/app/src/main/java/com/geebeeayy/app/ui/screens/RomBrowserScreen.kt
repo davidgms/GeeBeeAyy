@@ -350,10 +350,12 @@ fun RomBrowserScreen(
             confirmLabel = if (found.isEmpty()) "OK" else "Delete",
             destructive = found.isNotEmpty(),
             onConfirm = {
-                // The files the player was shown, not a fresh lookup.
-                found.forEach { it.delete() }
                 confirmDeleteSaves = null
-                onRefresh()
+                scope.launch {
+                    // The files the player was shown, not a fresh lookup.
+                    withContext(Dispatchers.IO) { found.forEach { it.delete() } }
+                    onRefresh()
+                }
             },
             onDismiss = { confirmDeleteSaves = null },
         )
@@ -373,12 +375,14 @@ fun RomBrowserScreen(
             destructive = rom.exists,
             onConfirm = {
                 confirmDeleteRom = null
+                // Forgotten first: leaving the screen cancels the scope, and
+                // a deleted cart must not stay in favourites or last played.
+                LastPlayed(context).forget(rom.filePath)
+                favorites.forget(rom.filePath)
                 scope.launch {
                     // Reads the cart's header to find its saves; same reason
                     // as the save-data dialog for keeping it off the main thread.
                     if (rom.exists) withContext(Dispatchers.IO) { RomFiles.deleteRom(context, rom.filePath) }
-                    LastPlayed(context).forget(rom.filePath)
-                    favorites.forget(rom.filePath)
                     onRefresh()
                 }
             },
