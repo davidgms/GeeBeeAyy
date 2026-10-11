@@ -21,6 +21,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +85,7 @@ fun RomBrowserScreen(
     onRefresh: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val favorites = remember { Favorites(context) }
     // Read once for the whole list. Built per row it was a SharedPreferences
     // object allocated for every card that scrolled into view.
@@ -328,22 +330,28 @@ fun RomBrowserScreen(
     }
 
     confirmDeleteSaves?.let { rom ->
-        val files = remember(rom.filePath) { RomFiles.saveData(context, rom.filePath) }
+        // Off the main thread: a cart with no header title is keyed by a CRC
+        // of the whole image, which for a zip means inflating up to 32 MB.
+        val files by produceState<List<File>?>(null, rom.filePath) {
+            value = withContext(Dispatchers.IO) { RomFiles.saveData(context, rom.filePath) }
+        }
+        val found = files ?: return@let
         ConfirmDialog(
             title = "Delete save data?",
             // Named, not counted: "3 files" is not something anyone can agree
             // to, and the battery save is the one that cannot be got back.
-            body = if (files.isEmpty()) {
+            body = if (found.isEmpty()) {
                 "${rom.name} has no save data on this phone."
             } else {
                 "This removes the battery save and every save state for " +
                     "${rom.name}, and cannot be undone:\n\n" +
-                    files.joinToString("\n") { it.name }
+                    found.joinToString("\n") { it.name }
             },
-            confirmLabel = if (files.isEmpty()) "OK" else "Delete",
-            destructive = files.isNotEmpty(),
+            confirmLabel = if (found.isEmpty()) "OK" else "Delete",
+            destructive = found.isNotEmpty(),
             onConfirm = {
-                if (files.isNotEmpty()) RomFiles.deleteSaveData(context, rom.filePath)
+                // The files the player was shown, not a fresh lookup.
+                found.forEach { it.delete() }
                 confirmDeleteSaves = null
                 onRefresh()
             },
@@ -364,11 +372,15 @@ fun RomBrowserScreen(
             confirmLabel = if (rom.exists) "Delete" else "Remove",
             destructive = rom.exists,
             onConfirm = {
-                if (rom.exists) RomFiles.deleteRom(context, rom.filePath)
-                LastPlayed(context).forget(rom.filePath)
-                favorites.forget(rom.filePath)
                 confirmDeleteRom = null
-                onRefresh()
+                scope.launch {
+                    // Reads the cart's header to find its saves; same reason
+                    // as the save-data dialog for keeping it off the main thread.
+                    if (rom.exists) withContext(Dispatchers.IO) { RomFiles.deleteRom(context, rom.filePath) }
+                    LastPlayed(context).forget(rom.filePath)
+                    favorites.forget(rom.filePath)
+                    onRefresh()
+                }
             },
             onDismiss = { confirmDeleteRom = null },
         )

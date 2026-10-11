@@ -4,6 +4,8 @@ import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.DigestOutputStream
+import java.security.MessageDigest
 
 /**
  * Fetches a [HomebrewEntry] into the ROM folder.
@@ -24,12 +26,15 @@ object HomebrewDownloader {
     internal fun failureMessage(e: Exception): String {
         val text = e.message.orEmpty()
         return when {
+            e is TooLargeException -> MISMATCH
             e is java.net.SocketTimeoutException -> "The server took too long to answer. Try again later."
             DISK_ERRORS.any { it in text } -> "Could not save the file. Check that the folder has free space."
             e is java.io.IOException -> "Connection lost. Check your internet and try again."
             else -> "Download failed."
         }
     }
+
+    private const val MISMATCH = "The download is not the file this app checked. Not saved."
 
     private val DISK_ERRORS = listOf("ENOSPC", "EACCES", "EROFS", "EDQUOT")
     private const val TIMEOUT_MS = 30_000
@@ -68,20 +73,11 @@ object HomebrewDownloader {
                 return Result.Failed("Server returned $code")
             }
 
-            // Content-Length is a hint, not a guarantee; fall back to the
-            // catalogue's figure so the bar still moves when it is absent.
-            val expected = connection.contentLengthLong.takeIf { it > 0 } ?: entry.approxBytes
-
-            var written = 0L
-            connection.inputStream.use { input ->
-                partial.outputStream().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        written += read
-                        onProgress((written.toFloat() / expected).coerceIn(0f, 1f))
+            val digest = MessageDigest.getInstance("SHA-256")
+            val written = connection.inputStream.use { input ->
+                DigestOutputStream(partial.outputStream(), digest).use { output ->
+                    input.copyCapped(output, entry.bytes) { done ->
+                        onProgress((done.toFloat() / entry.bytes).coerceIn(0f, 1f))
                     }
                 }
             }
@@ -89,6 +85,12 @@ object HomebrewDownloader {
             if (written == 0L) {
                 partial.delete()
                 return Result.Failed("Downloaded nothing")
+            }
+            val hash = digest.digest().joinToString("") { "%02x".format(it) }
+            if (written != entry.bytes || hash != entry.sha256) {
+                Log.w(TAG, "${entry.name}: got $written bytes, sha256 $hash")
+                partial.delete()
+                return Result.Failed(MISMATCH)
             }
             if (target.exists() && !target.delete()) {
                 partial.delete()

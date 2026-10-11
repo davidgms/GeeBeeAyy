@@ -1,6 +1,8 @@
 package com.geebeeayy.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.net.SocketException
@@ -36,5 +38,19 @@ class DownloadFailureTest {
             "Could not save the file. Check that the folder has free space.",
             HomebrewDownloader.failureMessage(IOException("ENOSPC (No space left on device)")),
         )
+    }
+
+    @Test
+    fun `a download longer than the catalogue says reads as a mismatch, not a lost connection`() {
+        assertTrue(HomebrewDownloader.failureMessage(TooLargeException(324)).startsWith("The download is not the file"))
+    }
+
+    @Test
+    fun `every catalogue entry is pinned by hash and never by branch`() {
+        HomebrewCatalog.entries.forEach { entry ->
+            assertTrue(entry.name, Regex("[0-9a-f]{64}").matches(entry.sha256))
+            assertTrue(entry.name, entry.bytes > 0)
+            assertFalse(entry.name, "/master/" in entry.url || "/main/" in entry.url)
+        }
     }
 }

@@ -58,25 +58,10 @@ data class RomHeader(val title: String, val gameCode: String) {
 
         /**
          * Read a header without reading the whole cart. A ROM is up to 32 MB
-         * and the header is the first 176 bytes of it.
+         * and the header is the first 176 bytes of it; a zipped cart is
+         * inflated only that far.
          */
-        fun read(file: File): RomHeader? = runCatching {
-            // A zipped cart has to be pulled out before its header is there to
-            // read. Only the first 176 bytes are wanted, but a zip entry is
-            // compressed, so there is no seeking past them.
-            if (RomBytes.isZip(file.path)) {
-                return@runCatching RomBytes.read(file.path)?.let { from(it) }
-            }
-            file.inputStream().use { stream ->
-                val head = ByteArray(MIN_BYTES)
-                var read = 0
-                while (read < MIN_BYTES) {
-                    val n = stream.read(head, read, MIN_BYTES - read)
-                    if (n <= 0) break
-                    read += n
-                }
-                if (read < MIN_BYTES) null else from(head)
-            }
-        }.getOrNull()
+        fun read(file: File): RomHeader? =
+            runCatching { RomBytes.head(file.path, MIN_BYTES)?.let { from(it) } }.getOrNull()
     }
 }
