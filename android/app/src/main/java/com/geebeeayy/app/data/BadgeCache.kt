@@ -21,6 +21,10 @@ import java.net.URL
  */
 object BadgeCache {
 
+    // A badge is a 64x64 PNG; the cap stops a hostile or broken server from
+    // filling the disk.
+    private const val MAX_BADGE_BYTES = 1L * 1024 * 1024
+
     private fun dir(context: Context): File =
         File(context.filesDir, "badges").apply { mkdirs() }
 
@@ -63,9 +67,11 @@ object BadgeCache {
             // Written beside the target and renamed, so a dropped connection
             // cannot leave a half-decoded image that looks cached.
             val temp = File(into.parentFile, "${into.name}.part")
-            connection.inputStream.use { input ->
-                temp.outputStream().use { output -> input.copyTo(output) }
-            }
+            runCatching {
+                connection.inputStream.use { input ->
+                    temp.outputStream().use { output -> input.copyCapped(output, MAX_BADGE_BYTES) }
+                }
+            }.onFailure { temp.delete() }.getOrThrow()
             temp.renameTo(into) || run { temp.delete(); false }
         } finally {
             connection.disconnect()

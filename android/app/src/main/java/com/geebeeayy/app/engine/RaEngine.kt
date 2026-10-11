@@ -2,6 +2,7 @@ package com.geebeeayy.app.engine
 
 import android.content.Context
 import android.util.Log
+import com.geebeeayy.app.data.readCapped
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,7 +15,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -37,6 +37,7 @@ import java.net.URL
 object RaEngine {
 
     private const val TAG = "GeeBeeAyy/RA"
+    private const val MAX_RESPONSE_BYTES = 16L * 1024 * 1024
 
     /** `rc_client` event ids, from `rc_client.h`. Only the ones acted on. */
     private const val EVENT_ACHIEVEMENT_TRIGGERED = 1
@@ -328,13 +329,16 @@ object RaEngine {
                 outputStream.use { it.write(postData.toByteArray()) }
             }
         }
-        val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-        val body = stream?.use { input ->
-            ByteArrayOutputStream().also { input.copyTo(it) }.toByteArray()
-        } ?: ByteArray(0)
-        connection.disconnect()
-        return status to body
+        try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            // The largest achievement set is a few MB of JSON; past the cap the
+            // request fails like a dropped connection rather than filling memory.
+            val body = stream?.use { it.readCapped(MAX_RESPONSE_BYTES) } ?: ByteArray(0)
+            return status to body
+        } finally {
+            connection.disconnect()
+        }
     }
 
     @JvmStatic

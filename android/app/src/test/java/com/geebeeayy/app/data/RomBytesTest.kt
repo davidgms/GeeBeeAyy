@@ -97,4 +97,45 @@ class RomBytesTest {
         assertEquals("Sonic Advance", RomBytes.displayBaseName("/x/Sonic Advance.zip"))
         assertEquals("Sonic Advance", RomBytes.displayBaseName("/x/Sonic Advance.gba"))
     }
+
+    @Test(expected = TooLargeException::class)
+    fun `a zip entry past 32 MB is refused while inflating`() {
+        // Zeros compress to almost nothing, so the archive is small and only
+        // the inflated size crosses the cap - the zip bomb case.
+        val file = folder.newFile("bomb.zip")
+        ZipOutputStream(file.outputStream()).use { out ->
+            out.putNextEntry(ZipEntry("big.gba"))
+            val chunk = ByteArray(1 shl 20)
+            repeat(40) { out.write(chunk) }
+            out.closeEntry()
+        }
+        RomBytes.read(file.path)
+    }
+
+    @Test(expected = TooLargeException::class)
+    fun `a plain file past 32 MB is refused before it is read`() {
+        val rom = folder.newFile("huge.gba")
+        java.io.RandomAccessFile(rom, "rw").use { it.setLength(RomBytes.MAX_ROM_BYTES + 1) }
+        RomBytes.read(rom.path)
+    }
+
+    @Test
+    fun `the head of a zipped cart is read without the rest`() {
+        val zip = zipOf("game.gba" to ByteArray(4096) { it.toByte() })
+        assertArrayEquals(ByteArray(0xB0) { it.toByte() }, RomBytes.head(zip.path, 0xB0))
+    }
+
+    @Test
+    fun `the head of a short cart is what there is`() {
+        val rom = folder.newFile("tiny.gba")
+        rom.writeBytes(byteArrayOf(7, 8))
+        assertArrayEquals(byteArrayOf(7, 8), RomBytes.head(rom.path, 0xB0))
+    }
+
+    @Test
+    fun `a capped copy takes exactly the limit and refuses one byte more`() {
+        assertEquals(10, ByteArray(10).inputStream().readCapped(10).size)
+        val over = runCatching { ByteArray(11).inputStream().readCapped(10) }.exceptionOrNull()
+        assertTrue(over is TooLargeException)
+    }
 }

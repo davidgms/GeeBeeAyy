@@ -197,7 +197,7 @@ private fun HomebrewCard(
                     )
                     Text(entry.description, fontSize = 12.sp, color = AmberResin)
                     Text(
-                        "${entry.source} • ${entry.approxBytes / 1024} KB",
+                        "${entry.source} • ${entry.bytes / 1024} KB",
                         fontSize = 11.sp,
                         color = PineGlowMist.copy(alpha = 0.6f),
                     )

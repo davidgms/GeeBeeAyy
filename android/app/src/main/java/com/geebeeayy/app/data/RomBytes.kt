@@ -1,6 +1,7 @@
 package com.geebeeayy.app.data
 
 import java.io.File
+import java.io.InputStream
 import java.util.zip.ZipFile
 
 /**
@@ -30,14 +31,47 @@ object RomBytes {
         File(path).extension.equals(ZIP_EXTENSION, ignoreCase = true)
 
     /**
+     * The largest cart there is. The core rejects anything bigger
+     * (`core/src/cart/mod.rs`), so reading past it only spends memory on a
+     * file that will not load - or, for a zip bomb, crashes the app.
+     */
+    const val MAX_ROM_BYTES = 32L * 1024 * 1024
+
+    /**
      * Every byte of the cart at [path].
      *
-     * Throws whatever the read threw, so a caller can report it. Returns null
-     * only when a zip has been opened and holds no cart at all - a separate
-     * case from "could not read", and worth a different message.
+     * Throws whatever the read threw, so a caller can report it, and
+     * [TooLargeException] past [MAX_ROM_BYTES]. Returns null only when a zip
+     * has been opened and holds no cart at all - a separate case from "could
+     * not read", and worth a different message.
      */
     fun read(path: String): ByteArray? {
-        if (!isZip(path)) return File(path).readBytes()
+        if (!isZip(path)) {
+            // Checked up front, then read in one sized allocation: a capped
+            // stream would peak at twice the cart while it copies out.
+            if (File(path).length() > MAX_ROM_BYTES) throw TooLargeException(MAX_ROM_BYTES)
+            return File(path).readBytes()
+        }
+        return withCart(path) { it.readCapped(MAX_ROM_BYTES) }
+    }
+
+    /**
+     * The first [count] bytes of the cart, or fewer if it is shorter. For a
+     * header: a zipped cart is inflated only as far as [count], not whole.
+     */
+    fun head(path: String, count: Int): ByteArray? = withCart(path) { stream ->
+        val head = ByteArray(count)
+        var read = 0
+        while (read < count) {
+            val n = stream.read(head, read, count - read)
+            if (n <= 0) break
+            read += n
+        }
+        head.copyOf(read)
+    }
+
+    private fun <T> withCart(path: String, block: (InputStream) -> T): T? {
+        if (!isZip(path)) return File(path).inputStream().use(block)
         ZipFile(File(path)).use { zip ->
             val entry = zip.entries().asSequence()
                 .filterNot { it.isDirectory }
@@ -48,7 +82,7 @@ object RomBytes {
                 .firstOrNull { candidate ->
                     ROM_EXTENSIONS.any { candidate.name.endsWith(".$it", ignoreCase = true) }
                 } ?: return null
-            return zip.getInputStream(entry).use { it.readBytes() }
+            return zip.getInputStream(entry).use(block)
         }
     }
 

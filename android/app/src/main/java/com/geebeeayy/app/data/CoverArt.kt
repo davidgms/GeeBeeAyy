@@ -21,6 +21,10 @@ import java.net.URLEncoder
  */
 object CoverArt {
 
+    // A boxart PNG is a few hundred KB; the cap stops a hostile or broken server from
+    // filling the disk.
+    private const val MAX_COVER_BYTES = 4L * 1024 * 1024
+
     /** Where a downloaded cover lands. [RomArtwork] looks here last. */
     fun cacheDir(context: Context): File =
         File(context.filesDir, "covers").apply { mkdirs() }
@@ -169,9 +173,11 @@ object CoverArt {
             // Written beside the target and renamed, so a dropped connection
             // cannot leave a half-decoded PNG that looks cached.
             val temp = File(into.parentFile, "${into.name}.part")
-            connection.inputStream.use { input ->
-                temp.outputStream().use { output -> input.copyTo(output) }
-            }
+            runCatching {
+                connection.inputStream.use { input ->
+                    temp.outputStream().use { output -> input.copyCapped(output, MAX_COVER_BYTES) }
+                }
+            }.onFailure { temp.delete() }.getOrThrow()
             if (temp.renameTo(into)) into else null.also { temp.delete() }
         } finally {
             connection.disconnect()
