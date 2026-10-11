@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower. The RetroAchievements token works like a password,
+     so it never leaves the phone; saves and states stay in the backup on
+     purpose, so game progress moves to a new phone. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="retroachievements.xml" />
+</full-backup-content>
