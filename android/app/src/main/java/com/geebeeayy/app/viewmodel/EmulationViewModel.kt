@@ -22,7 +22,6 @@ import com.geebeeayy.app.engine.RaEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
@@ -301,7 +300,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * to get wrong. It is taken per frame rather than for the whole loop, so
      * the blocking audio write never holds it.
      */
-    private val engineLock = Mutex()
+    // The one shared lock: the RA bridge holds a single global emulator pointer.
+    private val engineLock = RaEngine.coreLock
     private var romLoaded = false
 
     /**
@@ -414,8 +414,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // A different cart: the achievement session belongs to the one being
         // left. Dropped here rather than in stopEmulation, which also runs on
         // the way to the ROM list and back - unloading there lost the session
-        // for a game the player simply stepped out of.
-        RaEngine.unloadGame()
+        // for a game the player simply stepped out of. The unload itself runs
+        // below, under the core lock, once the loop is stopped.
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             _errorMessage.value = null
@@ -442,7 +442,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 // into the same handle, and loading a ROM under it is the one
                 // engine access that was never funnelled onto the loop thread.
                 stopEmulation()
-                val success = engineLock.withLock { engine.loadRom(data) }
+                val success = engineLock.withLock {
+                    // Detached for the whole load: a failed load must leave
+                    // rcheevos with no emulator, and only a successful one
+                    // re-attaches (in resolveSavePaths).
+                    RaEngine.unloadGame()
+                    RaEngine.attachEmulator(0L)
+                    engine.loadRom(data)
+                }
                 if (success) {
                     romLoaded = true
                     loadedRomPath = filePath
@@ -1068,6 +1075,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             // holds this handle raw, and would otherwise read freed memory.
             RaEngine.attachEmulator(0L)
             engine.destroy()
+            // Taken above to prove the loop left native code. The lock is
+            // shared with the next game now, so it must not stay held.
+            engineLock.unlock()
         } else {
             Log.w(TAG, "Emulation thread still running; leaking the core handle and the audio track rather than freeing them under a live call")
         }
