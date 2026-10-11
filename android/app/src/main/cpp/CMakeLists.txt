@@ -20,10 +20,11 @@ add_compile_definitions(
 )
 
 file(GLOB RCHEEVOS_SOURCES
-    ${RCHEEVOS}/src/*.c
-    ${RCHEEVOS}/src/rapi/*.c
-    ${RCHEEVOS}/src/rcheevos/*.c
-    ${RCHEEVOS}/src/rhash/*.c
+    ${RCHEEVOS}/src/api/*.c
+    ${RCHEEVOS}/src/client/*.c
+    ${RCHEEVOS}/src/hash/*.c
+    ${RCHEEVOS}/src/runtime/*.c
+    ${RCHEEVOS}/src/util/*.c
 )
 # The RAIntegration path is Windows-only: it loads a DLL to talk to the
 # achievement editor, and it does not compile for Android.
@@ -43,8 +44,7 @@ add_library(geebeeayy_ra SHARED
 target_include_directories(geebeeayy_ra PRIVATE
     ${RCHEEVOS}/include
     ${RCHEEVOS}/src
-    ${RCHEEVOS}/src/rhash
-    ${RCHEEVOS}/src/rcheevos
+    ${RCHEEVOS}/src/util
 )
 
 find_library(log-lib log)

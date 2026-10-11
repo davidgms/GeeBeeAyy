@@ -225,7 +225,11 @@ object RaEngine {
 
     fun restoreProgress(data: ByteArray): Boolean {
         check(coreLock.isLocked) { "restoreProgress needs coreLock" }
-        return available && started && runCatching { native.nativeDeserializeProgress(data) }.getOrDefault(false)
+        if (!available || !started) return false
+        val ok = runCatching { native.nativeDeserializeProgress(data) }.getOrDefault(false)
+        // rcheevos resets the set on a bad sidecar, so the state still loads.
+        if (!ok) Log.w(TAG, "achievement progress sidecar rejected, progress reset")
+        return ok
     }
 
     fun hashRom(romData: ByteArray): String? =
