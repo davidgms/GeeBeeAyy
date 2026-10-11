@@ -11,6 +11,8 @@ import com.geebeeayy.app.data.LastPlayed
 import com.geebeeayy.app.data.RomHeader
 import com.geebeeayy.app.data.StateSlot
 import com.geebeeayy.app.data.BatterySaveStore
+import com.geebeeayy.app.data.importLegacySave
+import com.geebeeayy.app.data.RomFiles
 import com.geebeeayy.app.data.atomicWrite
 import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.engine.AudioOutput
@@ -502,7 +504,8 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * loading coroutine's IO thread.
      */
     private fun resolveSavePaths(romFile: File, romData: ByteArray) {
-        romStateKey = computeRomStateKey(romData)
+        val key = computeRomStateKey(romData)
+        romStateKey = key
         // Ask RetroAchievements what this cart is. The hash is the identity
         // the server keys on - an MD5 of the whole file, so a renamed ROM
         // still matches and a trimmed one does not. Answers arrive on the
@@ -512,16 +515,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             RaEngine.attachEmulator(engine.nativeHandle)
             RaEngine.hashRom(romData)?.let { RaEngine.loadGame(it) }
         }
-        val primaryDir = romFile.parentFile
-        val baseName = romFile.nameWithoutExtension
-        batterySave = BatterySaveStore(
-            primary = primaryDir?.let { File(it, "$baseName.sav") },
-            fallback = File(fallbackSaveDir(), "${romStateKey}.sav"),
-        )
+        val save = RomFiles.privateSave(getApplication(), key)
+        // A cart opened straight after the update, before any scan reached it.
+        // A failed import is logged, not fatal: the next launch retries it.
+        if (!importLegacySave(RomFiles.legacySave(romFile), save)) {
+            Log.w(TAG, "battery save import failed, will retry")
+        }
+        batterySave = BatterySaveStore(save)
     }
-
-    private fun fallbackSaveDir(): File =
-        File(getApplication<Application>().filesDir, "saves").apply { mkdirs() }
 
     /**
      * The filename fragment this cart's saves and states are keyed on.
@@ -535,16 +536,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Load a battery save into the core before the first frame runs, or the
-     * game would overwrite a save it never saw. Prefers the ROM-adjacent
-     * `.sav`; falls back to the app-private copy if that one is missing but
-     * the fallback isn't (e.g. a previous run's write landed there because
-     * the ROM folder wasn't writable).
+     * game would overwrite a save it never saw.
      */
     private fun loadExistingSave() {
         val store = batterySave ?: return
         val bytes = store.load() ?: return
         engine.writeSave(bytes)
-        Log.i(TAG, "Loaded battery save from ${store.current} (${bytes.size} bytes)")
+        Log.i(TAG, "Loaded battery save from ${store.file} (${bytes.size} bytes)")
     }
 
     /** Wall-clock instant the batch being paced is allowed to end. */
