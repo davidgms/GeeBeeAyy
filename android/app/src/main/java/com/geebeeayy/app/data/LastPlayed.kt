@@ -21,4 +21,15 @@ class LastPlayed(context: Context) {
         val value = prefs.getLong(filePath, -1L)
         return if (value < 0) null else value
     }
+
+    /** Move each entry to its new key (a folder re-picked as a tree), keeping the latest time. */
+    fun rekey(map: Map<String, String>) {
+        val all = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+        val moved = rekeyedTimes(all.filterKeys { it in map }, map)
+        if (moved.isEmpty()) return
+        val edit = prefs.edit()
+        map.keys.forEach { edit.remove(it) }
+        for ((key, time) in moved) edit.putLong(key, maxOf(time, all[key] ?: 0L))
+        edit.apply()
+    }
 }

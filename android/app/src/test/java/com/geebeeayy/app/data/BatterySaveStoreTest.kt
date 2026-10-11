@@ -204,4 +204,58 @@ class BatterySaveStoreTest {
         store.flush()
         assertFalse(File(saveFile().parentFile, "GAME.sav.tmp").exists())
     }
+
+    // The save beside a document ROM: size and time from the scan, bytes read on demand.
+
+    private fun document(bytes: ByteArray, modified: Long, onRead: () -> Unit = {}) =
+        LegacySave(true, bytes.size.toLong(), modified) { onRead(); bytes }
+
+    @Test
+    fun `a save document is imported on first sight and then marked`() {
+        assertTrue(importLegacySave(document(byteArrayOf(4, 4), 1_000_000L), saveFile()))
+        assertArrayEquals(byteArrayOf(4, 4), BatterySaveStore(saveFile()).load())
+        var read = false
+        importLegacySave(document(byteArrayOf(9), 9_000_000L) { read = true }, saveFile())
+        assertFalse("after the marker the document is never read again", read)
+        assertArrayEquals(byteArrayOf(4, 4), saveFile().readBytes())
+    }
+
+    @Test
+    fun `a newer save document wins once and keeps the old private copy`() {
+        write(saveFile(), byteArrayOf(1), 1_000_000L)
+        importLegacySave(document(byteArrayOf(2), 2_000_000L), saveFile())
+        assertArrayEquals(byteArrayOf(2), saveFile().readBytes())
+        assertArrayEquals(byteArrayOf(1), File(saveFile().parentFile, "GAME.sav.before-import").readBytes())
+    }
+
+    @Test
+    fun `a newer private save survives an older save document`() {
+        write(saveFile(), byteArrayOf(2), 2_000_000L)
+        importLegacySave(document(byteArrayOf(1), 1_000_000L), saveFile())
+        assertArrayEquals(byteArrayOf(2), saveFile().readBytes())
+    }
+
+    @Test
+    fun `an empty or oversized save document is not read or imported`() {
+        var read = false
+        assertTrue(importLegacySave(LegacySave(true, 0L, 1L) { read = true; ByteArray(0) }, saveFile()))
+        assertTrue(importLegacySave(LegacySave(true, 2L shl 20, 1L) { read = true; ByteArray(0) }, saveFile()))
+        assertFalse(read)
+        assertFalse(saveFile().exists())
+    }
+
+    @Test
+    fun `an unreadable save document leaves no marker, so it is retried`() {
+        assertFalse(importLegacySave(LegacySave(true, 2L, 1L) { error("provider gone") }, saveFile()))
+        assertTrue(importLegacySave(document(byteArrayOf(5, 5), 1L), saveFile()))
+        assertArrayEquals(byteArrayOf(5, 5), saveFile().readBytes())
+    }
+
+    /** What a document ROM with no `.sav` in the scan looks like: it must not poison a later rescue. */
+    @Test
+    fun `no save document and no private save leaves no marker`() {
+        assertTrue(importLegacySave(LegacySave(false, 0L, 0L) { ByteArray(0) }, saveFile()))
+        importLegacySave(document(byteArrayOf(8), 1_000_000L), saveFile())
+        assertArrayEquals(byteArrayOf(8), saveFile().readBytes())
+    }
 }

@@ -105,6 +105,14 @@ class RomBytesTest {
             "/document/primary%3Aemulators%2FGBA%2Fx.gba"
         assertEquals(id, RomBytes.decodeId(RomBytes.encodeId(id)))
         assertFalse(RomBytes.encodeId(id).contains('/'))
+        // Navigation decodes a path argument itself before the route sees it.
+        // A percent-encoded id came out decoded twice - `%3A` turned into `:`
+        // and the provider refused the Uri on the phone. Base64url has no `%`,
+        // so that extra decode is a no-op.
+        val afterNav = java.net.URLDecoder.decode(RomBytes.encodeId(id), "UTF-8")
+        assertEquals(id, RomBytes.decodeId(afterNav))
+        val path = "/storage/emulated/0/GBA/Mario Tennis + (U).gba"
+        assertEquals(path, RomBytes.decodeId(java.net.URLDecoder.decode(RomBytes.encodeId(path), "UTF-8")))
     }
 
     @Test

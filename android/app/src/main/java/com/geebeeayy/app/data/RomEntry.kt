@@ -16,4 +16,6 @@ data class RomEntry(
      * usual cause is a card out of the phone or a folder renamed.
      */
     val exists: Boolean = true,
+    /** Where a document ROM sits, for the info dialog; null means ask the path. */
+    val folderLabel: String? = null,
 )

@@ -3,7 +3,9 @@ package com.geebeeayy.app.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import java.io.File
+import java.io.InputStream
 
 /**
  * Cover art for a ROM, loaded from an image file the player supplies.
@@ -20,20 +22,18 @@ import java.io.File
  */
 object RomArtwork {
 
-    private val EXTENSIONS = listOf("png", "jpg", "jpeg", "webp")
-
     /** Largest edge we decode to. List thumbnails are ~56.dp. */
     private const val MAX_EDGE = 256
 
     /**
-     * The artwork file for [romPath], or null if the player has not supplied
+     * The artwork file beside the ROM at path [romPath], or null if the player has not supplied
      * one. Checks `<name>.<ext>` beside the ROM first, then `covers/<name>.<ext>`.
      */
     fun findFile(romPath: String): File? {
         val rom = File(romPath)
         val dir = rom.parentFile ?: return null
         val base = rom.nameWithoutExtension
-        for (ext in EXTENSIONS) {
+        for (ext in ART_EXTENSIONS) {
             val beside = File(dir, "$base.$ext")
             if (beside.isFile) return beside
             val inCovers = File(File(dir, "covers"), "$base.$ext")
@@ -44,12 +44,15 @@ object RomArtwork {
 
     /**
      * The same search, plus [CoverArt]'s download cache as a last resort.
+     * A document ROM has no file beside it to find: its own cover is a
+     * document the scan recorded, read by [load].
      *
      * The player's own file wins over a downloaded one on purpose: they put it
      * there, and a fetched cover should never quietly replace it.
      */
     fun findFile(context: Context, romPath: String): File? =
-        findFile(romPath) ?: CoverArt.cachedFile(context, romPath).takeIf { it.isFile }
+        (if (RomBytes.isPath(romPath)) findFile(romPath) else null)
+            ?: CoverArt.cachedFile(context, romPath).takeIf { it.isFile }
 
     /**
      * Decode the artwork for [romPath], downsampled to roughly [MAX_EDGE].
@@ -58,15 +61,19 @@ object RomArtwork {
      * image - a corrupt or misnamed file falls back to the placeholder icon
      * rather than taking the list down.
      */
-    fun load(romPath: String): Bitmap? = load(findFile(romPath))
+    fun load(context: Context, romPath: String): Bitmap? {
+        if (!RomBytes.isPath(romPath)) {
+            RomSiblings.get(romPath)?.coverUri?.let { uri ->
+                decode { context.contentResolver.openInputStream(Uri.parse(uri)) }?.let { return it }
+            }
+        }
+        return findFile(context, romPath)?.let { file -> decode { file.inputStream() } }
+    }
 
-    fun load(context: Context, romPath: String): Bitmap? = load(findFile(context, romPath))
-
-    private fun load(file: File?): Bitmap? {
-        if (file == null) return null
+    private fun decode(open: () -> InputStream?): Bitmap? {
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            open()?.use { BitmapFactory.decodeStream(it, null, bounds) }
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
             var sample = 1
@@ -76,10 +83,9 @@ object RomArtwork {
             ) {
                 sample *= 2
             }
-            BitmapFactory.decodeFile(
-                file.absolutePath,
-                BitmapFactory.Options().apply { inSampleSize = sample },
-            )
+            open()?.use {
+                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+            }
         } catch (e: Exception) {
             null
         }

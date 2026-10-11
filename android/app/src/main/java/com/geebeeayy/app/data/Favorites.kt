@@ -36,6 +36,13 @@ class Favorites(context: Context) {
         }
     }
 
+    /** Move each star to its new key (a folder re-picked as a tree). */
+    fun rekey(map: Map<String, String>) {
+        val current = paths()
+        if (map.keys.none { it in current }) return
+        prefs.edit().putStringSet(KEY, rekeyedSet(current, map)).apply()
+    }
+
     private companion object {
         const val KEY = "favorite_paths"
     }

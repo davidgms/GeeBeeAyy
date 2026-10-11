@@ -29,8 +29,22 @@ object CoverArt {
     fun cacheDir(context: Context): File =
         File(context.filesDir, "covers").apply { mkdirs() }
 
+    /**
+     * The name a cover is cached under: the file's base name. A path gives it
+     * as it always did, so covers already cached stay found; a document ROM
+     * gives its display name, from the scan or else from the provider.
+     */
+    private fun baseName(context: Context, romPath: String): String =
+        if (RomBytes.isPath(romPath)) {
+            File(romPath).nameWithoutExtension
+        } else {
+            RomBytes.displayBaseName(
+                RomSiblings.get(romPath)?.name ?: runCatching { RomBytes.fileName(context, romPath) }.getOrDefault(""),
+            ).ifEmpty { "doc${romPath.hashCode()}" }
+        }
+
     fun cachedFile(context: Context, romPath: String): File =
-        File(cacheDir(context), "${File(romPath).nameWithoutExtension}.png")
+        File(cacheDir(context), "${baseName(context, romPath)}.png")
 
     /**
      * A tried-and-failed marker, so a cart with no art on the server is not
@@ -38,7 +52,7 @@ object CoverArt {
      * player retries.
      */
     private fun missFile(context: Context, romPath: String): File =
-        File(cacheDir(context), "${File(romPath).nameWithoutExtension}.miss")
+        File(cacheDir(context), "${baseName(context, romPath)}.miss")
 
     /**
      * Fetch the cover for [romPath] if it is not already cached.
@@ -72,7 +86,7 @@ object CoverArt {
     internal fun candidateNames(context: Context, romPath: String): List<String> {
         val names = mutableListOf<String>()
         gameCode(context, romPath)?.let { code -> codeIndex(context)[code]?.let(names::add) }
-        val fileName = File(romPath).nameWithoutExtension
+        val fileName = baseName(context, romPath)
         if (fileName !in names) names += fileName
         return names
     }

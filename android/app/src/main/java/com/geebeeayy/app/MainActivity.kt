@@ -31,7 +31,6 @@ import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
-import com.geebeeayy.app.data.RomFiles
 import com.geebeeayy.app.ui.screens.*
 import com.geebeeayy.app.ui.theme.GeeBeeAyyTheme
 import com.geebeeayy.app.viewmodel.EmulationViewModel
@@ -117,21 +116,22 @@ fun GeeBeeAyyNavHost() {
     }
 
     fun rescanRoms() {
-        if (!hasStoragePermission) {
+        // Tree folders carry their own grant; only path folders need the
+        // storage permission.
+        if (!hasStoragePermission && !folderManager.hasTreeFolders()) {
             requestStoragePermission()
             return
         }
         scope.launch(Dispatchers.IO) {
-            val roms = folderManager.scanAllFolders()
-            romList = roms
-            // While the app can still read the ROM folders: battery saves are
-            // moving into app storage before shared-storage access goes away.
-            RomFiles.importLegacySaves(context, roms)
+            // Scans are serialised in the manager, and the save import runs
+            // there too, on the list it just published: battery saves are
+            // moving into app storage while the app can still read the folders.
+            folderManager.scanAndImport { romList = it }
         }
     }
 
     LaunchedEffect(hasStoragePermission) {
-        if (hasStoragePermission && folderManager.hasFolders()) {
+        if (folderManager.hasFolders() && (hasStoragePermission || folderManager.hasTreeFolders())) {
             rescanRoms()
         }
     }

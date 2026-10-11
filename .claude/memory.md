@@ -1432,3 +1432,18 @@ of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
   empty and cached.
 - Never copy the main checkout's rcheevos folder in: its `.git` pointer file
   breaks every git command in the worktree.
+
+## 2026-10-11 - ROM folders are tree Uris or legacy paths (PR C, fix/saf-folders)
+
+- `rom_folders` prefs hold a mix of document-tree Uri strings and absolute paths; both scan. A ROM id
+  is the document Uri `buildDocumentUriUsingTree(tree, docId)` (same builder in every scan, so keys
+  are stable). Re-picking exactly `primary:<rel>` replaces the path folder and re-keys LastPlayed and
+  Favorites by `rekeyedDocId` (`data/RomFolders.kt`, pure, JVM-tested).
+- What sits beside a document ROM (`.sav`, cover) is recorded by the scan into the in-memory
+  `RomSiblings` (`data/RomFolders.kt`), not queried per file. A missing key means "not scanned", NOT
+  "no .sav": `RomFiles.legacySaveFor` returns null then, and callers must skip the import, because
+  `importLegacySave` writes its marker when the legacy side is absent and a private save exists.
+- `importLegacySave(LegacySave, File)` takes the legacy side as size/mtime/bytes; a provider that
+  reports no SIZE is measured by reading, never treated as size 0 (0 means "not a save" and marks).
+- Unavailable tree folders are `RomFolderManager.unavailable` (a StateFlow set by each scan); the
+  folder is never auto-removed.
