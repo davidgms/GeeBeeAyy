@@ -905,8 +905,12 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
      * Deliberately not upscaled: a screenshot is a record of what the emulator
      * produced, and the scaling is a display choice the viewer can make again.
      */
-    /** MediaStore on API 29+, where no storage permission is needed; a plain file before that. */
-    private fun saveScreenshot(bitmap: android.graphics.Bitmap, name: String) {
+    /**
+     * MediaStore on API 29+, where no storage permission is needed; the app's
+     * own external folder before that. Returns where the file went, for the
+     * message.
+     */
+    private fun saveScreenshot(bitmap: android.graphics.Bitmap, name: String): String {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             val resolver = getApplication<Application>().contentResolver
             val values = android.content.ContentValues().apply {
@@ -933,17 +937,17 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 resolver.delete(uri, null, null)
                 throw e
             }
-        } else {
-            val dir = File(
-                android.os.Environment.getExternalStoragePublicDirectory(
-                    android.os.Environment.DIRECTORY_PICTURES,
-                ),
-                "GeeBeeAyy",
-            ).apply { mkdirs() }
-            File(dir, name).outputStream().use { stream ->
-                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
-            }
+            return "Pictures/GeeBeeAyy"
         }
+        // Android 9 and older: the public Pictures folder needs a storage
+        // permission the app no longer asks for, so the app's own folder.
+        val dir = getApplication<Application>()
+            .getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+            ?: throw java.io.IOException("No external storage")
+        File(dir, name).outputStream().use { stream ->
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+        }
+        return "Android/data/${getApplication<Application>().packageName}/files/Pictures"
     }
 
     fun takeScreenshot() {
@@ -968,8 +972,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                 pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888,
             )
             val message = try {
-                saveScreenshot(bitmap, name)
-                "Screenshot saved to Pictures/GeeBeeAyy"
+                "Screenshot saved to ${saveScreenshot(bitmap, name)}"
             } catch (e: Exception) {
                 Log.e(TAG, "Screenshot failed", e)
                 "Could not save the screenshot: ${e.message}"
