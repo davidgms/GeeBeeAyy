@@ -8,6 +8,7 @@ import java.io.FileNotFoundException
 import java.io.InputStream
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 /**
@@ -87,15 +88,72 @@ object RomBytes {
      */
     fun read(context: Context, id: String): ByteArray? {
         if (isPath(id) && !isZip(id)) return readPlainFile(File(id))
-        return readCart(isZip(fileName(context, id))) { open(context, id) }
+        val zipped = isZip(fileName(context, id))
+        if (zipped) withZipFile(context, id) { it.readCapped(MAX_ROM_BYTES) }?.let { return it.value }
+        return readCart(zipped) { open(context, id) }
     }
 
     /**
      * The first [count] bytes of the cart, or fewer if it is shorter. For a
      * header: a zipped cart is inflated only as far as [count], not whole.
      */
-    fun head(context: Context, id: String, count: Int): ByteArray? =
-        headOfCart(isZip(fileName(context, id)), count) { open(context, id) }
+    fun head(context: Context, id: String, count: Int): ByteArray? {
+        val zipped = isZip(fileName(context, id))
+        if (zipped) withZipFile(context, id) { readUpTo(it, count) }?.let { return it.value }
+        return headOfCart(zipped, count) { open(context, id) }
+    }
+
+    /**
+     * A zip through its central directory, as [ZipFile] reads it: the entry
+     * list without inflating anything, which the stream fallback cannot do.
+     * A document from the external-storage provider is a real file, so its
+     * descriptor can be opened as a path. Null if the provider gives a pipe
+     * or the descriptor cannot be opened that way - then [withCart] streams.
+     * The outer null means "not handled"; [Handled.value] may itself be null
+     * for a zip that holds no cart.
+     */
+    private fun <T> withZipFile(context: Context, id: String, block: (InputStream) -> T): Handled<T?>? {
+        if (isPath(id)) return ZipFile(File(id)).use { Handled(useCart(it, block)) }
+        val descriptor = runCatching {
+            context.contentResolver.openFileDescriptor(Uri.parse(id), "r")
+        }.getOrNull() ?: return null
+        return descriptor.use { pfd ->
+            val zip = runCatching { ZipFile(File("/proc/self/fd/${pfd.fd}")) }.getOrNull() ?: return null
+            zip.use { Handled(useCart(it, block)) }
+        }
+    }
+
+    private class Handled<T>(val value: T)
+
+    private fun <T> useCart(zip: ZipFile, block: (InputStream) -> T): T? {
+        val entry = zip.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .map { it.name }
+            .let(::chooseCart)
+            ?.let(zip::getEntry) ?: return null
+        return zip.getInputStream(entry).use(block)
+    }
+
+    /**
+     * The cart a zip opens as. Sorted, so a zip holding several carts picks
+     * the same one every launch: an arbitrary order would key save states on
+     * a different game between runs.
+     */
+    private fun chooseCart(names: Sequence<String>): String? =
+        names.sortedBy { it.lowercase() }.firstOrNull { name ->
+            ROM_EXTENSIONS.any { name.endsWith(".$it", ignoreCase = true) }
+        }
+
+    private fun readUpTo(stream: InputStream, count: Int): ByteArray {
+        val head = ByteArray(count)
+        var read = 0
+        while (read < count) {
+            val n = stream.read(head, read, count - read)
+            if (n <= 0) break
+            read += n
+        }
+        return head.copyOf(read)
+    }
 
     /**
      * Checked up front, then read in one sized allocation: a capped stream
@@ -112,36 +170,26 @@ object RomBytes {
 
     /** [head] over any source of streams. */
     fun headOfCart(zipped: Boolean, count: Int, open: () -> InputStream): ByteArray? =
-        withCart(zipped, open) { stream ->
-            val head = ByteArray(count)
-            var read = 0
-            while (read < count) {
-                val n = stream.read(head, read, count - read)
-                if (n <= 0) break
-                read += n
-            }
-            head.copyOf(read)
-        }
+        withCart(zipped, open) { readUpTo(it, count) }
 
     /**
-     * Two passes over the archive, because a stream has no central directory:
-     * the first reads the entry names, the second stops at the chosen one.
-     * The choice is the rule `ZipFile` used, since save-state keys follow it.
+     * The fallback for a provider that only gives a stream. Two passes,
+     * because a stream has no central directory: the first inflates through
+     * the archive for the entry names, the second stops at the chosen one.
+     * Same [chooseCart] rule, since save-state keys follow it.
      */
     private fun <T> withCart(zipped: Boolean, open: () -> InputStream, block: (InputStream) -> T): T? {
         if (!zipped) return open().use(block)
         val names = ZipInputStream(open()).use { zip ->
             generateSequence { zip.nextEntry }.filterNot { it.isDirectory }.map { it.name }.toList()
         }
-        // Sorted, so a zip holding several carts picks the same one every
-        // launch. An arbitrary order would key save states on a different
-        // game between runs.
-        val chosen = names.sortedBy { it.lowercase() }.firstOrNull { name ->
-            ROM_EXTENSIONS.any { name.endsWith(".$it", ignoreCase = true) }
-        } ?: return null
+        val chosen = chooseCart(names.asSequence()) ?: return null
         ZipInputStream(open()).use { zip ->
-            while (zip.nextEntry?.let { it.isDirectory || it.name != chosen } == true) continue
-            return block(zip)
+            while (true) {
+                // Gone between the passes: the file changed under us.
+                val entry = zip.nextEntry ?: return null
+                if (!entry.isDirectory && entry.name == chosen) return block(zip)
+            }
         }
     }
 
