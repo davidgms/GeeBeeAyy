@@ -1,22 +1,11 @@
 package com.geebeeayy.app
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.provider.Settings
-import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavType
@@ -37,9 +26,6 @@ import com.geebeeayy.app.viewmodel.EmulationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.geebeeayy.app.ui.orientationFor
-import java.io.File
-
-private const val TAG = "GeeBeeAyy/Main"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,63 +51,9 @@ fun GeeBeeAyyNavHost() {
     val scope = rememberCoroutineScope()
 
     var romList by remember { mutableStateOf<List<RomEntry>>(emptyList()) }
-    var isFirstLaunch by remember { mutableStateOf(!folderManager.hasFolders()) }
-    var hasStoragePermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Environment.isExternalStorageManager()
-            } else {
-                ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.READ_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-            }
-        )
-    }
-
-    Log.i(TAG, "NavHost init: isFirstLaunch=$isFirstLaunch, hasStoragePermission=$hasStoragePermission")
-
-    // Below R the grant comes from the ordinary runtime-permission dialog, not
-    // from the all-files settings screen. Without this launcher the pre-R
-    // branch of `requestStoragePermission` had nothing to call, so the ROM
-    // browser stayed empty forever on API 26-29.
-    val legacyPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasStoragePermission = granted
-    }
-
-    val storagePermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    fun requestStoragePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:${context.packageName}")
-                }
-                storagePermissionLauncher.launch(intent)
-            }
-        } else {
-            legacyPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }
-
     fun rescanRoms() {
-        // Tree folders carry their own grant; only path folders need the
-        // storage permission.
-        if (!hasStoragePermission && !folderManager.hasTreeFolders()) {
-            requestStoragePermission()
-            return
-        }
+        // Tree folders carry their own grant. A path folder left from before
+        // SAF cannot be read any more and shows as "Needs re-pick" in Settings.
         scope.launch(Dispatchers.IO) {
             // Scans are serialised in the manager, and the save import runs
             // there too, on the list it just published: battery saves are
@@ -130,10 +62,8 @@ fun GeeBeeAyyNavHost() {
         }
     }
 
-    LaunchedEffect(hasStoragePermission) {
-        if (folderManager.hasFolders() && (hasStoragePermission || folderManager.hasTreeFolders())) {
-            rescanRoms()
-        }
+    LaunchedEffect(Unit) {
+        if (folderManager.hasFolders()) rescanRoms()
     }
 
     NavHost(navController = navController, startDestination = "splash") {
@@ -148,12 +78,6 @@ fun GeeBeeAyyNavHost() {
         }
 
         composable("rom_browser") {
-            if (!hasStoragePermission) {
-                LaunchedEffect(Unit) { requestStoragePermission() }
-            } else if (isFirstLaunch) {
-                // Show hint to add folder
-            }
-
             RomBrowserScreen(
                 roms = romList,
                 onRomClick = { rom ->
@@ -173,7 +97,9 @@ fun GeeBeeAyyNavHost() {
             // The scan that follows a download is the same one the browser
             // uses, so a finished download shows up without leaving the app.
             HomebrewScreen(
-                folders = folderManager.getFolderPaths(),
+                // Only picked folders: a path left from before SAF cannot be
+                // written any more, and a download aimed there would fail.
+                folders = folderManager.getFolderPaths().filterNot(RomBytes::isPath),
                 onBack = { navController.popBackStack() },
                 onDownloaded = { rescanRoms() },
             )
