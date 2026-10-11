@@ -3,13 +3,13 @@ package com.geebeeayy.app.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
 
 /**
  * Reading a cart's bytes, whether or not somebody zipped it first.
@@ -86,65 +86,86 @@ object RomBytes {
      * has been opened and holds no cart at all - a separate case from "could
      * not read", and worth a different message.
      */
-    fun read(context: Context, id: String): ByteArray? {
-        if (isPath(id) && !isZip(id)) return readPlainFile(File(id))
-        val zipped = isZip(fileName(context, id))
-        if (zipped) withZipFile(context, id) { it.readCapped(MAX_ROM_BYTES) }?.let { return it.value }
-        return readCart(zipped) { open(context, id) }
+    fun read(context: Context, id: String): ByteArray? = when {
+        isPath(id) && !isZip(id) -> readPlainFile(File(id))
+        isZipId(context, id) -> withZip(context, id) { cartIn(it) { s -> s.readCapped(MAX_ROM_BYTES) } }
+        else -> open(context, id).use { it.readCapped(MAX_ROM_BYTES) }
     }
 
     /**
      * The first [count] bytes of the cart, or fewer if it is shorter. For a
      * header: a zipped cart is inflated only as far as [count], not whole.
      */
-    fun head(context: Context, id: String, count: Int): ByteArray? {
-        val zipped = isZip(fileName(context, id))
-        if (zipped) withZipFile(context, id) { readUpTo(it, count) }?.let { return it.value }
-        return headOfCart(zipped, count) { open(context, id) }
-    }
+    fun head(context: Context, id: String, count: Int): ByteArray? =
+        if (isZipId(context, id)) {
+            withZip(context, id) { cartIn(it) { s -> readUpTo(s, count) } }
+        } else {
+            open(context, id).use { readUpTo(it, count) }
+        }
 
     /**
-     * A zip through its central directory, as [ZipFile] reads it: the entry
-     * list without inflating anything, which the stream fallback cannot do.
-     * A document from the external-storage provider is a real file, so its
-     * descriptor can be opened as a path. Null if the provider gives a pipe
-     * or the descriptor cannot be opened that way - then [withCart] streams.
-     * The outer null means "not handled"; [Handled.value] may itself be null
-     * for a zip that holds no cart.
+     * A zip by its name, or - when a provider gives no name - by its first
+     * bytes. Defaulting to "not a zip" would read the archive itself as a
+     * cart and key its saves on garbage.
      */
-    private fun <T> withZipFile(context: Context, id: String, block: (InputStream) -> T): Handled<T?>? {
-        if (isPath(id)) return ZipFile(File(id)).use { Handled(useCart(it, block)) }
-        val descriptor = runCatching {
-            context.contentResolver.openFileDescriptor(Uri.parse(id), "r")
-        }.getOrNull() ?: return null
-        return descriptor.use { pfd ->
-            val zip = runCatching { ZipFile(File("/proc/self/fd/${pfd.fd}")) }.getOrNull() ?: return null
-            zip.use { Handled(useCart(it, block)) }
+    private fun isZipId(context: Context, id: String): Boolean {
+        if (isPath(id)) return isZip(id)
+        val name = runCatching { fileName(context, id) }.getOrDefault("")
+        if (name.isNotEmpty()) return isZip(name)
+        return open(context, id).use { readUpTo(it, 4) }.contentEquals(ZIP_MAGIC)
+    }
+
+    private val ZIP_MAGIC = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
+
+    /**
+     * Open a zip as [ZipFile], through its central directory: the entry list
+     * without inflating anything. Every id ends up here as a real file, so a
+     * path and a document pick the same cart the same way.
+     *
+     * - A path is opened directly.
+     * - A document from the external-storage provider is a real file, so its
+     *   descriptor opens as `/proc/self/fd/N`.
+     * - Anything else (a provider that hands out a pipe) is copied into the
+     *   cache first, capped, and deleted after.
+     */
+    private fun <T> withZip(context: Context, id: String, block: (ZipFile) -> T): T {
+        if (isPath(id)) return ZipFile(File(id)).use(block)
+        context.contentResolver.openFileDescriptor(Uri.parse(id), "r")?.use { pfd ->
+            val direct = runCatching { ZipFile(File("/proc/self/fd/${pfd.fd}")) }
+                .onFailure { Log.w(TAG, "zip descriptor not openable as a file, copying: $it") }
+                .getOrNull()
+            if (direct != null) return direct.use(block)
+        }
+        val copy = File.createTempFile("cart", ".zip", context.cacheDir)
+        try {
+            open(context, id).use { input -> copy.outputStream().use { input.copyCapped(it, MAX_ZIP_BYTES) } }
+            return ZipFile(copy).use(block)
+        } finally {
+            copy.delete()
         }
     }
 
-    private class Handled<T>(val value: T)
+    /** A zip of a 32 MB cart is smaller than the cart; this leaves room for extras. */
+    private const val MAX_ZIP_BYTES = 64L * 1024 * 1024
 
-    private fun <T> useCart(zip: ZipFile, block: (InputStream) -> T): T? {
+    private const val TAG = "GeeBeeAyy/Rom"
+
+    /**
+     * The cart a zip opens as, handed to [block]; null if it holds none.
+     * Sorted, so a zip holding several carts picks the same one every launch:
+     * an arbitrary order would key save states on a different game between
+     * runs.
+     */
+    fun <T> cartIn(zip: ZipFile, block: (InputStream) -> T): T? {
         val entry = zip.entries().asSequence()
             .filterNot { it.isDirectory }
-            .map { it.name }
-            .let(::chooseCart)
-            ?.let(zip::getEntry) ?: return null
+            .sortedBy { it.name.lowercase() }
+            .firstOrNull { e -> ROM_EXTENSIONS.any { e.name.endsWith(".$it", ignoreCase = true) } }
+            ?: return null
         return zip.getInputStream(entry).use(block)
     }
 
-    /**
-     * The cart a zip opens as. Sorted, so a zip holding several carts picks
-     * the same one every launch: an arbitrary order would key save states on
-     * a different game between runs.
-     */
-    private fun chooseCart(names: Sequence<String>): String? =
-        names.sortedBy { it.lowercase() }.firstOrNull { name ->
-            ROM_EXTENSIONS.any { name.endsWith(".$it", ignoreCase = true) }
-        }
-
-    private fun readUpTo(stream: InputStream, count: Int): ByteArray {
+    fun readUpTo(stream: InputStream, count: Int): ByteArray {
         val head = ByteArray(count)
         var read = 0
         while (read < count) {
@@ -162,35 +183,6 @@ object RomBytes {
     fun readPlainFile(file: File): ByteArray {
         if (file.length() > MAX_ROM_BYTES) throw TooLargeException(MAX_ROM_BYTES)
         return file.readBytes()
-    }
-
-    /** [read] over any source of streams, so it runs without a Context. */
-    fun readCart(zipped: Boolean, open: () -> InputStream): ByteArray? =
-        withCart(zipped, open) { it.readCapped(MAX_ROM_BYTES) }
-
-    /** [head] over any source of streams. */
-    fun headOfCart(zipped: Boolean, count: Int, open: () -> InputStream): ByteArray? =
-        withCart(zipped, open) { readUpTo(it, count) }
-
-    /**
-     * The fallback for a provider that only gives a stream. Two passes,
-     * because a stream has no central directory: the first inflates through
-     * the archive for the entry names, the second stops at the chosen one.
-     * Same [chooseCart] rule, since save-state keys follow it.
-     */
-    private fun <T> withCart(zipped: Boolean, open: () -> InputStream, block: (InputStream) -> T): T? {
-        if (!zipped) return open().use(block)
-        val names = ZipInputStream(open()).use { zip ->
-            generateSequence { zip.nextEntry }.filterNot { it.isDirectory }.map { it.name }.toList()
-        }
-        val chosen = chooseCart(names.asSequence()) ?: return null
-        ZipInputStream(open()).use { zip ->
-            while (true) {
-                // Gone between the passes: the file changed under us.
-                val entry = zip.nextEntry ?: return null
-                if (!entry.isDirectory && entry.name == chosen) return block(zip)
-            }
-        }
     }
 
     /**

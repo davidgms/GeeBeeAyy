@@ -14,5 +14,5 @@ Durable facts about the project itself go to `.claude/memory.md` or
 `docs/` instead, so every agent and every human gets them; leave a line
 here pointing at it.
 - **2026-10-01** - [VM is per nav entry; proguard-rules.pro missing](2026-10-01-viewmodel-is-per-nav-entry-and-no-proguard-file.md)
-- **2026-10-11** - [Worktree build: init the rcheevos submodule, never copy it](2026-10-11-worktree-build-needs-no-cmake-and-never-copy-submodule.md)
+- **2026-10-11** - [Worktree build: init the rcheevos submodule, never copy it](2026-10-11-worktree-build-needs-no-cmake-and-never-copy-submodule.md) - shared copy in `.claude/memory.md`
 - **2026-10-11** - [RA coreLock is shared with the VM; onCleared must unlock](2026-10-11-ra-core-lock-is-shared-and-onCleared-must-unlock.md)

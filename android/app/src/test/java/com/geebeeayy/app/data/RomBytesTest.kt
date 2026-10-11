@@ -21,7 +21,8 @@ class RomBytesTest {
     @get:Rule
     val folder = TemporaryFolder()
 
-    private fun read(zip: File) = RomBytes.readCart(zipped = true) { zip.inputStream() }
+    private fun read(zip: File) =
+        java.util.zip.ZipFile(zip).use { z -> RomBytes.cartIn(z) { it.readCapped(RomBytes.MAX_ROM_BYTES) } }
 
     private fun zipOf(vararg entries: Pair<String, ByteArray>): File {
         val file = folder.newFile("archive.zip")
@@ -74,9 +75,9 @@ class RomBytesTest {
     }
 
     /**
-     * Save-state keys follow this choice, so the stream two-pass must pick what
-     * `ZipFile` picked: sorted by lowercase name, directories skipped, first
-     * ROM extension. Entries are stored out of order on purpose.
+     * Save-state keys follow this choice, so it must stay what it was:
+     * sorted by lowercase name, directories skipped, first ROM extension.
+     * Entries are stored out of order on purpose.
      */
     @Test
     fun `a multi-cart zip picks the same entry as the old ZipFile rule`() {
@@ -163,14 +164,14 @@ class RomBytesTest {
     @Test
     fun `the head of a zipped cart is read without the rest`() {
         val zip = zipOf("game.gba" to ByteArray(4096) { it.toByte() })
-        assertArrayEquals(ByteArray(0xB0) { it.toByte() }, RomBytes.headOfCart(true, 0xB0) { zip.inputStream() })
+        assertArrayEquals(ByteArray(0xB0) { it.toByte() }, java.util.zip.ZipFile(zip).use { z -> RomBytes.cartIn(z) { RomBytes.readUpTo(it, 0xB0) } })
     }
 
     @Test
     fun `the head of a short cart is what there is`() {
         val rom = folder.newFile("tiny.gba")
         rom.writeBytes(byteArrayOf(7, 8))
-        assertArrayEquals(byteArrayOf(7, 8), RomBytes.headOfCart(false, 0xB0) { rom.inputStream() })
+        assertArrayEquals(byteArrayOf(7, 8), rom.inputStream().use { RomBytes.readUpTo(it, 0xB0) })
     }
 
     @Test
