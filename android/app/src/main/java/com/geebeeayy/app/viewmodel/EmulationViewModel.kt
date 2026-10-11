@@ -524,10 +524,13 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // A failed import stops the launch: started without its save, the
         // game's first in-game save would be newer than the old one and the
         // import would then keep the empty game over the player's progress.
-        // Null: a document ROM the scan has not described yet. Nothing is
-        // marked, so a later scan or launch still brings its `.sav` in.
+        // Null: a document ROM the scan has not described yet (a launch
+        // restored after process death, before any scan). Fine once the cart
+        // has been imported; before that, starting would be the empty-game
+        // trap above, so the launch waits for a scan instead.
         val legacy = RomFiles.legacySaveFor(getApplication(), romId)
-        if (legacy != null && !importLegacySave(legacy, save)) {
+        val imported = File(save.parentFile, "${save.name}.imported").exists()
+        if (legacy == null && !imported || legacy != null && !importLegacySave(legacy, save)) {
             Log.w(TAG, "battery save import failed")
             RaEngine.unloadGame()
             RaEngine.attachEmulator(0L)
