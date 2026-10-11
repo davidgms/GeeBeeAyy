@@ -20,7 +20,7 @@ object RomFiles {
         val rom = File(romPath)
         val files = mutableListOf<File>()
         files += legacySave(rom)
-        val key = stateKey(rom)
+        val key = stateKey(context, romPath)
         if (key != null) {
             val save = privateSave(context, key)
             files += save
@@ -56,7 +56,7 @@ object RomFiles {
      */
     fun importLegacySaves(context: Context, roms: List<RomEntry>) {
         roms.filter { legacySave(File(it.filePath)).isFile }
-            .mapNotNull { entry -> stateKey(File(entry.filePath))?.let { it to entry } }
+            .mapNotNull { entry -> stateKey(context, entry.filePath)?.let { it to entry } }
             .groupBy({ it.first }, { it.second })
             .forEach { (key, carts) ->
                 // Two copies of one cart (a .gba and a .zip of it) had a .sav
@@ -69,9 +69,9 @@ object RomFiles {
             }
     }
 
-    private fun stateKey(rom: File): String? =
-        RomHeader.read(rom)?.stateKey()?.takeIf { it != "ROM" }
-            ?: runCatching { RomBytes.read(rom.path) }.getOrNull()?.let { RomHeader.stateKey(it) }
+    private fun stateKey(context: Context, rom: String): String? =
+        RomHeader.read(context, rom)?.stateKey()?.takeIf { it != "ROM" }
+            ?: runCatching { RomBytes.read(context, rom) }.getOrNull()?.let { RomHeader.stateKey(it) }
 
     /**
      * True if every file was removed. Every file is tried, the app's own

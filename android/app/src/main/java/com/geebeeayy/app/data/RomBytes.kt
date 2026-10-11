@@ -1,8 +1,14 @@
 package com.geebeeayy.app.data
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.InputStream
-import java.util.zip.ZipFile
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.util.zip.ZipInputStream
 
 /**
  * Reading a cart's bytes, whether or not somebody zipped it first.
@@ -27,8 +33,25 @@ object RomBytes {
     /** Archives it deliberately cannot, so a message can name them. */
     val UNSUPPORTED_ARCHIVES = listOf("7z", "rar")
 
-    fun isZip(path: String): Boolean =
-        File(path).extension.equals(ZIP_EXTENSION, ignoreCase = true)
+    /** True for a legacy absolute path; anything else is a `content://` document Uri. */
+    fun isPath(id: String): Boolean = id.startsWith("/")
+
+    /**
+     * The file name behind [id]. A path has it in its last segment; a document
+     * Uri is opaque (its last segment is a provider-defined document id), so
+     * the name is asked of the provider, never parsed out of the Uri.
+     */
+    fun fileName(context: Context, id: String): String {
+        if (isPath(id)) return File(id).name
+        context.contentResolver.query(
+            Uri.parse(id), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null,
+        )?.use { if (it.moveToFirst()) it.getString(0)?.let { name -> return name } }
+        return ""
+    }
+
+    /** True if [name] is a `.zip`, whatever the case. */
+    fun isZip(name: String): Boolean =
+        File(name).extension.equals(ZIP_EXTENSION, ignoreCase = true)
 
     /**
      * The largest cart there is. The core rejects anything bigger
@@ -38,51 +61,87 @@ object RomBytes {
     const val MAX_ROM_BYTES = 32L * 1024 * 1024
 
     /**
-     * Every byte of the cart at [path].
+     * An id as a nav-route segment, and back. A document Uri carries `%` and
+     * `/`, so the route must see it encoded exactly once on the way in.
+     */
+    fun encodeId(id: String): String = URLEncoder.encode(id, "UTF-8")
+
+    fun decodeId(encoded: String): String = URLDecoder.decode(encoded, "UTF-8")
+
+    /** The one place an id is opened: a path as a file, anything else as a document Uri. */
+    fun open(context: Context, id: String): InputStream =
+        if (isPath(id)) {
+            File(id).inputStream()
+        } else {
+            context.contentResolver.openInputStream(Uri.parse(id))
+                ?: throw FileNotFoundException(id)
+        }
+
+    /**
+     * Every byte of the cart at [id].
      *
      * Throws whatever the read threw, so a caller can report it, and
      * [TooLargeException] past [MAX_ROM_BYTES]. Returns null only when a zip
      * has been opened and holds no cart at all - a separate case from "could
      * not read", and worth a different message.
      */
-    fun read(path: String): ByteArray? {
-        if (!isZip(path)) {
-            // Checked up front, then read in one sized allocation: a capped
-            // stream would peak at twice the cart while it copies out.
-            if (File(path).length() > MAX_ROM_BYTES) throw TooLargeException(MAX_ROM_BYTES)
-            return File(path).readBytes()
-        }
-        return withCart(path) { it.readCapped(MAX_ROM_BYTES) }
+    fun read(context: Context, id: String): ByteArray? {
+        if (isPath(id) && !isZip(id)) return readPlainFile(File(id))
+        return readCart(isZip(fileName(context, id))) { open(context, id) }
     }
 
     /**
      * The first [count] bytes of the cart, or fewer if it is shorter. For a
      * header: a zipped cart is inflated only as far as [count], not whole.
      */
-    fun head(path: String, count: Int): ByteArray? = withCart(path) { stream ->
-        val head = ByteArray(count)
-        var read = 0
-        while (read < count) {
-            val n = stream.read(head, read, count - read)
-            if (n <= 0) break
-            read += n
-        }
-        head.copyOf(read)
+    fun head(context: Context, id: String, count: Int): ByteArray? =
+        headOfCart(isZip(fileName(context, id)), count) { open(context, id) }
+
+    /**
+     * Checked up front, then read in one sized allocation: a capped stream
+     * would peak at twice the cart while it copies out.
+     */
+    fun readPlainFile(file: File): ByteArray {
+        if (file.length() > MAX_ROM_BYTES) throw TooLargeException(MAX_ROM_BYTES)
+        return file.readBytes()
     }
 
-    private fun <T> withCart(path: String, block: (InputStream) -> T): T? {
-        if (!isZip(path)) return File(path).inputStream().use(block)
-        ZipFile(File(path)).use { zip ->
-            val entry = zip.entries().asSequence()
-                .filterNot { it.isDirectory }
-                // Sorted, so a zip holding several carts picks the same one
-                // every launch. An arbitrary order would key save states on a
-                // different game between runs.
-                .sortedBy { it.name.lowercase() }
-                .firstOrNull { candidate ->
-                    ROM_EXTENSIONS.any { candidate.name.endsWith(".$it", ignoreCase = true) }
-                } ?: return null
-            return zip.getInputStream(entry).use(block)
+    /** [read] over any source of streams, so it runs without a Context. */
+    fun readCart(zipped: Boolean, open: () -> InputStream): ByteArray? =
+        withCart(zipped, open) { it.readCapped(MAX_ROM_BYTES) }
+
+    /** [head] over any source of streams. */
+    fun headOfCart(zipped: Boolean, count: Int, open: () -> InputStream): ByteArray? =
+        withCart(zipped, open) { stream ->
+            val head = ByteArray(count)
+            var read = 0
+            while (read < count) {
+                val n = stream.read(head, read, count - read)
+                if (n <= 0) break
+                read += n
+            }
+            head.copyOf(read)
+        }
+
+    /**
+     * Two passes over the archive, because a stream has no central directory:
+     * the first reads the entry names, the second stops at the chosen one.
+     * The choice is the rule `ZipFile` used, since save-state keys follow it.
+     */
+    private fun <T> withCart(zipped: Boolean, open: () -> InputStream, block: (InputStream) -> T): T? {
+        if (!zipped) return open().use(block)
+        val names = ZipInputStream(open()).use { zip ->
+            generateSequence { zip.nextEntry }.filterNot { it.isDirectory }.map { it.name }.toList()
+        }
+        // Sorted, so a zip holding several carts picks the same one every
+        // launch. An arbitrary order would key save states on a different
+        // game between runs.
+        val chosen = names.sortedBy { it.lowercase() }.firstOrNull { name ->
+            ROM_EXTENSIONS.any { name.endsWith(".$it", ignoreCase = true) }
+        } ?: return null
+        ZipInputStream(open()).use { zip ->
+            while (zip.nextEntry?.let { it.isDirectory || it.name != chosen } == true) continue
+            return block(zip)
         }
     }
 
@@ -93,5 +152,5 @@ object RomBytes {
      * disk is what the player renames, moves and recognises, and keying saves
      * on the entry would orphan them the moment somebody rezipped.
      */
-    fun displayBaseName(path: String): String = File(path).nameWithoutExtension
+    fun displayBaseName(name: String): String = File(name).nameWithoutExtension
 }

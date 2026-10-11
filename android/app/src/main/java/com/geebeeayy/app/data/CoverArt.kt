@@ -71,14 +71,14 @@ object CoverArt {
      */
     internal fun candidateNames(context: Context, romPath: String): List<String> {
         val names = mutableListOf<String>()
-        gameCode(File(romPath))?.let { code -> codeIndex(context)[code]?.let(names::add) }
+        gameCode(context, romPath)?.let { code -> codeIndex(context)[code]?.let(names::add) }
         val fileName = File(romPath).nameWithoutExtension
         if (fileName !in names) names += fileName
         return names
     }
 
-    private fun gameCode(rom: File): String? =
-        RomHeader.read(rom)?.gameCode?.takeIf { it.length == 4 }
+    private fun gameCode(context: Context, rom: String): String? =
+        RomHeader.read(context, rom)?.gameCode?.takeIf { it.length == 4 }
 
     @Volatile
     private var index: Map<String, String>? = null
