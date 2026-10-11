@@ -19,6 +19,9 @@ class RomFolderManager(private val context: Context) {
     companion object {
         private const val TAG = "GeeBeeAyy/RomFolders"
 
+        /** One scan at a time; see [scanAndImport]. */
+        private val SCAN_LOCK = Any()
+
         private val PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -122,13 +125,18 @@ class RomFolderManager(private val context: Context) {
         }
         val rootId = DocumentsContract.getTreeDocumentId(tree)
         val current = getFolderPaths().toMutableSet()
-        for (path in current.filter { RomBytes.isPath(it) && legacyDocId(it) == rootId }) {
-            val moved = rekeyPaths(lastPlayed.paths() + favorites.paths(), path) { docId ->
+        if (tree.authority == EXTERNAL_STORAGE_AUTHORITY) {
+            // Every path folder the tree covers goes: picking a parent or the
+            // same folder replaces them. A child leaves them to the scan,
+            // which hides what the tree already lists.
+            current.removeAll { RomBytes.isPath(it) && legacyDocId(it)?.let { id -> docIdContains(rootId, id) } == true }
+            // By prefix over every path key, so a folder removed before the
+            // re-pick still brings its games' times and stars along.
+            val moved = rekeyUnder(rootId, lastPlayed.paths() + favorites.paths()) { docId ->
                 DocumentsContract.buildDocumentUriUsingTree(tree, docId).toString()
             }
             lastPlayed.rekey(moved)
             favorites.rekey(moved)
-            current.remove(path)
         }
         current.add(tree.toString())
         prefs.edit().putStringSet("folders", current).apply()
@@ -137,26 +145,53 @@ class RomFolderManager(private val context: Context) {
 
     fun hasFolders(): Boolean = getFolderPaths().isNotEmpty()
 
-    /** Blocking: call it off the main thread. */
-    fun scanAllFolders(): List<RomEntry> {
+    /** True if any folder is a tree, which needs no storage permission to scan. */
+    fun hasTreeFolders(): Boolean = getFolderPaths().any { !RomBytes.isPath(it) }
+
+    /**
+     * Scan, hand the list to [publish], then import the saves beside the
+     * carts - all of it under one lock, so two scans never interleave and the
+     * import reads the siblings of the scan that produced [publish]'s list.
+     * Blocking: call it off the main thread.
+     */
+    fun scanAndImport(publish: (List<RomEntry>) -> Unit) = synchronized(SCAN_LOCK) {
+        val scan = scanAllFolders()
+        // The three results go out together, from the one scan.
+        RomSiblings.replace(scan.siblings)
+        unavailableFlow.value = scan.unavailable
+        publish(scan.roms)
+        RomFiles.importLegacySaves(context, scan.roms)
+    }
+
+    private class Scan(val roms: List<RomEntry>, val siblings: Map<String, Siblings>, val unavailable: Set<String>)
+
+    private fun scanAllFolders(): Scan {
         val folders = getFolderPaths()
         val roms = mutableListOf<RomEntry>()
         val siblings = HashMap<String, Siblings>()
         val down = mutableSetOf<String>()
+        val treeRoots = mutableListOf<String>()
         for (folderPath in folders) {
             if (RomBytes.isPath(folderPath)) {
                 val folder = File(folderPath)
                 if (folder.isDirectory) {
                     scanDirectory(folder, roms)
                 }
-            } else if (!scanTreeFolder(Uri.parse(folderPath), roms, siblings)) {
+            } else if (scanTreeFolder(Uri.parse(folderPath), roms, siblings)) {
+                val tree = Uri.parse(folderPath)
+                if (tree.authority == EXTERNAL_STORAGE_AUTHORITY) treeRoots += DocumentsContract.getTreeDocumentId(tree)
+            } else {
                 down += folderPath
             }
         }
-        unavailableFlow.value = down
-        RomSiblings.replace(siblings)
+        // A tree picked inside a path folder lists the same games again; the
+        // tree's copy wins, so nothing shows twice.
+        roms.removeAll { r ->
+            RomBytes.isPath(r.filePath) &&
+                legacyDocId(r.filePath)?.let { id -> treeRoots.any { docIdContains(it, id) } } == true
+        }
         roms += missingEntries(roms.map { it.filePath }.toSet())
-        return roms.sortedBy { it.name.lowercase() }
+        return Scan(roms.sortedBy { it.name.lowercase() }, siblings, down)
     }
 
     /** @return false if the tree's root could not be read. */
@@ -182,6 +217,8 @@ class RomFolderManager(private val context: Context) {
             )
             siblings[id] = Siblings(
                 name = r.rom.name,
+                tree = tree.toString(),
+                parentDocId = r.parentDocId,
                 saveUri = r.save?.let { uriOf(it.docId) },
                 saveSize = r.save?.size,
                 saveModified = r.save?.modified ?: 0L,

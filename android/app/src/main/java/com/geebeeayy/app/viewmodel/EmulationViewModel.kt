@@ -474,7 +474,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     if (!saveReady) {
                         romLoaded = false
-                        _errorMessage.value = "Could not read this game's battery save. Nothing was changed; try again."
+                        _errorMessage.value = if (waitingForScan) {
+                            "Still reading your ROM folders. Try again in a moment."
+                        } else {
+                            "Could not read this game's battery save. Nothing was changed; try again."
+                        }
                         _isLoading.value = false
                         return@launch
                     }
@@ -500,6 +504,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
+
+    /** Set by [resolveSavePaths] when it refused only because no scan has described the ROM yet. */
+    private var waitingForScan = false
 
     /**
      * Resolve where this ROM's battery save and save states live, from its
@@ -528,10 +535,11 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         // restored after process death, before any scan). Fine once the cart
         // has been imported; before that, starting would be the empty-game
         // trap above, so the launch waits for a scan instead.
-        val legacy = RomFiles.legacySaveFor(getApplication(), romId)
+        val legacy = RomFiles.legacySaveFor(getApplication(), romId, save)
         val imported = File(save.parentFile, "${save.name}.imported").exists()
-        if (legacy == null && !imported || legacy != null && !importLegacySave(legacy, save)) {
-            Log.w(TAG, "battery save import failed")
+        waitingForScan = legacy == null && !imported
+        if (waitingForScan || legacy != null && !importLegacySave(legacy, save)) {
+            Log.w(TAG, "battery save import failed or not ready")
             RaEngine.unloadGame()
             RaEngine.attachEmulator(0L)
             return false

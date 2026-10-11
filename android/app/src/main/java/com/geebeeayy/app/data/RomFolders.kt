@@ -50,26 +50,43 @@ internal fun legacyDocId(path: String): String? {
     }
 }
 
-/**
- * The document id [oldPath] gets once [folderPath] is picked again as a tree,
- * or null if it is not under that folder. The id is the path's own
- * `<volume>:<rel>`, so the old and the new key are related by this mapping
- * alone, never by file name.
- */
-internal fun rekeyedDocId(oldPath: String, folderPath: String): String? {
-    val folder = legacyDocId(folderPath) ?: return null
-    val id = legacyDocId(oldPath) ?: return null
-    val prefix = if (folder.endsWith(":")) folder else "$folder/"
-    return id.takeIf { it.startsWith(prefix) && it.length > prefix.length }
+/** True if [id] is [root] itself or lies under it (the "/" boundary keeps `Roms2` out of `Roms`). */
+internal fun docIdContains(root: String, id: String): Boolean {
+    if (id == root) return true
+    val prefix = if (root.endsWith(":")) root else "$root/"
+    return id.startsWith(prefix)
 }
 
-/** Old key to new key for every path under [folderPath]; [toId] builds the Uri string. */
-internal fun rekeyPaths(
+/**
+ * Old key to new key for every legacy path in [paths] strictly under the
+ * picked tree's [rootDocId]. The new id is the path's own `<volume>:<rel>`,
+ * so old and new are related by this mapping alone, never by file name -
+ * and it covers every path key there is, whichever folders are configured.
+ */
+internal fun rekeyUnder(
+    rootDocId: String,
     paths: Collection<String>,
-    folderPath: String,
     toId: (docId: String) -> String,
 ): Map<String, String> =
-    paths.mapNotNull { old -> rekeyedDocId(old, folderPath)?.let { old to toId(it) } }.toMap()
+    paths.mapNotNull { old ->
+        if (!RomBytes.isPath(old)) return@mapNotNull null
+        val id = legacyDocId(old)?.takeIf { it != rootDocId && docIdContains(rootDocId, it) }
+        id?.let { old to toId(it) }
+    }.toMap()
+
+/**
+ * [times] after moving keys per [map]. Two old keys (the `/sdcard` and
+ * `/storage/emulated/0` spellings) can land on one new key: the later time wins.
+ */
+internal fun rekeyedTimes(times: Map<String, Long>, map: Map<String, String>): Map<String, Long> {
+    val out = HashMap<String, Long>()
+    for ((key, time) in times) out.merge(map[key] ?: key, time, ::maxOf)
+    return out
+}
+
+/** [keys] after moving per [map]; keys that land together are one. */
+internal fun rekeyedSet(keys: Set<String>, map: Map<String, String>): Set<String> =
+    keys.mapTo(HashSet()) { map[it] ?: it }
 
 /** What a player recognises a folder by: the volume and the path inside it. */
 internal fun docIdLabel(docId: String): String {
@@ -97,6 +114,8 @@ internal class DocChild(
 internal class TreeRom(
     val rom: DocChild,
     val folderLabel: String,
+    /** The directory listing the ROM came from. */
+    val parentDocId: String,
     val save: DocChild?,
     val cover: DocChild?,
 )
@@ -135,7 +154,7 @@ internal fun scanTree(
                 val cover = ART_EXTENSIONS.firstNotNullOfOrNull { ext ->
                     files["$base.$ext".lowercase()] ?: covers["$base.$ext".lowercase()]
                 }
-                out += TreeRom(rom, label, files["$base.sav".lowercase()], cover)
+                out += TreeRom(rom, label, docId, files["$base.sav".lowercase()], cover)
             }
         }
         if (depth < maxDepth) kids.filter { it.isDir }.forEach { walk(it.docId, depth + 1, false) }
@@ -151,6 +170,9 @@ internal fun scanTree(
  */
 internal class Siblings(
     val name: String,
+    /** The tree and the directory the ROM sits in, to look its `.sav` up when the scan saw none. */
+    val tree: String,
+    val parentDocId: String,
     val saveUri: String?,
     val saveSize: Long?,
     val saveModified: Long,

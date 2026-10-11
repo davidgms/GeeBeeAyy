@@ -76,20 +76,38 @@ object RomFiles {
      * [importLegacySave] would mark the cart done and a real save would never
      * come in.
      */
-    internal fun legacySaveFor(context: Context, id: String): LegacySave? {
+    internal fun legacySaveFor(context: Context, id: String, private: File): LegacySave? {
         if (RomBytes.isPath(id)) return legacySave(File(id)).asLegacySave()
+        val absent = LegacySave(false, 0L, 0L) { ByteArray(0) }
         val sib = RomSiblings.get(id) ?: return null
-        val uri = sib.saveUri ?: return LegacySave(false, 0L, 0L) { ByteArray(0) }
-        if (sib.saveSize != null) {
-            return LegacySave(true, sib.saveSize, sib.saveModified) {
-                RomBytes.open(context, uri).use { it.readCapped(MAX_SAVE_BYTES) }
+        if (File(private.parentFile, "${private.name}.imported").exists()) return absent
+        var uri = sib.saveUri
+        var size = sib.saveSize
+        var modified = sib.saveModified
+        if (uri == null) {
+            // The scan saw no `.sav`, but a scan is a snapshot and "absent"
+            // can mark the cart done for good: ask the provider once, in the
+            // ROM's own directory. Only a successful listing that lacks it
+            // counts as absent; a failed one means "not known", skip.
+            val tree = Uri.parse(sib.tree)
+            val kids = RomFolderManager.listChildren(context, tree, sib.parentDocId) ?: return null
+            val wanted = "${RomBytes.displayBaseName(sib.name)}.sav"
+            val found = kids.firstOrNull { !it.isDir && it.name.equals(wanted, ignoreCase = true) } ?: return absent
+            uri = DocumentsContract.buildDocumentUriUsingTree(tree, found.docId).toString()
+            size = found.size
+            modified = found.modified
+        }
+        val doc = uri
+        if (size != null) {
+            return LegacySave(true, size, modified) {
+                RomBytes.open(context, doc).use { it.readCapped(MAX_SAVE_BYTES) }
             }
         }
         // A provider that does not report SIZE: measure by reading, capped one
         // past the limit so "too big" is told apart from "unreadable".
-        val bytes = runCatching { RomBytes.open(context, uri).use { RomBytes.readUpTo(it, MAX_SAVE_BYTES.toInt() + 1) } }
+        val bytes = runCatching { RomBytes.open(context, doc).use { RomBytes.readUpTo(it, MAX_SAVE_BYTES.toInt() + 1) } }
             .getOrNull() ?: return null
-        return LegacySave(true, bytes.size.toLong(), sib.saveModified) { bytes }
+        return LegacySave(true, bytes.size.toLong(), modified) { bytes }
     }
 
     private fun hasLegacySave(id: String): Boolean =
@@ -120,7 +138,8 @@ object RomFiles {
                 val chosen = carts.maxWith(
                     compareBy({ it.lastPlayedMillis ?: 0L }, { legacyModified(it.filePath) }),
                 )
-                legacySaveFor(context, chosen.filePath)?.let { importLegacySave(it, privateSave(context, key)) }
+                val save = privateSave(context, key)
+                legacySaveFor(context, chosen.filePath, save)?.let { importLegacySave(it, save) }
             }
     }
 

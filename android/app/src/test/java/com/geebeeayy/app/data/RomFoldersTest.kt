@@ -24,38 +24,6 @@ class RomFoldersTest {
     }
 
     @Test
-    fun `a path under the folder gets its own document id, whichever alias either uses`() {
-        val folder = "/storage/emulated/0/Roms"
-        assertEquals("primary:Roms/x.gba", rekeyedDocId("/sdcard/Roms/x.gba", folder))
-        assertEquals("primary:Roms/Sub/y.gba", rekeyedDocId("/storage/emulated/0/Roms/Sub/y.gba", "/sdcard/Roms"))
-    }
-
-    @Test
-    fun `a path outside the folder is not rekeyed`() {
-        val folder = "/storage/emulated/0/Roms"
-        assertNull(rekeyedDocId("/storage/emulated/0/Roms2/x.gba", folder))
-        assertNull(rekeyedDocId("/storage/emulated/0/Other/x.gba", folder))
-        assertNull(rekeyedDocId(folder, folder))
-    }
-
-    @Test
-    fun `rekeying a whole library maps exact paths and leaves the rest`() {
-        val moved = rekeyPaths(
-            listOf("/sdcard/Roms/a.gba", "/sdcard/Roms/Sub/b.zip", "/sdcard/Else/c.gba"),
-            "/storage/emulated/0/Roms",
-        ) { "tree:$it" }
-        assertEquals(
-            mapOf("/sdcard/Roms/a.gba" to "tree:primary:Roms/a.gba", "/sdcard/Roms/Sub/b.zip" to "tree:primary:Roms/Sub/b.zip"),
-            moved,
-        )
-    }
-
-    @Test
-    fun `the root of a volume is a folder too`() {
-        assertEquals("primary:x.gba", rekeyedDocId("/sdcard/x.gba", "/sdcard"))
-    }
-
-    @Test
     fun `labels read as a volume and a path`() {
         assertEquals("Internal storage/Roms/GBA", docIdLabel("primary:Roms/GBA"))
         assertEquals("Internal storage", docIdLabel("primary:"))

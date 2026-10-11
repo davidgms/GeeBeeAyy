@@ -22,13 +22,14 @@ class LastPlayed(context: Context) {
         return if (value < 0) null else value
     }
 
-    /** Move each entry to its new key (a folder re-picked as a tree), keeping the later time. */
+    /** Move each entry to its new key (a folder re-picked as a tree), keeping the latest time. */
     fun rekey(map: Map<String, String>) {
+        val all = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+        val moved = rekeyedTimes(all.filterKeys { it in map }, map)
+        if (moved.isEmpty()) return
         val edit = prefs.edit()
-        for ((old, new) in map) {
-            val time = get(old) ?: continue
-            edit.remove(old).putLong(new, maxOf(time, get(new) ?: 0L))
-        }
+        map.keys.forEach { edit.remove(it) }
+        for ((key, time) in moved) edit.putLong(key, maxOf(time, all[key] ?: 0L))
         edit.apply()
     }
 }

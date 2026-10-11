@@ -40,7 +40,7 @@ class Favorites(context: Context) {
     fun rekey(map: Map<String, String>) {
         val current = paths()
         if (map.keys.none { it in current }) return
-        prefs.edit().putStringSet(KEY, current.map { map[it] ?: it }.toSet()).apply()
+        prefs.edit().putStringSet(KEY, rekeyedSet(current, map)).apply()
     }
 
     private companion object {

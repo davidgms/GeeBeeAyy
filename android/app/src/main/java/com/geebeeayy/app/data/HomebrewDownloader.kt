@@ -101,11 +101,18 @@ object HomebrewDownloader {
             if (!destDir.isDirectory && !destDir.mkdirs()) Result.Failed("Cannot write to ${destDir.name}") else null
         }
         return transfer(entry, partial, onProgress, prepare) {
-            if (target.exists() && !target.delete()) {
+            // The old copy is set aside, not deleted, until the new one is in
+            // place: a failure puts it back.
+            val backup = File(destDir, "${entry.fileName}.bak")
+            val hadOld = target.exists()
+            if (hadOld) backup.delete()
+            if (hadOld && !target.renameTo(backup)) {
                 Result.Failed("Could not replace the existing file")
             } else if (!partial.renameTo(target)) {
+                if (hadOld) backup.renameTo(target)
                 Result.Failed("Could not move the download into place")
             } else {
+                backup.delete()
                 Result.Done(target.absolutePath)
             }
         }
@@ -165,39 +172,55 @@ object HomebrewDownloader {
     }
 
     /**
-     * Copy the verified [partial] into the tree, over a file of the same name
-     * if there is one (written in place: a delete-then-create would lose the
-     * old copy if the create failed). A new file is made with a generic mime
-     * type, and renamed if the provider added an extension to it.
+     * Copy the verified [partial] into the tree under a temporary name, check
+     * its size, then swap it in for any file of the same name. The old copy
+     * is never truncated or deleted before the new one is complete, and the
+     * final rename also fixes any extension the provider added at creation.
+     * A failed swap leaves the old file as it was.
      */
     private fun copyIntoTree(context: Context, entry: HomebrewEntry, tree: Uri, partial: File): Result {
         val resolver = context.contentResolver
         val rootId = DocumentsContract.getTreeDocumentId(tree)
         val children = RomFolderManager.listChildren(context, tree, rootId)
             ?: return Result.Failed("Cannot write to that folder. Pick it again in Settings.")
-        val old = children.firstOrNull { !it.isDir && it.name == entry.fileName }
-        val target = old?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.docId) }
-            ?: DocumentsContract.createDocument(
-                resolver,
-                DocumentsContract.buildDocumentUriUsingTree(tree, rootId),
-                "application/octet-stream",
-                entry.fileName,
-            )
-            ?: return Result.Failed("Could not create the file in that folder")
+        fun docUri(docId: String) = DocumentsContract.buildDocumentUriUsingTree(tree, docId)
+        fun delete(uri: Uri) = runCatching { DocumentsContract.deleteDocument(resolver, uri) }
+        val bakName = "${entry.fileName}.bak"
+        children.firstOrNull { !it.isDir && it.name == bakName }?.let { delete(docUri(it.docId)) }
+
+        val fresh = DocumentsContract.createDocument(
+            resolver, docUri(rootId), "application/octet-stream", "${entry.fileName}.new",
+        ) ?: return Result.Failed("Could not create the file in that folder")
         try {
-            val out = resolver.openOutputStream(target, "wt") ?: throw FileNotFoundException(target.toString())
+            val out = resolver.openOutputStream(fresh, "w") ?: throw FileNotFoundException(fresh.toString())
             out.use { partial.inputStream().use { input -> input.copyTo(it) } }
-            val name = resolver
-                .query(target, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
-                ?.use { if (it.moveToFirst()) it.getString(0) else null }
-            if (name != null && name != entry.fileName) {
-                DocumentsContract.renameDocument(resolver, target, entry.fileName)
-                    ?: throw IOException("the provider named the file $name")
-            }
+            val size = resolver
+                .query(fresh, arrayOf(DocumentsContract.Document.COLUMN_SIZE), null, null, null)
+                ?.use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
+            if (size != null && size != entry.bytes) throw IOException("copied $size of ${entry.bytes} bytes")
         } catch (e: Exception) {
-            if (old == null) runCatching { DocumentsContract.deleteDocument(resolver, target) }
+            delete(fresh)
             throw e
         }
-        return Result.Done(target.toString())
+
+        // The old copy is set aside, not deleted, until the new one has its
+        // name. Renaming a document can change its Uri, so each rename's
+        // result is the one to keep.
+        val old = children.firstOrNull { !it.isDir && it.name == entry.fileName }
+        val backup = old?.let {
+            DocumentsContract.renameDocument(resolver, docUri(it.docId), bakName)
+                ?: run {
+                    delete(fresh)
+                    return Result.Failed("Could not replace the existing file")
+                }
+        }
+        val placed = runCatching { DocumentsContract.renameDocument(resolver, fresh, entry.fileName) }.getOrNull()
+        if (placed == null) {
+            delete(fresh)
+            backup?.let { runCatching { DocumentsContract.renameDocument(resolver, it, entry.fileName) } }
+            return Result.Failed("Could not move the download into place")
+        }
+        backup?.let { delete(it) }
+        return Result.Done(placed.toString())
     }
 }

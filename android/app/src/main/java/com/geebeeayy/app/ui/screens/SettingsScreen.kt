@@ -34,6 +34,9 @@ import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.engine.RaEngine
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.geebeeayy.app.data.CoverArt
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomBytes
@@ -78,6 +81,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val folderManager = remember { RomFolderManager(context) }
     var folders by remember { mutableStateOf(folderManager.getFolderPaths()) }
+    val scope = rememberCoroutineScope()
 
     val displaySettings = remember { DisplaySettings(context) }
     var scaleMode by remember { mutableStateOf(displaySettings.getScaleMode()) }
@@ -140,12 +144,19 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            if (folderManager.addTree(it)) {
-                folders = folderManager.getFolderPaths()
-                onFoldersChanged()
-                folderError = null
-            } else {
-                folderError = "Could not keep access to that folder. Try picking it again."
+            // The grant, the prefs and the re-keying are I/O; only the refresh is UI.
+            scope.launch(Dispatchers.IO) {
+                val kept = folderManager.addTree(it)
+                val now = folderManager.getFolderPaths()
+                withContext(Dispatchers.Main) {
+                    if (kept) {
+                        folders = now
+                        onFoldersChanged()
+                        folderError = null
+                    } else {
+                        folderError = "Could not keep access to that folder. Try picking it again."
+                    }
+                }
             }
         }
     }
@@ -241,9 +252,14 @@ fun SettingsScreen(
                                 }
                             }
                             IconButton(onClick = {
-                                folderManager.removeFolder(path)
-                                folders = folderManager.getFolderPaths()
-                                onFoldersChanged()
+                                scope.launch(Dispatchers.IO) {
+                                    folderManager.removeFolder(path)
+                                    val now = folderManager.getFolderPaths()
+                                    withContext(Dispatchers.Main) {
+                                        folders = now
+                                        onFoldersChanged()
+                                    }
+                                }
                             }) {
                                 Icon(
                                     Icons.Default.Close,
