@@ -16,20 +16,20 @@ import android.content.Context
  * where another app can read that storage is a device where the key is
  * readable too.
  */
-class RaCredentials(context: Context) {
+class RaCredentials(context: Context) : RaStore {
     private val prefs = context.getSharedPreferences("retroachievements", Context.MODE_PRIVATE)
 
-    fun read(): Pair<String, String>? {
+    override fun read(): Pair<String, String>? {
         val user = prefs.getString(KEY_USER, null) ?: return null
         val token = prefs.getString(KEY_TOKEN, null) ?: return null
         return user to token
     }
 
-    fun write(user: String, token: String) {
+    override fun write(user: String, token: String) {
         prefs.edit().putString(KEY_USER, user).putString(KEY_TOKEN, token).apply()
     }
 
-    fun clear() {
+    override fun clear() {
         prefs.edit().remove(KEY_USER).remove(KEY_TOKEN).apply()
     }
 
@@ -37,4 +37,11 @@ class RaCredentials(context: Context) {
         const val KEY_USER = "user"
         const val KEY_TOKEN = "token"
     }
+}
+
+/** What [RaEngine] needs from the credential store; a seam for tests. */
+internal interface RaStore {
+    fun read(): Pair<String, String>?
+    fun write(user: String, token: String)
+    fun clear()
 }

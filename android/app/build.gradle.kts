@@ -6,6 +6,10 @@ plugins {
 
 android {
     namespace = "com.geebeeayy.app"
+
+    // android.util.Log returns defaults instead of throwing in JVM tests, so
+    // RaEngine can run off-device.
+    testOptions { unitTests.isReturnDefaultValues = true }
     compileSdk = 35
 
     defaultConfig {

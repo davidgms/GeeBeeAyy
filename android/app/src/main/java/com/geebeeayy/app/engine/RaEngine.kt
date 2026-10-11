@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -46,13 +47,51 @@ object RaEngine {
     private const val EVENT_LEADERBOARD_TRACKER_UPDATE = 12
     private const val EVENT_GAME_COMPLETED = 15
 
-    private val available: Boolean = runCatching {
+    // Test seam: the hooks below are internal so a JVM test can replace the
+    // native library, the network and the scope. Production never touches them.
+    internal var available: Boolean = runCatching {
         System.loadLibrary("geebeeayy_ra")
     }.isSuccess
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private var store: RaCredentials? = null
+    /** The HTTP call rcheevos asked for: status and body. */
+    internal var http: suspend (url: String, post: String?) -> Pair<Int, ByteArray> = ::fetch
+
+    internal var native: RaNative = object : RaNative {
+        override fun nativeInit() = RaEngine.nativeInit()
+        override fun nativeSetEmulator(handle: Long) = RaEngine.nativeSetEmulator(handle)
+        override fun nativeLogin(username: String, password: String) =
+            RaEngine.nativeLogin(username, password)
+        override fun nativeLoginWithToken(username: String, token: String) =
+            RaEngine.nativeLoginWithToken(username, token)
+        override fun nativeLogout() = RaEngine.nativeLogout()
+        override fun nativeUsername() = RaEngine.nativeUsername()
+        override fun nativeToken() = RaEngine.nativeToken()
+        override fun nativeLoadGame(hash: String) = RaEngine.nativeLoadGame(hash)
+        override fun nativeUnloadGame() = RaEngine.nativeUnloadGame()
+        override fun nativeDoFrame() = RaEngine.nativeDoFrame()
+        override fun nativeIdle() = RaEngine.nativeIdle()
+        override fun nativeServerResponse(slot: Int, status: Int, body: ByteArray) =
+            RaEngine.nativeServerResponse(slot, status, body)
+        override fun nativeSerializeProgress() = RaEngine.nativeSerializeProgress()
+        override fun nativeDeserializeProgress(data: ByteArray) =
+            RaEngine.nativeDeserializeProgress(data)
+        override fun nativeAchievements() = RaEngine.nativeAchievements()
+        override fun nativeLeaderboards() = RaEngine.nativeLeaderboards()
+        override fun nativeHashRom(data: ByteArray) = RaEngine.nativeHashRom(data)
+        override fun nativeVersion() = RaEngine.nativeVersion()
+    }
+
+    internal var storeFactory: (Context) -> RaStore = { RaCredentials(it) }
+
+    /**
+     * Guards the emulator rcheevos reads memory from. Shared, not per
+     * ViewModel: the C side holds one global emulator pointer.
+     */
+    internal val coreLock = Mutex()
+
+    private var store: RaStore? = null
     private var started = false
 
     /**
@@ -123,13 +162,13 @@ object RaEngine {
     fun start(context: Context): Boolean {
         if (!available) return false
         if (!started) {
-            started = runCatching { nativeInit() }.getOrDefault(false)
+            started = runCatching { native.nativeInit() }.getOrDefault(false)
             if (!started) return false
-            store = RaCredentials(context)
+            store = storeFactory(context)
         }
         val saved = store?.read()
         if (saved != null && _user.value == null) {
-            runCatching { nativeLoginWithToken(saved.first, saved.second) }
+            runCatching { native.nativeLoginWithToken(saved.first, saved.second) }
         }
         return true
     }
@@ -143,7 +182,7 @@ object RaEngine {
      */
     fun attachEmulator(handle: Long) {
         attachedHandle = handle
-        if (available && started) runCatching { nativeSetEmulator(handle) }
+        if (available && started) runCatching { native.nativeSetEmulator(handle) }
         if (handle == 0L) {
             // Delivered, not dropped. Each one holds a slot on the C side, and
             // a slot nobody answers is never freed: sixteen of those and every
@@ -152,7 +191,7 @@ object RaEngine {
             while (true) {
                 val response = pendingResponses.poll() ?: break
                 runCatching {
-                    nativeServerResponse(response.slot, response.status, response.body)
+                    native.nativeServerResponse(response.slot, response.status, response.body)
                 }
             }
         }
@@ -165,11 +204,11 @@ object RaEngine {
      * the server returns.
      */
     fun login(username: String, password: String) {
-        if (available && started) runCatching { nativeLogin(username, password) }
+        if (available && started) runCatching { native.nativeLogin(username, password) }
     }
 
     fun logout() {
-        if (available && started) runCatching { nativeLogout() }
+        if (available && started) runCatching { native.nativeLogout() }
         store?.clear()
         _user.value = null
         _game.value = null
@@ -178,11 +217,11 @@ object RaEngine {
     /** Ask the server what this ROM is, and start a session for it. */
     fun loadGame(hash: String) {
         Log.i(TAG, "load game $hash (started=$started)")
-        if (available && started) runCatching { nativeLoadGame(hash) }
+        if (available && started) runCatching { native.nativeLoadGame(hash) }
     }
 
     fun unloadGame() {
-        if (available && started) runCatching { nativeUnloadGame() }
+        if (available && started) runCatching { native.nativeUnloadGame() }
         _game.value = null
     }
 
@@ -197,14 +236,14 @@ object RaEngine {
         if (!available || !started) return
         while (true) {
             val response = pendingResponses.poll() ?: break
-            runCatching { nativeServerResponse(response.slot, response.status, response.body) }
+            runCatching { native.nativeServerResponse(response.slot, response.status, response.body) }
         }
-        nativeDoFrame()
+        native.nativeDoFrame()
     }
 
     /** While paused, so the session stays alive without evaluating. */
     fun idle() {
-        if (available && started) runCatching { nativeIdle() }
+        if (available && started) runCatching { native.nativeIdle() }
     }
 
     /**
@@ -216,13 +255,13 @@ object RaEngine {
      * to one moment and leaves the achievement logic in another.
      */
     fun serializeProgress(): ByteArray? =
-        if (available && started) runCatching { nativeSerializeProgress() }.getOrNull() else null
+        if (available && started) runCatching { native.nativeSerializeProgress() }.getOrNull() else null
 
     fun restoreProgress(data: ByteArray): Boolean =
-        available && started && runCatching { nativeDeserializeProgress(data) }.getOrDefault(false)
+        available && started && runCatching { native.nativeDeserializeProgress(data) }.getOrDefault(false)
 
     fun hashRom(romData: ByteArray): String? =
-        if (available) runCatching { nativeHashRom(romData) }.getOrNull() else null
+        if (available) runCatching { native.nativeHashRom(romData) }.getOrNull() else null
 
     /**
      * Every achievement in the loaded game, locked ones included.
@@ -233,7 +272,7 @@ object RaEngine {
      */
     fun achievements(): List<RaAchievement> {
         if (!available || !started) return emptyList()
-        val lines = runCatching { nativeAchievements() }.getOrNull() ?: return emptyList()
+        val lines = runCatching { native.nativeAchievements() }.getOrNull() ?: return emptyList()
         return lines.mapNotNull { line ->
             val parts = line.split('\t')
             if (parts.size < 6) return@mapNotNull null
@@ -254,7 +293,7 @@ object RaEngine {
     /** Every leaderboard in the loaded game. Empty when there are none. */
     fun leaderboards(): List<RaLeaderboard> {
         if (!available || !started) return emptyList()
-        val lines = runCatching { nativeLeaderboards() }.getOrNull() ?: return emptyList()
+        val lines = runCatching { native.nativeLeaderboards() }.getOrNull() ?: return emptyList()
         return lines.mapNotNull { line ->
             val parts = line.split('\t')
             if (parts.size < 5) return@mapNotNull null
@@ -269,7 +308,7 @@ object RaEngine {
     }
 
     fun version(): String? =
-        if (available) runCatching { nativeVersion() }.getOrNull() else null
+        if (available) runCatching { native.nativeVersion() }.getOrNull() else null
 
     // ---------------------------------------------------------------------
     // Called from C. Names and signatures are matched by string in
@@ -282,45 +321,17 @@ object RaEngine {
      * survive a round trip through Kotlin.
      */
     @JvmStatic
-    private fun onServerRequest(slot: Int, url: String, postData: String?) {
+    private fun onServerRequest(slot: Int, url: String, postData: String?) =
+        handleServerRequest(slot, url, postData)
+
+    internal fun handleServerRequest(slot: Int, url: String, postData: String?) {
         scope.launch {
-            var status = 0
-            var body = ByteArray(0)
-            runCatching {
-                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                    // The format rcheevos asks for. Nothing here is optional:
-                    // the emulator name and version identify the client to
-                    // the server, and hardcore support is refused to clients
-                    // it cannot recognise.
-                    setRequestProperty("User-Agent", userAgent())
-                    if (postData != null) {
-                        requestMethod = "POST"
-                        doOutput = true
-                        setRequestProperty(
-                            "Content-Type",
-                            "application/x-www-form-urlencoded",
-                        )
-                        outputStream.use { it.write(postData.toByteArray()) }
-                    }
-                }
-                status = connection.responseCode
-                val stream = if (status in 200..299) {
-                    connection.inputStream
-                } else {
-                    connection.errorStream
-                }
-                body = stream?.use { input ->
-                    ByteArrayOutputStream().also { input.copyTo(it) }.toByteArray()
-                } ?: ByteArray(0)
-                connection.disconnect()
-            }.onFailure {
+            val (status, body) = runCatching { http(url, postData) }.getOrElse {
                 Log.w(TAG, "request failed: ${it.message}")
                 // -1 is rcheevos' own "the client could not send this",
                 // which it reports as a network error rather than a server
                 // one. Leaving the slot unanswered would hang the session.
-                status = -1
+                -1 to ByteArray(0)
             }
             if (attachedHandle != 0L) {
                 // A game is running: the answer waits for the emulation
@@ -329,13 +340,41 @@ object RaEngine {
             } else {
                 // No game, so nothing for rcheevos to read. A sign-in from
                 // Settings lands here, and there is no frame loop to wait for.
-                runCatching { nativeServerResponse(slot, status, body) }
+                runCatching { native.nativeServerResponse(slot, status, body) }
             }
         }
     }
 
+    private suspend fun fetch(url: String, postData: String?): Pair<Int, ByteArray> {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            // The format rcheevos asks for. Nothing here is optional:
+            // the emulator name and version identify the client to
+            // the server, and hardcore support is refused to clients
+            // it cannot recognise.
+            setRequestProperty("User-Agent", userAgent())
+            if (postData != null) {
+                requestMethod = "POST"
+                doOutput = true
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                outputStream.use { it.write(postData.toByteArray()) }
+            }
+        }
+        val status = connection.responseCode
+        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.use { input ->
+            ByteArrayOutputStream().also { input.copyTo(it) }.toByteArray()
+        } ?: ByteArray(0)
+        connection.disconnect()
+        return status to body
+    }
+
     @JvmStatic
-    private fun onEvent(type: Int, id: Int, title: String?, description: String?, points: Int) {
+    private fun onEvent(type: Int, id: Int, title: String?, description: String?, points: Int) =
+        handleEvent(type, id, title, description, points)
+
+    internal fun handleEvent(type: Int, id: Int, title: String?, description: String?, points: Int) {
         when (type) {
             EVENT_ACHIEVEMENT_TRIGGERED ->
                 _unlocks.tryEmit(RaUnlock(id, title.orEmpty(), description.orEmpty(), points))
@@ -356,11 +395,13 @@ object RaEngine {
     }
 
     @JvmStatic
-    private fun onLogin(result: Int, errorMessage: String?) {
+    private fun onLogin(result: Int, errorMessage: String?) = handleLogin(result, errorMessage)
+
+    internal fun handleLogin(result: Int, errorMessage: String?) {
         if (result == RESULT_OK) {
             Log.i(TAG, "signed in")
-            val name = runCatching { nativeUsername() }.getOrNull()
-            val token = runCatching { nativeToken() }.getOrNull()
+            val name = runCatching { native.nativeUsername() }.getOrNull()
+            val token = runCatching { native.nativeToken() }.getOrNull()
             _user.value = name
             if (name != null && token != null) store?.write(name, token)
         } else {
@@ -373,7 +414,15 @@ object RaEngine {
     }
 
     @JvmStatic
-    private fun onGameLoaded(result: Int, errorMessage: String?, title: String?, achievements: Int) {
+    private fun onGameLoaded(result: Int, errorMessage: String?, title: String?, achievements: Int) =
+        handleGameLoaded(result, errorMessage, title, achievements)
+
+    internal fun handleGameLoaded(
+        result: Int,
+        errorMessage: String?,
+        title: String?,
+        achievements: Int,
+    ) {
         _game.value = if (result == RESULT_OK && title != null) {
             Log.i(TAG, "session: $title, $achievements achievements")
             RaGame(title, achievements)
@@ -396,6 +445,17 @@ object RaEngine {
 
     /** `RC_OK`. */
     private const val RESULT_OK = 0
+
+    /** Back to a fresh process, for tests. */
+    internal fun resetForTest() {
+        started = false
+        store = null
+        attachedHandle = 0L
+        pendingResponses.clear()
+        _user.value = null
+        _game.value = null
+        _trackers.value = emptyMap()
+    }
 
     @JvmStatic private external fun nativeInit(): Boolean
     @JvmStatic private external fun nativeSetEmulator(handle: Long)
@@ -449,3 +509,25 @@ data class RaLeaderboard(
     /** The current or last value, already formatted by rcheevos. */
     val value: String,
 )
+
+/** The `external` functions of [RaEngine], so a test can stand in for the library. */
+internal interface RaNative {
+    fun nativeInit(): Boolean
+    fun nativeSetEmulator(handle: Long)
+    fun nativeLogin(username: String, password: String)
+    fun nativeLoginWithToken(username: String, token: String)
+    fun nativeLogout()
+    fun nativeUsername(): String?
+    fun nativeToken(): String?
+    fun nativeLoadGame(hash: String)
+    fun nativeUnloadGame()
+    fun nativeDoFrame()
+    fun nativeIdle()
+    fun nativeServerResponse(slot: Int, status: Int, body: ByteArray)
+    fun nativeSerializeProgress(): ByteArray?
+    fun nativeDeserializeProgress(data: ByteArray): Boolean
+    fun nativeAchievements(): Array<String>?
+    fun nativeLeaderboards(): Array<String>?
+    fun nativeHashRom(data: ByteArray): String?
+    fun nativeVersion(): String?
+}
