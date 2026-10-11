@@ -12,8 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * The configured ROM folders. Each is either a document-tree Uri string
  * (what the picker returns, and what persists across reboots) or, from before
- * that, an absolute path. Both scan; a path under shared storage is shown in
- * Settings as needing a re-pick, and [addTree] swaps it for the tree.
+ * that, an absolute path. A path on shared storage no longer scans (the app
+ * has no storage permission); Settings shows it as needing a re-pick, and
+ * [addTree] swaps it for the tree.
  */
 class RomFolderManager(private val context: Context) {
     companion object {
@@ -145,9 +146,6 @@ class RomFolderManager(private val context: Context) {
 
     fun hasFolders(): Boolean = getFolderPaths().isNotEmpty()
 
-    /** True if any folder is a tree, which needs no storage permission to scan. */
-    fun hasTreeFolders(): Boolean = getFolderPaths().any { !RomBytes.isPath(it) }
-
     /**
      * Scan, hand the list to [publish], then import the saves beside the
      * carts - all of it under one lock, so two scans never interleave and the
@@ -176,6 +174,8 @@ class RomFolderManager(private val context: Context) {
                 val folder = File(folderPath)
                 if (folder.isDirectory) {
                     scanDirectory(folder, roms)
+                } else {
+                    down += folderPath
                 }
             } else if (scanTreeFolder(Uri.parse(folderPath), roms, siblings)) {
                 val tree = Uri.parse(folderPath)

@@ -209,8 +209,9 @@ fun SettingsScreen(
                 } else {
                     folders.forEach { path ->
                         val displayName = RomFolderManager.folderLabel(path).substringAfterLast('/')
-                        // A path folder on shared storage still scans for now,
-                        // but will not once the app loses all-files access.
+                        // A path folder on shared storage cannot be read
+                        // without a storage permission, which the app no
+                        // longer has: it needs picking again.
                         val repick = RomBytes.isPath(path) && legacyDocId(path) != null
                         val problem = when {
                             repick -> "Needs re-pick: tap to grant access again"

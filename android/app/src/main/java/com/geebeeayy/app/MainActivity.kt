@@ -1,7 +1,6 @@
 package com.geebeeayy.app
 
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
@@ -27,9 +26,6 @@ import com.geebeeayy.app.viewmodel.EmulationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.geebeeayy.app.ui.orientationFor
-import java.io.File
-
-private const val TAG = "GeeBeeAyy/Main"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,9 +51,6 @@ fun GeeBeeAyyNavHost() {
     val scope = rememberCoroutineScope()
 
     var romList by remember { mutableStateOf<List<RomEntry>>(emptyList()) }
-    var isFirstLaunch by remember { mutableStateOf(!folderManager.hasFolders()) }
-    Log.i(TAG, "NavHost init: isFirstLaunch=$isFirstLaunch")
-
     fun rescanRoms() {
         // Tree folders carry their own grant. A path folder left from before
         // SAF cannot be read any more and shows as "Needs re-pick" in Settings.
@@ -104,7 +97,9 @@ fun GeeBeeAyyNavHost() {
             // The scan that follows a download is the same one the browser
             // uses, so a finished download shows up without leaving the app.
             HomebrewScreen(
-                folders = folderManager.getFolderPaths(),
+                // Only picked folders: a path left from before SAF cannot be
+                // written any more, and a download aimed there would fail.
+                folders = folderManager.getFolderPaths().filterNot(RomBytes::isPath),
                 onBack = { navController.popBackStack() },
                 onDownloaded = { rescanRoms() },
             )
