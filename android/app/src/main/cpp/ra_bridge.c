@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <jni.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,8 +30,13 @@ static JavaVM* g_vm = NULL;
 static jclass g_engine = NULL; /* global ref to RaEngine */
 static rc_client_t* g_client = NULL;
 
-/* The emulator handle, as Kotlin knows it. Not owned here. */
-static void* g_gba = NULL;
+/* The emulator handle, as Kotlin knows it. Not owned here.
+ *
+ * No atomic needed: the only writer (nativeSetEmulator) and every reader
+ * (ra_read_memory, reached from doFrame, load, progress and server-response
+ * delivery) run under RaEngine.coreLock, which is also what orders them
+ * against the emulation thread. volatile is only a free belt. */
+static void* volatile g_gba = NULL;
 
 /* Resolved from the already-loaded core rather than linked against it: the
  * core's .so is built by cargo-ndk outside Gradle, so linking would make this
@@ -43,6 +49,66 @@ static jmethodID g_on_request = NULL;
 static jmethodID g_on_event = NULL;
 static jmethodID g_on_login = NULL;
 static jmethodID g_on_game = NULL;
+
+/* ---------------------------------------------------------------- strings
+ *
+ * NewStringUTF takes *modified* UTF-8: a 4-byte sequence (an emoji in a
+ * game title) or an invalid byte is undefined behaviour and aborts under
+ * CheckJNI. Server text is neither guaranteed valid nor BMP-only, so it is
+ * decoded here and handed over as UTF-16. Invalid or truncated input becomes
+ * U+FFFD; NULL becomes "". */
+static jstring ra_new_string(JNIEnv* env, const char* s) {
+  const unsigned char* p = (const unsigned char*)(s ? s : "");
+  size_t cap = strlen((const char*)p) + 1;
+  jchar* out = (jchar*)malloc(cap * sizeof(jchar));
+  size_t n = 0;
+  jstring result;
+
+  if (out == NULL) {
+    return NULL;
+  }
+  while (*p) {
+    uint32_t cp;
+    int extra;
+    int k;
+    unsigned char c = *p;
+    if (c < 0x80) { cp = c; extra = 0; }
+    else if (c >= 0xC2 && c <= 0xDF) { cp = c & 0x1Fu; extra = 1; }
+    else if (c >= 0xE0 && c <= 0xEF) { cp = c & 0x0Fu; extra = 2; }
+    else if (c >= 0xF0 && c <= 0xF4) { cp = c & 0x07u; extra = 3; }
+    else { out[n++] = 0xFFFD; p++; continue; }
+    p++;
+    for (k = 0; k < extra; k++) {
+      if ((p[0] & 0xC0) != 0x80) { cp = 0xFFFD; break; }
+      cp = (cp << 6) | (p[0] & 0x3Fu);
+      p++;
+    }
+    /* Overlong forms, surrogates and out-of-range values are invalid. */
+    if (cp != 0xFFFD &&
+        ((extra == 2 && cp < 0x800u) || (extra == 3 && cp < 0x10000u) ||
+         (cp >= 0xD800u && cp <= 0xDFFFu) || cp > 0x10FFFFu)) {
+      cp = 0xFFFD;
+    }
+    if (cp >= 0x10000u) {
+      cp -= 0x10000u;
+      out[n++] = (jchar)(0xD800u + (cp >> 10));
+      out[n++] = (jchar)(0xDC00u + (cp & 0x3FFu));
+    } else {
+      out[n++] = (jchar)cp;
+    }
+  }
+  result = (*env)->NewString(env, out, (jsize)n);
+  free(out);
+  return result;
+}
+
+/* A Kotlin callback that threw must not leave the exception pending: the next
+ * JNI call from this thread would abort the process. */
+static void ra_clear_exception(JNIEnv* env) {
+  if ((*env)->ExceptionCheck(env)) {
+    (*env)->ExceptionClear(env);
+  }
+}
 
 /* ------------------------------------------------------- memory, flat->real
  *
@@ -174,9 +240,27 @@ static void RC_CCONV ra_server_call(const rc_api_request_t* request,
     ra_fail_request(callback, callback_data);
     return;
   }
-  url = (*env)->NewStringUTF(env, request->url ? request->url : "");
-  post = request->post_data ? (*env)->NewStringUTF(env, request->post_data) : NULL;
+  url = ra_new_string(env, request->url);
+  post = request->post_data ? ra_new_string(env, request->post_data) : NULL;
+  if (url == NULL || (request->post_data && post == NULL)) {
+    ra_clear_exception(env);
+    if (url) (*env)->DeleteLocalRef(env, url);
+    if (post) (*env)->DeleteLocalRef(env, post);
+    pthread_mutex_lock(&g_pending_lock);
+    g_pending[slot].in_use = 0;
+    pthread_mutex_unlock(&g_pending_lock);
+    ra_fail_request(callback, callback_data);
+    return;
+  }
   (*env)->CallStaticVoidMethod(env, g_engine, g_on_request, (jint)slot, url, post);
+  if ((*env)->ExceptionCheck(env)) {
+    /* Kotlin never took the request, so no answer is coming: answer here. */
+    (*env)->ExceptionClear(env);
+    pthread_mutex_lock(&g_pending_lock);
+    g_pending[slot].in_use = 0;
+    pthread_mutex_unlock(&g_pending_lock);
+    ra_fail_request(callback, callback_data);
+  }
   (*env)->DeleteLocalRef(env, url);
   if (post) {
     (*env)->DeleteLocalRef(env, post);
@@ -246,23 +330,22 @@ static void RC_CCONV ra_event_handler(const rc_client_event_t* event, rc_client_
   if (event->achievement != NULL) {
     id = (jint)event->achievement->id;
     points = (jint)event->achievement->points;
-    title = (*env)->NewStringUTF(env, event->achievement->title ? event->achievement->title : "");
-    description = (*env)->NewStringUTF(
-        env, event->achievement->description ? event->achievement->description : "");
+    title = ra_new_string(env, event->achievement->title);
+    description = ra_new_string(env, event->achievement->description);
   } else if (event->leaderboard_tracker != NULL) {
     /* The live readout of an attempt in progress - a lap timer, a running
      * score. `display` is already formatted for showing, which is the whole
      * reason the tracker exists as its own event rather than a raw value. */
     id = (jint)event->leaderboard_tracker->id;
-    title = (*env)->NewStringUTF(env, event->leaderboard_tracker->display);
+    title = ra_new_string(env, event->leaderboard_tracker->display);
   } else if (event->leaderboard != NULL) {
     id = (jint)event->leaderboard->id;
-    title = (*env)->NewStringUTF(env, event->leaderboard->title ? event->leaderboard->title : "");
-    description = (*env)->NewStringUTF(
-        env, event->leaderboard->description ? event->leaderboard->description : "");
+    title = ra_new_string(env, event->leaderboard->title);
+    description = ra_new_string(env, event->leaderboard->description);
   }
   (*env)->CallStaticVoidMethod(env, g_engine, g_on_event, (jint)event->type, id, title,
                                description, points);
+  ra_clear_exception(env);
   if (title) {
     (*env)->DeleteLocalRef(env, title);
   }
@@ -287,9 +370,12 @@ static void RC_CCONV ra_login_callback(int result, const char* error_message,
   if (env == NULL) {
     return;
   }
-  message = (*env)->NewStringUTF(env, error_message ? error_message : "");
+  message = ra_new_string(env, error_message);
   (*env)->CallStaticVoidMethod(env, g_engine, g_on_login, (jint)result, message);
-  (*env)->DeleteLocalRef(env, message);
+  ra_clear_exception(env);
+  if (message) {
+    (*env)->DeleteLocalRef(env, message);
+  }
 }
 
 static void RC_CCONV ra_load_callback(int result, const char* error_message,
@@ -308,10 +394,10 @@ static void RC_CCONV ra_load_callback(int result, const char* error_message,
   if (env == NULL) {
     return;
   }
-  message = (*env)->NewStringUTF(env, error_message ? error_message : "");
+  message = ra_new_string(env, error_message);
   game = rc_client_get_game_info(client);
   if (game != NULL) {
-    name = (*env)->NewStringUTF(env, game->title ? game->title : "");
+    name = ra_new_string(env, game->title);
     {
       rc_client_achievement_list_t* list = rc_client_create_achievement_list(
           client, RC_CLIENT_ACHIEVEMENT_CATEGORY_PROMOTED_AND_UNPROMOTED,
@@ -327,7 +413,10 @@ static void RC_CCONV ra_load_callback(int result, const char* error_message,
   }
   (*env)->CallStaticVoidMethod(env, g_engine, g_on_game, (jint)result, message, name,
                                achievements);
-  (*env)->DeleteLocalRef(env, message);
+  ra_clear_exception(env);
+  if (message) {
+    (*env)->DeleteLocalRef(env, message);
+  }
   if (name) {
     (*env)->DeleteLocalRef(env, name);
   }
@@ -348,6 +437,10 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
     return JNI_FALSE;
   }
   g_engine = (jclass)(*env)->NewGlobalRef(env, local);
+  (*env)->DeleteLocalRef(env, local);
+  if (g_engine == NULL) {
+    return JNI_FALSE;
+  }
   g_on_request = (*env)->GetStaticMethodID(env, g_engine, "onServerRequest",
                                            "(ILjava/lang/String;Ljava/lang/String;)V");
   g_on_event = (*env)->GetStaticMethodID(
@@ -357,6 +450,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
   g_on_game = (*env)->GetStaticMethodID(
       env, g_engine, "onGameLoaded", "(ILjava/lang/String;Ljava/lang/String;I)V");
   if (!g_on_request || !g_on_event || !g_on_login || !g_on_game) {
+    ra_clear_exception(env);
     return JNI_FALSE;
   }
 
@@ -395,8 +489,18 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLogin(JNIEnv* env, jclass clazz,
   if (g_client == NULL) {
     return;
   }
+  if (username == NULL || password == NULL) {
+    return;
+  }
   user = (*env)->GetStringUTFChars(env, username, NULL);
+  if (user == NULL) {
+    return;
+  }
   pass = (*env)->GetStringUTFChars(env, password, NULL);
+  if (pass == NULL) {
+    (*env)->ReleaseStringUTFChars(env, username, user);
+    return;
+  }
   rc_client_begin_login_with_password(g_client, user, pass, ra_login_callback, NULL);
   (*env)->ReleaseStringUTFChars(env, username, user);
   (*env)->ReleaseStringUTFChars(env, password, pass);
@@ -412,8 +516,18 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLoginWithToken(JNIEnv* env, jclass 
   if (g_client == NULL) {
     return;
   }
+  if (username == NULL || token == NULL) {
+    return;
+  }
   user = (*env)->GetStringUTFChars(env, username, NULL);
+  if (user == NULL) {
+    return;
+  }
   tok = (*env)->GetStringUTFChars(env, token, NULL);
+  if (tok == NULL) {
+    (*env)->ReleaseStringUTFChars(env, username, user);
+    return;
+  }
   rc_client_begin_login_with_token(g_client, user, tok, ra_login_callback, NULL);
   (*env)->ReleaseStringUTFChars(env, username, user);
   (*env)->ReleaseStringUTFChars(env, token, tok);
@@ -432,7 +546,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeToken(JNIEnv* env, jclass clazz) {
   if (user == NULL || user->token == NULL) {
     return NULL;
   }
-  return (*env)->NewStringUTF(env, user->token);
+  return ra_new_string(env, user->token);
 }
 
 JNIEXPORT jstring JNICALL
@@ -447,7 +561,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeUsername(JNIEnv* env, jclass clazz)
   if (user == NULL || user->display_name == NULL) {
     return NULL;
   }
-  return (*env)->NewStringUTF(env, user->display_name);
+  return ra_new_string(env, user->display_name);
 }
 
 JNIEXPORT void JNICALL
@@ -468,7 +582,13 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLoadGame(JNIEnv* env, jclass clazz,
   if (g_client == NULL) {
     return;
   }
+  if (hash == NULL) {
+    return;
+  }
   value = (*env)->GetStringUTFChars(env, hash, NULL);
+  if (value == NULL) {
+    return;
+  }
   rc_client_begin_load_game(g_client, value, ra_load_callback, NULL);
   (*env)->ReleaseStringUTFChars(env, hash, value);
 }
@@ -502,7 +622,9 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
   }
 }
 
-/* One string per leaderboard: id, title, description, state, current value. */
+/* Flat strings, 5 per leaderboard: id, title, description, state, current
+ * value. No packing, so nothing is truncated and a tab in a title is just a
+ * character. */
 JNIEXPORT jobjectArray JNICALL
 Java_com_geebeeayy_app_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass clazz) {
   rc_client_leaderboard_list_t* list;
@@ -527,7 +649,12 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass cl
   }
 
   string_class = (*env)->FindClass(env, "java/lang/String");
-  out = (*env)->NewObjectArray(env, (jsize)total, string_class, NULL);
+  if (string_class == NULL) {
+    rc_client_destroy_leaderboard_list(list);
+    return NULL;
+  }
+  out = (*env)->NewObjectArray(env, (jsize)(total * 5), string_class, NULL);
+  (*env)->DeleteLocalRef(env, string_class);
   if (out == NULL) {
     rc_client_destroy_leaderboard_list(list);
     return NULL;
@@ -535,14 +662,28 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass cl
   for (b = 0; b < list->num_buckets; b++) {
     for (i = 0; i < list->buckets[b].num_leaderboards; i++) {
       const rc_client_leaderboard_t* l = list->buckets[b].leaderboards[i];
-      char line[768];
-      jstring value;
-      snprintf(line, sizeof(line), "%u\t%s\t%s\t%u\t%s", l->id,
-               l->title ? l->title : "", l->description ? l->description : "",
-               (unsigned)l->state, l->tracker_value ? l->tracker_value : "");
-      value = (*env)->NewStringUTF(env, line);
-      (*env)->SetObjectArrayElement(env, out, index++, value);
-      (*env)->DeleteLocalRef(env, value);
+      char id[16];
+      char state[16];
+      const char* fields[5];
+      int f;
+      snprintf(id, sizeof(id), "%u", l->id);
+      snprintf(state, sizeof(state), "%u", (unsigned)l->state);
+      fields[0] = id;
+      fields[1] = l->title;
+      fields[2] = l->description;
+      fields[3] = state;
+      fields[4] = l->tracker_value;
+      for (f = 0; f < 5; f++) {
+        jstring value = ra_new_string(env, fields[f]);
+        if (value == NULL) {
+          ra_clear_exception(env);
+          (*env)->DeleteLocalRef(env, out);
+          rc_client_destroy_leaderboard_list(list);
+          return NULL;
+        }
+        (*env)->SetObjectArrayElement(env, out, index++, value);
+        (*env)->DeleteLocalRef(env, value);
+      }
     }
   }
   rc_client_destroy_leaderboard_list(list);
@@ -576,6 +717,9 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeSerializeProgress(JNIEnv* env, jcla
     return NULL;
   }
   bytes = (*env)->GetByteArrayElements(env, out, NULL);
+  if (bytes == NULL) {
+    return NULL;
+  }
   if (rc_client_serialize_progress_sized(g_client, (uint8_t*)bytes, (size_t)size) != RC_OK) {
     (*env)->ReleaseByteArrayElements(env, out, bytes, JNI_ABORT);
     return NULL;
@@ -607,10 +751,10 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeDeserializeProgress(JNIEnv* env, jc
 
 /* ----------------------------------------------------------- the list
  *
- * One string per achievement, tab separated: id, title, description, points,
- * unlocked, progress. Packed rather than built as objects because the
+ * Flat strings, 7 per achievement: id, title, description, points, unlocked,
+ * progress, badge url. Flat rather than built as objects because the
  * alternative is a dozen JNI calls per achievement, and a set runs to
- * hundreds.
+ * hundreds; flat rather than tab-packed so a long or tabbed title survives.
  */
 JNIEXPORT jobjectArray JNICALL
 Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass clazz) {
@@ -637,7 +781,12 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass cl
   }
 
   string_class = (*env)->FindClass(env, "java/lang/String");
-  out = (*env)->NewObjectArray(env, (jsize)total, string_class, NULL);
+  if (string_class == NULL) {
+    rc_client_destroy_achievement_list(list);
+    return NULL;
+  }
+  out = (*env)->NewObjectArray(env, (jsize)(total * 7), string_class, NULL);
+  (*env)->DeleteLocalRef(env, string_class);
   if (out == NULL) {
     rc_client_destroy_achievement_list(list);
     return NULL;
@@ -646,9 +795,12 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass cl
   for (b = 0; b < list->num_buckets; b++) {
     for (i = 0; i < list->buckets[b].num_achievements; i++) {
       const rc_client_achievement_t* a = list->buckets[b].achievements[i];
-      char line[1024];
+      char id[16];
+      char points[16];
+      char unlocked[4];
       char badge[256];
-      jstring value;
+      const char* fields[7];
+      int f;
       /* The badge for the state it is actually in: a locked achievement gets
        * the greyed art, an earned one the full-colour one. Asking for the
        * wrong state would show every row as earned. */
@@ -656,12 +808,27 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass cl
               a, a->state, badge, sizeof(badge)) != RC_OK) {
         badge[0] = '\0';
       }
-      snprintf(line, sizeof(line), "%u\t%s\t%s\t%u\t%u\t%s\t%s", a->id,
-               a->title ? a->title : "", a->description ? a->description : "",
-               a->points, (unsigned)a->unlocked, a->measured_progress, badge);
-      value = (*env)->NewStringUTF(env, line);
-      (*env)->SetObjectArrayElement(env, out, index++, value);
-      (*env)->DeleteLocalRef(env, value);
+      snprintf(id, sizeof(id), "%u", a->id);
+      snprintf(points, sizeof(points), "%u", a->points);
+      snprintf(unlocked, sizeof(unlocked), "%u", (unsigned)a->unlocked);
+      fields[0] = id;
+      fields[1] = a->title;
+      fields[2] = a->description;
+      fields[3] = points;
+      fields[4] = unlocked;
+      fields[5] = a->measured_progress;
+      fields[6] = badge;
+      for (f = 0; f < 7; f++) {
+        jstring value = ra_new_string(env, fields[f]);
+        if (value == NULL) {
+          ra_clear_exception(env);
+          (*env)->DeleteLocalRef(env, out);
+          rc_client_destroy_achievement_list(list);
+          return NULL;
+        }
+        (*env)->SetObjectArrayElement(env, out, index++, value);
+        (*env)->DeleteLocalRef(env, value);
+      }
     }
   }
   rc_client_destroy_achievement_list(list);
