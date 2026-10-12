@@ -139,11 +139,7 @@ impl Cartridge {
             );
         }
 
-        let title_bytes = &data[0xA0..0xAC];
-        let title = String::from_utf8_lossy(title_bytes)
-            .trim_end_matches('\0')
-            .to_string();
-
+        let title = header_title(data);
         let save_type = detect_save_type(data, &title);
 
         let sram_size = 32 * 1024;
@@ -483,14 +479,20 @@ impl Cartridge {
     }
 
     /// Load save data from file
+    ///
+    /// The whole chip is erased (0xFF) first, so a file shorter than the chip
+    /// never merges with whatever save was loaded before it: the tail reads
+    /// like a fresh chip, not like the previous game's data.
     pub fn load_save(&mut self, data: &[u8]) {
         match self.save_type {
             SaveType::Sram => {
                 let len = data.len().min(self.sram.len());
+                self.sram.fill(0xFF);
                 self.sram[..len].copy_from_slice(&data[..len]);
             }
             SaveType::Flash64 | SaveType::Flash128 => {
                 let len = data.len().min(self.flash.len());
+                self.flash.fill(0xFF);
                 self.flash[..len].copy_from_slice(&data[..len]);
             }
             SaveType::Eeprom512 | SaveType::Eeprom8k => {
@@ -500,6 +502,7 @@ impl Cartridge {
                     self.eeprom_large = true;
                 }
                 let len = data.len().min(self.eeprom.len());
+                self.eeprom.fill(0xFF);
                 self.eeprom[..len].copy_from_slice(&data[..len]);
             }
             SaveType::None => {}
@@ -602,6 +605,48 @@ impl Cartridge {
         };
         Ok(())
     }
+}
+
+/// The cartridge title at 0xA0..0xAC, NUL padding trimmed.
+fn header_title(data: &[u8]) -> String {
+    String::from_utf8_lossy(&data[0xA0..0xAC])
+        .trim_end_matches('\0')
+        .to_string()
+}
+
+/// How many bytes of a `save_len`-byte save file to import for `rom`, or
+/// `None` if the file cannot be this cartridge's save.
+///
+/// Uses the same save-type detection as loading the ROM, without building a
+/// cartridge. A file is accepted at the chip's exact size, or 16 bytes over
+/// it (the RTC footer mGBA appends), and the footer is dropped. EEPROM
+/// accepts both chip sizes whichever one the header suggests, because the
+/// game, not the header, decides the chip - see `Cartridge::load_save`.
+/// A ROM too short to load, or one with no save chip, fits nothing.
+///
+/// ```
+/// let mut rom = vec![0u8; 0x400];
+/// rom[0x100..0x109].copy_from_slice(b"SRAM_V100");
+/// assert_eq!(geebeeayy_core::cart::save_fit(&rom, 32 * 1024 + 16), Some(32 * 1024));
+/// assert_eq!(geebeeayy_core::cart::save_fit(&rom, 512), None);
+/// ```
+pub fn save_fit(rom: &[u8], save_len: usize) -> Option<usize> {
+    // `Cartridge::from_bytes` rejects anything shorter, and the title slice
+    // below needs the header.
+    if rom.len() < 0xC0 {
+        return None;
+    }
+    let sizes: &[usize] = match detect_save_type(rom, &header_title(rom)) {
+        SaveType::Sram => &[32 * 1024],
+        SaveType::Flash64 => &[64 * 1024],
+        SaveType::Flash128 => &[128 * 1024],
+        SaveType::Eeprom512 | SaveType::Eeprom8k => &[512, 8 * 1024],
+        SaveType::None => &[],
+    };
+    sizes
+        .iter()
+        .copied()
+        .find(|&size| save_len == size || save_len == size + 16)
 }
 
 fn detect_save_type(rom: &[u8], title: &str) -> SaveType {

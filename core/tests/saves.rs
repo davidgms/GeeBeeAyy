@@ -880,3 +880,133 @@ fn an_unaligned_word_load_from_sram_reads_the_addressed_byte() {
         );
     }
 }
+
+/// Load a full save of `old`, then a 100-byte save of 0x11, and return what
+/// the cartridge now holds. A short import must not inherit the tail of the
+/// previous save: everything past the file reads erased, like a fresh chip.
+fn short_save_over_a_full_one(marker: &str, full_len: usize) -> Vec<u8> {
+    let mut gba = gba_with(marker);
+    gba.load_save(&vec![0x42; full_len]);
+    gba.load_save(&[0x11; 100]);
+    gba.save_data().expect("cart has a save chip")
+}
+
+#[test]
+fn a_short_sram_save_erases_the_rest_of_the_chip() {
+    let save = short_save_over_a_full_one("SRAM_V100", 32 * 1024);
+    assert!(save[..100].iter().all(|&b| b == 0x11));
+    assert!(
+        save[100..].iter().all(|&b| b == 0xFF),
+        "the old save leaked past a short one"
+    );
+}
+
+#[test]
+fn a_64k_save_on_a_flash128_cart_leaves_bank_1_erased() {
+    let mut gba = gba_with("FLASH1M_V103");
+    gba.load_save(&vec![0x42; 128 * 1024]);
+    gba.load_save(&vec![0x11; 64 * 1024]);
+    let save = gba.save_data().expect("flash cart");
+    assert!(save[..64 * 1024].iter().all(|&b| b == 0x11));
+    assert!(
+        save[64 * 1024..].iter().all(|&b| b == 0xFF),
+        "bank 1 kept the previous save"
+    );
+}
+
+#[test]
+fn a_short_eeprom_save_erases_the_rest_of_the_chip() {
+    let save = short_save_over_a_full_one("EEPROM_V122", 8 * 1024);
+    assert_eq!(save.len(), 8 * 1024);
+    assert!(save[..100].iter().all(|&b| b == 0x11));
+    assert!(
+        save[100..].iter().all(|&b| b == 0xFF),
+        "the old save leaked past a short one"
+    );
+}
+
+mod save_fit {
+    use super::{big_eeprom_rom, rom_with};
+    use geebeeayy_core::cart::save_fit;
+
+    const K: usize = 1024;
+
+    #[test]
+    fn sram_takes_32k_with_or_without_the_rtc_footer() {
+        let rom = rom_with("SRAM_V100");
+        assert_eq!(save_fit(&rom, 32 * K), Some(32 * K));
+        assert_eq!(save_fit(&rom, 32 * K + 16), Some(32 * K));
+        assert_eq!(save_fit(&rom, 32 * K - 1), None);
+        assert_eq!(save_fit(&rom, 64 * K), None);
+        assert_eq!(save_fit(&rom, 512), None);
+    }
+
+    #[test]
+    fn flash64_takes_64k_with_or_without_the_rtc_footer() {
+        let rom = rom_with("FLASH512_V131");
+        assert_eq!(save_fit(&rom, 64 * K), Some(64 * K));
+        assert_eq!(save_fit(&rom, 64 * K + 16), Some(64 * K));
+        assert_eq!(save_fit(&rom, 32 * K), None);
+        assert_eq!(save_fit(&rom, 128 * K), None);
+    }
+
+    #[test]
+    fn flash128_takes_128k_with_or_without_the_rtc_footer() {
+        let rom = rom_with("FLASH1M_V103");
+        assert_eq!(save_fit(&rom, 128 * K), Some(128 * K));
+        assert_eq!(save_fit(&rom, 128 * K + 16), Some(128 * K));
+        assert_eq!(save_fit(&rom, 64 * K), None);
+        assert_eq!(save_fit(&rom, 128 * K + 1), None);
+    }
+
+    #[test]
+    fn eeprom_takes_either_chip_size_with_or_without_the_footer() {
+        // A small ROM detects as Eeprom512, a big one as Eeprom8k; both
+        // accept both sizes because the header guess is not the chip.
+        for rom in [rom_with("EEPROM_V122"), big_eeprom_rom(0)] {
+            assert_eq!(save_fit(&rom, 512), Some(512));
+            assert_eq!(save_fit(&rom, 512 + 16), Some(512));
+            assert_eq!(save_fit(&rom, 8 * K), Some(8 * K));
+            assert_eq!(save_fit(&rom, 8 * K + 16), Some(8 * K));
+            assert_eq!(save_fit(&rom, 32 * K), None);
+            assert_eq!(save_fit(&rom, 100), None);
+        }
+    }
+
+    #[test]
+    fn a_cart_without_a_save_chip_fits_nothing() {
+        let rom = rom_with("NOTHING");
+        for len in [0, 512, 8 * K, 32 * K, 64 * K, 128 * K] {
+            assert_eq!(save_fit(&rom, len), None, "len {len}");
+        }
+    }
+
+    #[test]
+    fn the_title_fallback_is_used() {
+        let mut rom = rom_with("NOTHING");
+        rom[0xA0..0xAC].copy_from_slice(b"POKEMON RUBY");
+        assert_eq!(save_fit(&rom, 128 * K), Some(128 * K));
+    }
+
+    #[test]
+    fn the_c_abi_returns_the_fit_or_minus_one() {
+        use geebeeayy_core::ffi::geebeeayy_save_fit;
+        let rom = rom_with("SRAM_V100");
+        let fit = |len| unsafe { geebeeayy_save_fit(rom.as_ptr(), rom.len(), len) };
+        assert_eq!(fit(32 * K + 16), 32 * 1024);
+        assert_eq!(fit(100), -1);
+        assert_eq!(
+            unsafe { geebeeayy_save_fit(std::ptr::null(), 0, 32 * K) },
+            -1
+        );
+    }
+
+    #[test]
+    fn a_rom_too_short_to_load_fits_nothing() {
+        // Shorter than the header, so no title to slice and no cart to load.
+        let mut rom = vec![0u8; 0x40];
+        rom[..9].copy_from_slice(b"SRAM_V100");
+        assert_eq!(save_fit(&rom, 32 * K), None);
+        assert_eq!(save_fit(&[], 32 * K), None);
+    }
+}

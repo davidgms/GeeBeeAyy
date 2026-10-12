@@ -33,3 +33,4 @@ here pointing at it.
 - [Phase 5 probes and memory cap](2026-10-08-phase5-probes-and-memory-cap.md) - prlimit 4 GB on every run; targeted edits beat random state fuzz; ASan cannot run under the cap; rcheevos host harness
 - **2026-10-08** - [Layout-changing state fix goes first; anchor offset tests on a known value](2026-10-08-state-layout-tests-order-and-anchors.md)
 - **2026-10-08** - [State v10 ROM CRC, restore validation rules, probe tail offsets now 4 off (project memory)](../../memory.md)
+- **2026-10-12** - [load_save 0xFF fill, save_fit rule, jni_exports test misses one-line `@JvmStatic external fun` (project memory)](../../memory.md)

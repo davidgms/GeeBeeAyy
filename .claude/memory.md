@@ -1447,3 +1447,15 @@ of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
   reports no SIZE is measured by reading, never treated as size 0 (0 means "not a save" and marks).
 - Unavailable tree folders are `RomFolderManager.unavailable` (a StateFlow set by each scan); the
   folder is never auto-removed.
+
+## 2026-10-12 - save import core (rust-engineer)
+
+- `Cartridge::load_save` 0xFF-fills the whole chip before copying, so a short file reads erased past
+  its end. Savestate restore goes through it too (with `save_data()`'s full-size buffer, except a
+  small-mode EEPROM's 512 bytes, whose unreachable upper 7.5 KB now restores as 0xFF).
+- `cart::save_fit(rom, len)` is the import size rule (exact chip size or +16 mGBA RTC footer;
+  EEPROM accepts 512 and 8192 whichever the header says). C `geebeeayy_save_fit`, JNI static
+  `GbaEngine.nativeSaveFit`.
+- `core/tests/jni_exports.rs` only finds Kotlin externals on lines that START with `external fun` or
+  `private external fun`. Put `@JvmStatic` (or any annotation/modifier) on the line above, or the
+  export check silently skips that declaration.
