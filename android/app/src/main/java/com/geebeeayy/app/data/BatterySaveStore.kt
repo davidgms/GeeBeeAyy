@@ -180,12 +180,16 @@ internal const val SAVE_BACKUPS = 3
  */
 internal fun forceImportSave(private: File, bytes: ByteArray, keep: Int): Boolean = synchronized(SAVE_WRITE_LOCK) {
     fun bak(n: Int) = File(private.parentFile, "${private.name}.bak$n")
+    // A file that shrank since it was checked would be zero-padded, not imported.
+    if (bytes.size < keep) return false
     val kept = bytes.copyOf(keep)
     if (private.isFile && private.length() > 0) {
         val old = runCatching { private.readBytes() }.getOrNull() ?: return false
-        bak(SAVE_BACKUPS).delete()
-        for (n in SAVE_BACKUPS - 1 downTo 1) if (bak(n).exists()) bak(n).renameTo(bak(n + 1))
-        if (!atomicWrite(bak(1), old)) return false
+        // Written aside first, so a failed backup costs no older generation.
+        val next = File(private.parentFile, "${private.name}.bak.new")
+        if (!atomicWrite(next, old)) return false
+        for (n in SAVE_BACKUPS - 1 downTo 1) if (bak(n).exists() && !bak(n).renameTo(bak(n + 1))) return false
+        if (!next.renameTo(bak(1))) return false
     }
     if (!atomicWrite(private, kept)) return false
     if (!private.readBytes().contentEquals(kept)) return false

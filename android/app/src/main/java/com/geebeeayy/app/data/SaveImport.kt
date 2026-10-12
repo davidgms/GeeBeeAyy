@@ -132,7 +132,8 @@ object SaveImport {
             val keep = r.keep
             if (!r.selected || key == null || keep == null) {
                 skipped++
-            } else if (r.rom?.filePath == openGame || key == openKey) {
+            } else if (r.rom?.filePath == openGame || key == openKey || openGame != null && openKey == null) {
+                // An open game whose key cannot be read could be any row's.
                 refused += r.rom?.name ?: key
                 skipped++
             } else if (!done.add(key)) {

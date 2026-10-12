@@ -812,7 +812,7 @@ fun SettingsScreen(
         SaveImportDialog(
             rows = rows,
             roms = roms,
-            onToggle = { i -> importRows = rows.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
+            onToggle = { i -> importRows = importRows?.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
             onPick = { i, rom ->
                 scope.launch(Dispatchers.IO) {
                     val updated = SaveImport.pick(context, rows[i], rom, GbaEngine::saveFit)

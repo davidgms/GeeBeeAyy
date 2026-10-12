@@ -71,6 +71,15 @@ class SaveImportTest {
     }
 
     @Test
+    fun `a file that shrank since the check is refused and the save kept`() {
+        saveFile().parentFile!!.mkdirs()
+        saveFile().writeBytes(byteArrayOf(1))
+        assertFalse(forceImportSave(saveFile(), ByteArray(100), 32768))
+        assertArrayEquals(byteArrayOf(1), saveFile().readBytes())
+        assertFalse(bak(1).exists())
+    }
+
+    @Test
     fun `a forced import ignores newer-wins and the marker`() {
         saveFile().parentFile!!.mkdirs()
         saveFile().writeBytes(byteArrayOf(1))
