@@ -538,7 +538,7 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         val legacy = RomFiles.legacySaveFor(getApplication(), romId, save)
         val imported = File(save.parentFile, "${save.name}.imported").exists()
         waitingForScan = legacy == null && !imported
-        if (waitingForScan || legacy != null && !importLegacySave(legacy, save)) {
+        if (waitingForScan || legacy != null && !importLegacySave(legacy, save) { GbaEngine.saveFit(romData, it) }) {
             Log.w(TAG, "battery save import failed or not ready")
             RaEngine.unloadGame()
             RaEngine.attachEmulator(0L)

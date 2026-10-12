@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
 import java.io.File
+import com.geebeeayy.app.engine.GbaEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -158,7 +159,7 @@ class RomFolderManager(private val context: Context) {
         RomSiblings.replace(scan.siblings)
         unavailableFlow.value = scan.unavailable
         publish(scan.roms)
-        RomFiles.importLegacySaves(context, scan.roms)
+        RomFiles.importLegacySaves(context, scan.roms, GbaEngine::saveFit)
     }
 
     private class Scan(val roms: List<RomEntry>, val siblings: Map<String, Siblings>, val unavailable: Set<String>)

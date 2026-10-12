@@ -11,4 +11,20 @@
     <string name="load_state">Load State</string>
     <string name="no_roms">No ROMs found</string>
     <string name="import_rom">Import ROM</string>
+    <string name="import_saves_title">Import saves from a folder</string>
+    <string name="import_saves_subtitle">Saves from other emulators (.sav, .srm, .sa1). The folder is read once.</string>
+    <string name="import_saves_scanning">Looking for saves…</string>
+    <string name="import_saves_none">No saves found in this folder</string>
+    <string name="import_saves_unavailable">Could not read this folder</string>
+    <string name="import_saves_dialog_title">Import saves</string>
+    <string name="import_saves_confirm">Import %1$d</string>
+    <string name="import_saves_cancel">Cancel</string>
+    <string name="import_saves_pick_game">Pick game</string>
+    <string name="import_saves_no_match">No game matches this file</string>
+    <string name="import_saves_unreadable">Could not read the game or the file</string>
+    <string name="import_saves_misfit">Does not fit this game: the file is %1$s. Accepted sizes: 512 B, 8 KB, 32 KB, 64 KB and 128 KB (or 16 B more).</string>
+    <string name="import_saves_fresh">New: %1$s, %2$s</string>
+    <string name="import_saves_existing">A save already exists: %1$s, %2$s. File: %3$s, %4$s. The current one is kept as a backup.</string>
+    <string name="import_saves_result">Imported: %1$d. Skipped: %2$d. Failed: %3$d.</string>
+    <string name="import_saves_refused">Game is open in the emulator, not imported: %1$s</string>
 </resources>

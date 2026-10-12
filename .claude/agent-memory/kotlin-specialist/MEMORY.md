@@ -17,3 +17,4 @@ here pointing at it.
 - **2026-10-11** - [Worktree build: init the rcheevos submodule, never copy it](2026-10-11-worktree-build-needs-no-cmake-and-never-copy-submodule.md) - shared copy in `.claude/memory.md`
 - **2026-10-11** - [RA coreLock is shared with the VM; onCleared must unlock](2026-10-11-ra-core-lock-is-shared-and-onCleared-must-unlock.md)
 - **2026-10-11** - [Bash guard quirks in worktrees; createDocument may append .bin](2026-10-11-bash-guard-and-docs-provider-quirks.md) - folders design shared in `.claude/memory.md`
+- **2026-10-12** - [scanTree reused as the only tree walker; open-game detection via nav back stack](2026-10-12-reuse-scantree-as-the-only-tree-walker.md)

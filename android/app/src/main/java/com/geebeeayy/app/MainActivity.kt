@@ -227,7 +227,12 @@ fun GeeBeeAyyNavHost() {
         composable("settings") {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
-                onFoldersChanged = { rescanRoms() }
+                onFoldersChanged = { rescanRoms() },
+                roms = romList,
+                // Settings opened from a running game leaves its entry just below.
+                openGame = navController.previousBackStackEntry
+                    ?.takeIf { it.destination.route == "emulation/{filePath}" }
+                    ?.arguments?.getString("filePath")?.let(RomBytes::decodeId),
             )
         }
     }
