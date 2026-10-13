@@ -135,9 +135,9 @@ JNI-K-13, NET-8, STORE-6, PERM-3, EXPORT-2, INPUT-4, INPUT-5, INPUT-7.
 | Id | Blocker | Status |
 |---|---|---|
 | B1 | `MANAGE_EXTERNAL_STORAGE` (PERM-1): Play allows it only for file managers and similar; an emulator has a working alternative. Move to SAF `ACTION_OPEN_DOCUMENT_TREE` + persisted Uri, saves app-private, screenshots via MediaStore. Optional sideload flavor keeps the permission. | Largest item, a real rewrite of `RomFolderManager`, `RomFiles`, `RomBytes`, `RomHeader` and the load path |
-| B2 | No release signing and no AAB in CI (LOG-4), `versionCode = 1` | confirmed |
+| B2 | No release signing and no AAB in CI (LOG-4), `versionCode = 1` | fixed: env-driven `signingConfig`, `versionCode` from `GITHUB_RUN_NUMBER`, CI `bundleRelease` when `GBA_KEYSTORE_B64` exists |
 | B3 | targetSdk is 35 (`build.gradle.kts:14`); new apps likely need 36 since 2026-08-31 | unconfirmed - check the Play Console |
-| B4 | 16 KB page size: `libgeebeeayy_core.so` (arm64, built 2026-10-08) and `libgeebeeayy_ra.so` have LOAD alignment 0x1000, not 0x4000 (`readelf -lW`). NDK r26/r27, no `max-page-size` flag anywhere | confirmed on local builds; recheck the CI artifact |
+| B4 | 16 KB page size: `libgeebeeayy_core.so` (arm64, built 2026-10-08) and `libgeebeeayy_ra.so` have LOAD alignment 0x1000, not 0x4000 (`readelf -lW`). NDK r26/r27, no `max-page-size` flag anywhere | fixed: `max-page-size` and `common-page-size` 16384 through RUSTFLAGS, `ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON` for CMake; verify with `readelf -lW` and `zipalign -c -P 16` |
 | B5 | No privacy policy; data-safety form must declare the RA username, activity and (unless M7 is fixed) file names | confirmed |
 
 Also: `ROADMAP.md` Phase 6 says the app "sends nothing anywhere". That is false
@@ -174,7 +174,7 @@ since RetroAchievements and cover art.
 | 3 | M1, M4 | #76 |
 | 4 | H2, M6, M9, M10, L6 | #77 |
 | 5 | B1, M5, L9, L12 | #78 (private battery saves), #79 (ROM ids), #80 (SAF folders), #81 (permission removed) |
-| 6 | open | - |
+| 6 | B2, B4 (B3 and B5 open) | pending |
 
 Step 5 notes, for whoever picks this up:
 - Battery saves live only in `files/saves/<state key>.sav`. The `.sav` beside

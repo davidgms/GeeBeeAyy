@@ -77,7 +77,9 @@ build_android() {
 
     log "Building Rust core for Android (arm64)..."
     cd "${PROJECT_DIR}/core"
-    cargo ndk -t arm64-v8a -t armeabi-v7a build --release
+    # 16 KB page alignment for Play (NDK r27 defaults to 4 KB); extends RUSTFLAGS.
+    RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384" \
+        cargo ndk -t arm64-v8a -t armeabi-v7a build --release
 
     log "Building Android APK..."
     cd "${PROJECT_DIR}/android"

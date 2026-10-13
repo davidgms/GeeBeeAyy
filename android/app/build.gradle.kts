@@ -16,7 +16,8 @@ android {
         applicationId = "com.geebeeayy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // CI run number keeps it monotonic for Play; local builds get 1.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -37,6 +38,8 @@ android {
                 // Matches the C99 the library is written in, and keeps the
                 // Windows-only RAIntegration path out.
                 arguments += "-DANDROID_STL=none"
+                // 16 KB page alignment for Play.
+                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
             }
         }
     }
@@ -61,8 +64,24 @@ android {
         }
     }
 
+    // Signing comes from the environment so no secret is in the repo. Without
+    // GBA_KEYSTORE the release build stays unsigned and local builds work.
+    // Debug is untouched: it keeps the default debug key.
+    val releaseKeystore = System.getenv("GBA_KEYSTORE")
+    if (releaseKeystore != null) {
+        signingConfigs.create("release") {
+            storeFile = file(releaseKeystore)
+            storePassword = System.getenv("GBA_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("GBA_KEY_ALIAS")
+            keyPassword = System.getenv("GBA_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseKeystore != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

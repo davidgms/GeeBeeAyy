@@ -47,5 +47,13 @@ target_include_directories(geebeeayy_ra PRIVATE
     ${RCHEEVOS}/src/util
 )
 
+# 16 KB page alignment, which Play requires. NDK r27 and older link at 4 KB
+# and ignore ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES (r28+), so the flags go in
+# explicitly; they are harmless on r28.
+target_link_options(geebeeayy_ra PRIVATE
+    -Wl,-z,max-page-size=16384
+    -Wl,-z,common-page-size=16384
+)
+
 find_library(log-lib log)
 target_link_libraries(geebeeayy_ra ${log-lib})

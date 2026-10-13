@@ -78,6 +78,14 @@ linker = "$BIN/aarch64-linux-android35-clang"
 linker = "$BIN/armv7a-linux-androideabi35-clang"
 EOF
 
+    # Play requires 16 KB page alignment (Nov 2025). NDK r27 and older default
+    # to 4 KB and need both flags; r28+ would not. Extends any RUSTFLAGS
+    # already set, and is skipped on the second call from android-all.
+    case "${RUSTFLAGS:-}" in
+        *max-page-size=16384*) ;;
+        *) export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384" ;;
+    esac
+
     echo "Configured Rust linker for Android NDK"
 }
 
