@@ -44,6 +44,8 @@ import androidx.compose.ui.res.stringResource
 import com.geebeeayy.app.R
 import com.geebeeayy.app.data.CoverArt
 import com.geebeeayy.app.data.RomEntry
+import com.geebeeayy.app.data.SaveExport
+import com.geebeeayy.app.data.SaveExportRow
 import com.geebeeayy.app.data.SaveImport
 import com.geebeeayy.app.data.SaveImportRow
 import com.geebeeayy.app.engine.GbaEngine
@@ -201,6 +203,30 @@ fun SettingsScreen(
         }
     }
 
+    var exportTree by remember { mutableStateOf<Uri?>(null) }
+    var exportRows by remember { mutableStateOf<List<SaveExportRow>?>(null) }
+    var exportStatus by remember { mutableStateOf<String?>(null) }
+    var exportBusy by remember { mutableStateOf(false) }
+    val exportNone = stringResource(R.string.export_saves_none)
+    val exportScanning = stringResource(R.string.export_saves_scanning)
+    val exportPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let {
+            exportBusy = true
+            exportStatus = exportScanning
+            scope.launch(Dispatchers.IO) {
+                val rows = SaveExport.scan(context, it, roms)
+                withContext(Dispatchers.Main) {
+                    exportBusy = false
+                    exportStatus = if (rows == null) noFolder else if (rows.isEmpty()) exportNone else null
+                    exportTree = it
+                    exportRows = rows?.takeIf { r -> r.isNotEmpty() }
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -350,6 +376,15 @@ fun SettingsScreen(
                     title = stringResource(R.string.import_saves_title),
                     subtitle = importStatus ?: stringResource(R.string.import_saves_subtitle),
                     onClick = { if (!importBusy) savePicker.launch(null) },
+                )
+            }
+
+            SettingsSection(title = stringResource(R.string.export_saves_dialog_title)) {
+                SettingsItem(
+                    icon = Icons.Default.Save,
+                    title = stringResource(R.string.export_saves_title),
+                    subtitle = exportStatus ?: stringResource(R.string.export_saves_subtitle),
+                    onClick = { if (!exportBusy) exportPicker.launch(null) },
                 )
             }
 
@@ -839,6 +874,31 @@ fun SettingsScreen(
             },
         )
     }
+
+    exportRows?.let { rows ->
+        val tree = exportTree
+        SaveExportDialog(
+            rows = rows,
+            onToggle = { i -> exportRows = exportRows?.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
+            onDismiss = { exportRows = null },
+            onConfirm = {
+                exportRows = null
+                if (tree != null) {
+                    exportBusy = true
+                    scope.launch(Dispatchers.IO) {
+                        val result = SaveExport.apply(context, tree, rows, openGame)
+                        val text = context.getString(R.string.export_saves_result, result.exported, result.skipped, result.failed) +
+                            if (result.refused.isEmpty()) "" else
+                                "\n" + context.getString(R.string.export_saves_refused, result.refused.joinToString())
+                        withContext(Dispatchers.Main) {
+                            exportBusy = false
+                            exportStatus = text
+                        }
+                    }
+                }
+            },
+        )
+    }
 }
 
 private fun formatBytes(n: Long): String = if (n >= 1024) "${n / 1024} KB" else "$n B"
@@ -908,6 +968,57 @@ private fun SaveImportDialog(
         confirmButton = {
             TextButton(onClick = onConfirm, enabled = chosen > 0) {
                 Text(stringResource(R.string.import_saves_confirm, chosen), color = GoldenSaplight)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.import_saves_cancel), color = PineGlowMist) }
+        },
+    )
+}
+
+@Composable
+private fun SaveExportDialog(
+    rows: List<SaveExportRow>,
+    onToggle: (Int) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val chosen = rows.count { it.selected }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(stringResource(R.string.export_saves_dialog_title), fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text(stringResource(R.string.export_saves_warning), fontSize = 12.sp, color = AmberResin)
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(rows) { i, row ->
+                        Row(verticalAlignment = Alignment.Top) {
+                            Checkbox(checked = row.selected, onCheckedChange = { onToggle(i) })
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(row.rom.name, fontSize = 14.sp)
+                                Text("-> ${row.targetName}", fontSize = 12.sp, color = AmberResin)
+                                val note = if (row.targetDocId == null) {
+                                    stringResource(R.string.export_saves_new, formatBytes(row.saveSize))
+                                } else {
+                                    stringResource(
+                                        R.string.export_saves_overwrite,
+                                        formatBytes(row.targetSize), formatTime(row.targetModified),
+                                    )
+                                }
+                                Text(note, fontSize = 11.sp, color = PineGlowMist.copy(alpha = 0.6f))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = chosen > 0) {
+                Text(stringResource(R.string.export_saves_confirm, chosen), color = GoldenSaplight)
             }
         },
         dismissButton = {
