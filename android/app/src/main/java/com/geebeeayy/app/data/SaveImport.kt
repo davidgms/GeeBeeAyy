@@ -45,6 +45,22 @@ internal fun findSaves(rootDocId: String, children: (String) -> List<DocChild>?)
     return seen.filter { !it.isDir && isSaveName(it.name) && (it.size ?: 1L) in 1..MAX_SAVE_BYTES }
 }
 
+/** What No$GBA's compressed save format starts with. */
+private val NOCASH_MAGIC = "NocashGbaBackupMediaSavDataFile".toByteArray(Charsets.US_ASCII)
+
+/** True for a No$GBA compressed save, which is not decoded: the player re-saves it as Raw. */
+internal fun isNocashSave(bytes: ByteArray): Boolean =
+    bytes.size >= NOCASH_MAGIC.size && NOCASH_MAGIC.indices.all { bytes[it] == NOCASH_MAGIC[it] }
+
+/** The chip a game uses, as the player reads it; null for a size that is none of them (0 is "no chip", handled apart). */
+internal fun saveChipLabel(size: Int): String? = when (size) {
+    32768 -> "32 KB SRAM"
+    65536 -> "64 KB Flash"
+    131072 -> "128 KB Flash"
+    8192 -> "EEPROM (512 B or 8 KB)"
+    else -> null
+}
+
 /**
  * One file offered for import. [rom] null means unmatched (the player picks);
  * a [rom] with no [keep] means it does not fit that game, or [key] null that
@@ -58,6 +74,10 @@ data class SaveImportRow(
     val rom: RomEntry? = null,
     val key: String? = null,
     val keep: Int? = null,
+    /** The save chip size this game has, when the file did not fit it (see [saveChipLabel]); null unknown. */
+    val chipSize: Int? = null,
+    /** The file is a No$GBA compressed save. */
+    val nocash: Boolean = false,
     val existingSize: Long = 0L,
     val existingModified: Long = 0L,
     val selected: Boolean = false,
@@ -70,19 +90,30 @@ class SaveImportResult(val imported: Int, val skipped: Int, val failed: Int, val
 object SaveImport {
 
     /** The saves under a picked [tree], or null if it cannot be read. Blocking. */
-    fun scan(context: Context, tree: Uri, roms: List<RomEntry>, saveFit: (ByteArray, Int) -> Int?): List<SaveImportRow>? {
+    fun scan(
+        context: Context,
+        tree: Uri,
+        roms: List<RomEntry>,
+        saveFit: (ByteArray, Int) -> Int?,
+        saveSize: (ByteArray) -> Int?,
+    ): List<SaveImportRow>? {
         val found = findSaves(DocumentsContract.getTreeDocumentId(tree)) {
             RomFolderManager.listChildren(context, tree, it)
         } ?: return null
         return found.map { f ->
             val uri = DocumentsContract.buildDocumentUriUsingTree(tree, f.docId).toString()
-            row(context, f.name, uri, f.size ?: -1L, f.modified, matchRom(f.name, roms), saveFit)
+            row(context, f.name, uri, f.size ?: -1L, f.modified, matchRom(f.name, roms), saveFit, saveSize)
         }
     }
 
     /** [row] re-evaluated against [rom], after the player picked it. Blocking. */
-    fun pick(context: Context, row: SaveImportRow, rom: RomEntry, saveFit: (ByteArray, Int) -> Int?) =
-        row(context, row.fileName, row.uri, row.size, row.modified, rom, saveFit)
+    fun pick(
+        context: Context,
+        row: SaveImportRow,
+        rom: RomEntry,
+        saveFit: (ByteArray, Int) -> Int?,
+        saveSize: (ByteArray) -> Int?,
+    ) = row(context, row.fileName, row.uri, row.size, row.modified, rom, saveFit, saveSize)
 
     private fun row(
         context: Context,
@@ -92,6 +123,7 @@ object SaveImport {
         modified: Long,
         rom: RomEntry?,
         saveFit: (ByteArray, Int) -> Int?,
+        saveSize: (ByteArray) -> Int?,
     ): SaveImportRow {
         val bare = SaveImportRow(name, uri, size, modified, rom)
         if (rom == null) return bare
@@ -99,12 +131,17 @@ object SaveImport {
         val cart = runCatching { RomBytes.read(context, rom.filePath) }.getOrNull() ?: return bare
         val len = if (size >= 0) size else runCatching { read(context, uri).size.toLong() }.getOrNull() ?: return bare
         val key = RomHeader.stateKey(cart)
-        val keep = saveFit(cart, len.toInt())
+        // A No$GBA container is refused whatever its size: one that happens to match a chip would import as garbage.
+        val nocash = runCatching { isNocashSave(read(context, uri)) }.getOrDefault(false)
+        val keep = if (nocash) null else saveFit(cart, len.toInt())
+        val chip = if (keep == null && !nocash) saveSize(cart) else null
         val existing = RomFiles.privateSave(context, key).takeIf { it.isFile && it.length() > 0 }
         return bare.copy(
             size = len,
             key = key,
             keep = keep,
+            chipSize = chip,
+            nocash = nocash,
             existingSize = existing?.length() ?: 0L,
             existingModified = existing?.lastModified() ?: 0L,
             // A game that already has a save is "keep mine" until asked otherwise.
@@ -118,7 +155,7 @@ object SaveImport {
     /**
      * Write the selected rows. [openGame] is the library id of the game now
      * running, if any: writing its save would be flushed over by the emulator
-     * (or lost on its next load), so it is refused. Blocking.
+     * (or lost on its next load), so it is refused. The player closes the game first. Blocking.
      */
     fun apply(context: Context, rows: List<SaveImportRow>, openGame: String?): SaveImportResult {
         val openKey = openGame?.let { runCatching { RomBytes.read(context, it) }.getOrNull()?.let(RomHeader::stateKey) }

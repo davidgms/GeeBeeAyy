@@ -6,6 +6,7 @@ import android.os.Environment
 
 import android.provider.Settings as AndroidSettings
 import android.view.KeyEvent
+import android.widget.Toast
 import android.view.InputDevice
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import com.geebeeayy.app.data.ControlLayoutStore
 import com.geebeeayy.app.engine.RaEngine
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,6 +49,7 @@ import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.SaveExport
 import com.geebeeayy.app.data.SaveExportRow
 import com.geebeeayy.app.data.SaveImport
+import com.geebeeayy.app.data.saveChipLabel
 import com.geebeeayy.app.data.SaveImportRow
 import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.data.DisplaySettings
@@ -92,6 +95,10 @@ fun SettingsScreen(
     roms: List<RomEntry> = emptyList(),
     /** Id of the game running behind this screen, if Settings was opened from one. */
     openGame: String? = null,
+    /** Writes the open game's pending battery save to disk, true when it is current. Blocking. */
+    onFlushOpenGame: () -> Boolean = { true },
+    /** Runs work that must outlive this screen, such as an import the player leaves Settings during. */
+    workScope: CoroutineScope = rememberCoroutineScope(),
 ) {
     val context = LocalContext.current
     val folderManager = remember { RomFolderManager(context) }
@@ -193,7 +200,7 @@ fun SettingsScreen(
             importBusy = true
             importStatus = scanning
             scope.launch(Dispatchers.IO) {
-                val rows = SaveImport.scan(context, it, roms, GbaEngine::saveFit)
+                val rows = SaveImport.scan(context, it, roms, GbaEngine::saveFit, GbaEngine::saveSize)
                 withContext(Dispatchers.Main) {
                     importBusy = false
                     importStatus = if (rows == null) noFolder else if (rows.isEmpty()) noSaves else null
@@ -851,7 +858,7 @@ fun SettingsScreen(
             onToggle = { i -> importRows = importRows?.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
             onPick = { i, rom ->
                 scope.launch(Dispatchers.IO) {
-                    val updated = SaveImport.pick(context, rows[i], rom, GbaEngine::saveFit)
+                    val updated = SaveImport.pick(context, rows[i], rom, GbaEngine::saveFit, GbaEngine::saveSize)
                     withContext(Dispatchers.Main) {
                         importRows = importRows?.mapIndexed { j, r -> if (i == j) updated else r }
                     }
@@ -861,7 +868,7 @@ fun SettingsScreen(
             onConfirm = {
                 importRows = null
                 importBusy = true
-                scope.launch(Dispatchers.IO) {
+                workScope.launch(Dispatchers.IO) {
                     val result = SaveImport.apply(context, rows, openGame)
                     val text = context.getString(R.string.import_saves_result, result.imported, result.skipped, result.failed) +
                         if (result.refused.isEmpty()) "" else
@@ -869,6 +876,7 @@ fun SettingsScreen(
                     withContext(Dispatchers.Main) {
                         importBusy = false
                         importStatus = text
+                        Toast.makeText(context.applicationContext, text, Toast.LENGTH_LONG).show()
                     }
                 }
             },
@@ -885,14 +893,16 @@ fun SettingsScreen(
                 exportRows = null
                 if (tree != null) {
                     exportBusy = true
-                    scope.launch(Dispatchers.IO) {
-                        val result = SaveExport.apply(context, tree, rows, openGame)
+                    workScope.launch(Dispatchers.IO) {
+                        // The open game exports like any other once its pending save is on disk.
+                        val result = SaveExport.apply(context, tree, rows, openGame.takeUnless { onFlushOpenGame() })
                         val text = context.getString(R.string.export_saves_result, result.exported, result.skipped, result.failed) +
                             if (result.refused.isEmpty()) "" else
                                 "\n" + context.getString(R.string.export_saves_refused, result.refused.joinToString())
                         withContext(Dispatchers.Main) {
                             exportBusy = false
                             exportStatus = text
+                            Toast.makeText(context.applicationContext, text, Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -947,6 +957,12 @@ private fun SaveImportDialog(
                             val note = when {
                                 row.rom == null -> stringResource(R.string.import_saves_no_match)
                                 row.key == null -> stringResource(R.string.import_saves_unreadable)
+                                row.nocash -> stringResource(R.string.import_saves_nocash)
+                                row.keep == null && row.chipSize == 0 ->
+                                    stringResource(R.string.import_saves_misfit_none, formatBytes(row.size))
+                                row.keep == null && row.chipSize?.let(::saveChipLabel) != null -> stringResource(
+                                    R.string.import_saves_misfit_chip, saveChipLabel(row.chipSize)!!, formatBytes(row.size),
+                                )
                                 row.keep == null -> stringResource(R.string.import_saves_misfit, formatBytes(row.size))
                                 row.existingSize > 0 -> stringResource(
                                     R.string.import_saves_existing,

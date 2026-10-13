@@ -619,7 +619,9 @@ fn header_title(data: &[u8]) -> String {
 ///
 /// Uses the same save-type detection as loading the ROM, without building a
 /// cartridge. A file is accepted at the chip's exact size, or 16 bytes over
-/// it (the RTC footer mGBA appends), and the footer is dropped. EEPROM
+/// it (the RTC footer mGBA appends), and the footer is dropped. SRAM also
+/// accepts 64 KiB (plus the footer) and keeps the lower 32 KiB: John GBA Lite
+/// writes SRAM saves doubled, the upper half unreachable 0xFF. EEPROM
 /// accepts both chip sizes whichever one the header suggests, because the
 /// game, not the header, decides the chip - see `Cartridge::load_save`.
 /// A ROM too short to load, or one with no save chip, fits nothing.
@@ -631,22 +633,48 @@ fn header_title(data: &[u8]) -> String {
 /// assert_eq!(geebeeayy_core::cart::save_fit(&rom, 512), None);
 /// ```
 pub fn save_fit(rom: &[u8], save_len: usize) -> Option<usize> {
+    let file_is = |size: usize| save_len == size || save_len == size + 16;
+    save_sizes(rom).iter().copied().find(|&size| {
+        // 32 KiB is SRAM alone (every chip size is distinct). John GBA Lite
+        // writes it doubled, with an all-0xFF upper half the game cannot
+        // address, so that half is dropped.
+        file_is(size) || (size == 32 * 1024 && file_is(2 * size))
+    })
+}
+
+/// The battery save size this ROM's chip expects, in bytes, or 0 for a ROM
+/// with no save chip or one too short to load.
+///
+/// The size alone names the chip: 32 KiB is SRAM, 64 KiB and 128 KiB are
+/// Flash, and 8 KiB is EEPROM - which also takes 512 bytes, because the game,
+/// not the header, decides the EEPROM width (see [`save_fit`]). This is what
+/// an import error quotes, so it is always a size `save_fit` accepts.
+///
+/// ```
+/// let mut rom = vec![0u8; 0x400];
+/// rom[0x100..0x10C].copy_from_slice(b"FLASH1M_V103");
+/// assert_eq!(geebeeayy_core::cart::save_size(&rom), 128 * 1024);
+/// ```
+pub fn save_size(rom: &[u8]) -> usize {
+    save_sizes(rom).last().copied().unwrap_or(0)
+}
+
+/// Every save size this ROM's chip accepts, ascending. Shared by
+/// [`save_fit`] and [`save_size`] so the error message and the import can
+/// never disagree.
+fn save_sizes(rom: &[u8]) -> &'static [usize] {
     // `Cartridge::from_bytes` rejects anything shorter, and the title slice
     // below needs the header.
     if rom.len() < 0xC0 {
-        return None;
+        return &[];
     }
-    let sizes: &[usize] = match detect_save_type(rom, &header_title(rom)) {
+    match detect_save_type(rom, &header_title(rom)) {
         SaveType::Sram => &[32 * 1024],
         SaveType::Flash64 => &[64 * 1024],
         SaveType::Flash128 => &[128 * 1024],
         SaveType::Eeprom512 | SaveType::Eeprom8k => &[512, 8 * 1024],
         SaveType::None => &[],
-    };
-    sizes
-        .iter()
-        .copied()
-        .find(|&size| save_len == size || save_len == size + 16)
+    }
 }
 
 fn detect_save_type(rom: &[u8], title: &str) -> SaveType {

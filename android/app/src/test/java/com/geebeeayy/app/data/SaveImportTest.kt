@@ -126,4 +126,27 @@ class SaveImportTest {
         assertFalse(importLegacySave(legacy, saveFile()) { error("rom unreadable") })
         assertFalse(File(saveFile().parentFile, "GAME.sav.imported").exists())
     }
+
+    // Reasons a file does not fit
+
+    @Test
+    fun `a chip size reads as the player knows it`() {
+        assertEquals("32 KB SRAM", saveChipLabel(32768))
+        assertEquals("64 KB Flash", saveChipLabel(65536))
+        assertEquals("128 KB Flash", saveChipLabel(131072))
+        assertEquals("EEPROM (512 B or 8 KB)", saveChipLabel(8192))
+        assertNull(saveChipLabel(0))
+        assertNull(saveChipLabel(-1))
+        assertNull(saveChipLabel(1234))
+    }
+
+    @Test
+    fun `a nocash compressed save is recognised by its header`() {
+        val magic = "NocashGbaBackupMediaSavDataFile".toByteArray(Charsets.US_ASCII)
+        assertTrue(isNocashSave(magic + ByteArray(40)))
+        assertTrue(isNocashSave(magic))
+        assertFalse(isNocashSave(magic.copyOf(magic.size - 1)))
+        assertFalse(isNocashSave(ByteArray(65536)))
+        assertFalse(isNocashSave(ByteArray(0)))
+    }
 }

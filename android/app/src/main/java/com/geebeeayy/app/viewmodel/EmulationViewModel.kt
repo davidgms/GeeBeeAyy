@@ -811,19 +811,32 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /** Writes whatever is pending right now, skipping the debounce. Plain blocking I/O, no suspension. */
-    private fun flushSaveNow() {
+    private fun flushSaveNow(): Boolean {
         synchronized(saveFlushLock) {
             saveFlushJob?.cancel()
             saveFlushJob = null
         }
-        flushPendingSave()
+        return flushPendingSave()
     }
 
-    private fun flushPendingSave() {
-        val store = batterySave ?: return
-        if (!store.flush()) {
+    /**
+     * Flush for a caller outside the loop (Settings exporting the open game):
+     * true when the save file is current. The loop only takes the dirty bit
+     * once per frame, and it may be paused while Settings is open, so a write
+     * the game made since is taken here first. Blocking, call off the main thread.
+     */
+    fun flushSave(): Boolean {
+        runBlocking { engineLock.withLock { if (romLoaded) checkSaveDirty() } }
+        return flushSaveNow()
+    }
+
+    private fun flushPendingSave(): Boolean {
+        val store = batterySave ?: return true
+        val ok = store.flush()
+        if (!ok) {
             Log.e(TAG, "Battery save write failed")
         }
+        return ok
     }
 
     fun stopEmulation() {

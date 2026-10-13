@@ -53,6 +53,17 @@ class GbaEngine {
 
         @JvmStatic
         external fun nativeSaveFit(rom: ByteArray, saveLen: Int): Int
+
+        /**
+         * Bytes of save chip [rom] has: 0 none, 32768 SRAM, 65536 or 131072
+         * Flash, 8192 EEPROM (512 also accepted); null on error. Needs no
+         * emulator instance.
+         */
+        fun saveSize(rom: ByteArray): Int? =
+            nativeSaveSize(rom).takeIf { it >= 0 }
+
+        @JvmStatic
+        external fun nativeSaveSize(rom: ByteArray): Int
     }
 
     private var handle: Long = 0L
