@@ -22,6 +22,7 @@ import com.geebeeayy.app.data.RomEntry
 import com.geebeeayy.app.data.RomFolderManager
 import com.geebeeayy.app.ui.screens.*
 import com.geebeeayy.app.ui.theme.GeeBeeAyyTheme
+import androidx.lifecycle.ViewModelProvider
 import com.geebeeayy.app.viewmodel.EmulationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -225,14 +226,20 @@ fun GeeBeeAyyNavHost() {
         }
 
         composable("settings") {
+            val openEntry = navController.previousBackStackEntry
+                ?.takeIf { it.destination.route == "emulation/{filePath}" }
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onFoldersChanged = { rescanRoms() },
                 roms = romList,
                 // Settings opened from a running game leaves its entry just below.
-                openGame = navController.previousBackStackEntry
-                    ?.takeIf { it.destination.route == "emulation/{filePath}" }
-                    ?.arguments?.getString("filePath")?.let(RomBytes::decodeId),
+                openGame = openEntry?.arguments?.getString("filePath")?.let(RomBytes::decodeId),
+                // The game's own ViewModel owns its save store; ask it, do not reach past it.
+                // Resolved here on the main thread; the flush itself runs on IO.
+                onFlushOpenGame = openEntry?.let { ViewModelProvider(it)[EmulationViewModel::class.java] }
+                    .let { vm -> { vm?.flushSave() ?: true } },
+                // This scope lives with the nav host, so an import or export outlasts the screen.
+                workScope = scope,
             )
         }
     }

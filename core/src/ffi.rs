@@ -588,6 +588,22 @@ pub unsafe extern "C" fn geebeeayy_save_fit(
     })
 }
 
+/// The battery save size this ROM's chip expects, in bytes: 0 for no save
+/// chip, 8192 for EEPROM (which also takes 512), or -1 if `rom` is null.
+/// See [`crate::cart::save_size`]. Needs no emulator handle - unlike
+/// `geebeeayy_save_size`, which reports the loaded cart's save.
+///
+/// # Safety
+/// `rom` must point to `rom_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn geebeeayy_rom_save_size(rom: *const u8, rom_len: usize) -> i64 {
+    if rom.is_null() {
+        return -1;
+    }
+    let rom = unsafe { std::slice::from_raw_parts(rom, rom_len) };
+    guarded(-1, || crate::cart::save_size(rom) as i64)
+}
+
 #[cfg(target_os = "android")]
 pub mod android {
     use super::*;
@@ -877,6 +893,21 @@ pub mod android {
         let (ptr, len) = (bytes.as_ptr() as *const u8, bytes.len());
         // Every accepted size is at most 128 KiB, so the i64 fits a jint.
         unsafe { geebeeayy_save_fit(ptr, len, save_len) as jint }
+    }
+
+    /// Static, like `nativeSaveFit`: the second argument is the class.
+    #[no_mangle]
+    pub extern "system" fn Java_com_geebeeayy_app_engine_GbaEngine_nativeSaveSize(
+        mut env: JNIEnv,
+        _class: JClass,
+        rom: JByteArray,
+    ) -> jint {
+        let Ok(bytes) = (unsafe { env.get_array_elements(&rom, ReleaseMode::NoCopyBack) }) else {
+            return -1;
+        };
+        let (ptr, len) = (bytes.as_ptr() as *const u8, bytes.len());
+        // At most 128 KiB, so the i64 fits a jint.
+        unsafe { geebeeayy_rom_save_size(ptr, len) as jint }
     }
 
     #[no_mangle]

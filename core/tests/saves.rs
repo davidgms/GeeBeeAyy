@@ -937,8 +937,22 @@ mod save_fit {
         assert_eq!(save_fit(&rom, 32 * K), Some(32 * K));
         assert_eq!(save_fit(&rom, 32 * K + 16), Some(32 * K));
         assert_eq!(save_fit(&rom, 32 * K - 1), None);
-        assert_eq!(save_fit(&rom, 64 * K), None);
         assert_eq!(save_fit(&rom, 512), None);
+    }
+
+    #[test]
+    fn sram_takes_a_doubled_64k_file_and_keeps_the_lower_half() {
+        // John GBA Lite writes SRAM saves as 64 KiB: the real 32 KiB, then an
+        // all-0xFF upper half the game cannot address (seen on Hamtaro - Ham
+        // Ham Games, SRAM_V113). Only the lower half is kept.
+        let rom = rom_with("SRAM_V113");
+        assert_eq!(save_fit(&rom, 64 * K), Some(32 * K));
+        assert_eq!(save_fit(&rom, 64 * K + 16), Some(32 * K));
+        assert_eq!(save_fit(&rom, 64 * K + 1), None);
+        assert_eq!(save_fit(&rom, 128 * K), None);
+        // The doubling is SRAM's alone: Flash and EEPROM do not take it.
+        assert_eq!(save_fit(&rom_with("FLASH512_V131"), 128 * K), None);
+        assert_eq!(save_fit(&rom_with("EEPROM_V122"), 16 * K), None);
     }
 
     #[test]
@@ -1008,5 +1022,84 @@ mod save_fit {
         rom[..9].copy_from_slice(b"SRAM_V100");
         assert_eq!(save_fit(&rom, 32 * K), None);
         assert_eq!(save_fit(&[], 32 * K), None);
+    }
+}
+
+mod save_size {
+    use super::{big_eeprom_rom, rom_with};
+    use geebeeayy_core::cart::{save_fit, save_size};
+
+    const K: usize = 1024;
+
+    #[test]
+    fn sram_is_32k() {
+        // Not 64K, even though a doubled John GBA Lite file is accepted.
+        assert_eq!(save_size(&rom_with("SRAM_V100")), 32 * K);
+    }
+
+    #[test]
+    fn both_flash_512k_markers_are_64k() {
+        assert_eq!(save_size(&rom_with("FLASH_V126")), 64 * K);
+        assert_eq!(save_size(&rom_with("FLASH512_V131")), 64 * K);
+    }
+
+    #[test]
+    fn flash_1m_is_128k() {
+        assert_eq!(save_size(&rom_with("FLASH1M_V103")), 128 * K);
+    }
+
+    #[test]
+    fn eeprom_reports_8k_whichever_size_the_header_suggests() {
+        // 8 KB stands for "EEPROM, 512 B also accepted": the game, not the
+        // header, picks the chip, so a small ROM must not report 512.
+        assert_eq!(save_size(&rom_with("EEPROM_V122")), 8 * K);
+        assert_eq!(save_size(&big_eeprom_rom(0)), 8 * K);
+    }
+
+    #[test]
+    fn no_chip_and_too_short_report_zero() {
+        assert_eq!(save_size(&rom_with("NOTHING")), 0);
+        assert_eq!(save_size(&[]), 0);
+        let mut short = vec![0u8; 0x40];
+        short[..9].copy_from_slice(b"SRAM_V100");
+        assert_eq!(save_size(&short), 0);
+    }
+
+    #[test]
+    fn the_title_fallback_is_used() {
+        let mut rom = rom_with("NOTHING");
+        rom[0xA0..0xAC].copy_from_slice(b"POKEMON RUBY");
+        assert_eq!(save_size(&rom), 128 * K);
+    }
+
+    #[test]
+    fn the_reported_size_is_always_one_save_fit_accepts() {
+        // The import error message quotes save_size; it must never name a
+        // size the import itself would then refuse.
+        let mut pokemon = rom_with("NOTHING");
+        pokemon[0xA0..0xAC].copy_from_slice(b"POKEMON RUBY");
+        for rom in [
+            rom_with("SRAM_V100"),
+            rom_with("FLASH_V126"),
+            rom_with("FLASH512_V131"),
+            rom_with("FLASH1M_V103"),
+            rom_with("EEPROM_V122"),
+            big_eeprom_rom(0),
+            pokemon,
+        ] {
+            let size = save_size(&rom);
+            assert_ne!(size, 0);
+            assert_eq!(save_fit(&rom, size), Some(size));
+        }
+    }
+
+    #[test]
+    fn the_c_abi_returns_the_size_or_minus_one() {
+        use geebeeayy_core::ffi::geebeeayy_rom_save_size;
+        let size = |rom: &[u8]| unsafe { geebeeayy_rom_save_size(rom.as_ptr(), rom.len()) };
+        assert_eq!(size(&rom_with("FLASH1M_V103")), 128 * 1024);
+        assert_eq!(size(&rom_with("EEPROM_V122")), 8 * 1024);
+        assert_eq!(size(&rom_with("NOTHING")), 0);
+        assert_eq!(unsafe { geebeeayy_rom_save_size(std::ptr::null(), 0) }, -1);
     }
 }

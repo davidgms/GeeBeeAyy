@@ -88,8 +88,9 @@ object SaveExport {
 
     /**
      * Write the selected rows into [tree]. [openGame] is the library id of the
-     * game now running, if any: its file may be behind the emulator's memory,
-     * so it is refused. Blocking.
+     * game now running, if any, whose pending save the caller has already flushed.
+     * Pass null for it when so; pass the id when the flush failed and its file
+     * may be behind the emulator's memory, so it is refused. Blocking.
      */
     fun apply(context: Context, tree: Uri, rows: List<SaveExportRow>, openGame: String?): SaveExportResult {
         val openKey = openGame?.let { RomFiles.stateKey(context, it) }
