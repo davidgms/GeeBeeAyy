@@ -149,7 +149,7 @@ object RomFiles {
             }
     }
 
-    private fun stateKey(context: Context, rom: String): String? =
+    internal fun stateKey(context: Context, rom: String): String? =
         RomHeader.read(context, rom)?.stateKey()?.takeIf { it != "ROM" }
             ?: runCatching { RomBytes.read(context, rom) }.getOrNull()?.let { RomHeader.stateKey(it) }
 

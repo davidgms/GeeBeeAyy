@@ -27,5 +27,16 @@
     <string name="import_saves_fresh">New: %1$s, %2$s</string>
     <string name="import_saves_existing">A save already exists: %1$s, %2$s. File: %3$s, %4$s. The current one is kept as a backup.</string>
     <string name="import_saves_result">Imported: %1$d. Skipped: %2$d. Failed: %3$d.</string>
+    <string name="export_saves_title">Export saves to a folder</string>
+    <string name="export_saves_subtitle">Copy our saves into another emulator\'s save folder.</string>
+    <string name="export_saves_scanning">Reading the folder…</string>
+    <string name="export_saves_none">No saves of ours to export</string>
+    <string name="export_saves_dialog_title">Export saves</string>
+    <string name="export_saves_warning">Fully close the other emulator first, or it may overwrite what is written here.</string>
+    <string name="export_saves_new">New file: %1$s</string>
+    <string name="export_saves_overwrite">Will overwrite: %1$s, %2$s. The current file is backed up in this app first.</string>
+    <string name="export_saves_confirm">Export %1$d</string>
+    <string name="export_saves_result">Exported: %1$d. Skipped: %2$d. Failed: %3$d.</string>
+    <string name="export_saves_refused">Game is open in the emulator, not exported: %1$s</string>
     <string name="import_saves_refused">Game is open in the emulator, not imported: %1$s</string>
 </resources>
