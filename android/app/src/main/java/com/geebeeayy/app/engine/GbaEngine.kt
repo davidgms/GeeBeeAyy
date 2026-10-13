@@ -41,6 +41,18 @@ class GbaEngine {
         const val KEY_DOWN = 1 shl 7
         const val KEY_R = 1 shl 8
         const val KEY_L = 1 shl 9
+
+        /**
+         * How many bytes of a [saveLen]-byte save file to import for [rom],
+         * or null if the file cannot be this game's save. Accepts the chip's
+         * exact size or 16 bytes over it (mGBA's RTC footer, dropped).
+         * Needs no emulator instance.
+         */
+        fun saveFit(rom: ByteArray, saveLen: Int): Int? =
+            nativeSaveFit(rom, saveLen).takeIf { it >= 0 }
+
+        @JvmStatic
+        external fun nativeSaveFit(rom: ByteArray, saveLen: Int): Int
     }
 
     private var handle: Long = 0L

@@ -1,5 +1,6 @@
 package com.geebeeayy.app.data
 
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicReference
@@ -104,8 +105,8 @@ internal class LegacySave(
 internal fun File.asLegacySave() =
     LegacySave(exists(), if (isFile) length() else 0L, lastModified()) { readBytes() }
 
-internal fun importLegacySave(legacy: File, private: File): Boolean =
-    importLegacySave(legacy.asLegacySave(), private)
+internal fun importLegacySave(legacy: File, private: File, fit: (Int) -> Int? = { it }): Boolean =
+    importLegacySave(legacy.asLegacySave(), private, fit)
 
 /**
  * Bring the `.sav` that used to live beside the ROM into app storage, once.
@@ -121,9 +122,19 @@ internal fun importLegacySave(legacy: File, private: File): Boolean =
  * storage. A failed read or write leaves no marker, so the next launch tries
  * again rather than starting the game without its save.
  *
+ * [fit] maps the legacy file's length to the bytes of it to keep, or null when
+ * it does not fit this cart's save chip (the core's rule, see `GbaEngine.saveFit`).
+ * A misfit is skipped like a lost race: the private save stays, the marker is
+ * written so it is not retried every launch, and the import counts as done -
+ * blocking the launch over a wrong-size file would lock the player out.
+ *
  * @return false if the import failed and should be retried.
  */
-internal fun importLegacySave(legacy: LegacySave, private: File): Boolean = synchronized(SAVE_WRITE_LOCK) {
+internal fun importLegacySave(
+    legacy: LegacySave,
+    private: File,
+    fit: (Int) -> Int? = { it },
+): Boolean = synchronized(SAVE_WRITE_LOCK) {
     val marker = File(private.parentFile, "${private.name}.imported")
     if (marker.exists()) return true
     val privateExists = private.isFile && private.length() > 0
@@ -137,7 +148,13 @@ internal fun importLegacySave(legacy: LegacySave, private: File): Boolean = sync
     if (size in 1..MAX_SAVE_BYTES) {
         val privateIsNewer = privateExists && private.lastModified() >= legacy.lastModified
         if (!privateIsNewer) {
-            val bytes = runCatching { legacy.read() }.getOrNull() ?: return false
+            val read = runCatching { legacy.read() }.getOrNull() ?: return false
+            val keep = runCatching { fit(read.size) }.getOrElse { return false }
+            if (keep == null) {
+                Log.w("GeeBeeAyy/Save", "legacy save of ${read.size} bytes does not fit ${private.name}, skipped")
+                return markImported(marker)
+            }
+            val bytes = read.copyOf(keep)
             if (privateExists) {
                 val kept = File(private.parentFile, "${private.name}.before-import")
                 if (!atomicWrite(kept, private.readBytes())) return false
@@ -147,6 +164,36 @@ internal fun importLegacySave(legacy: LegacySave, private: File): Boolean = sync
         }
     }
     markImported(marker)
+}
+
+/** Backups of a replaced save a manual import keeps: `.bak1` newest to `.bak3` oldest. */
+internal const val SAVE_BACKUPS = 3
+
+/**
+ * Replace [private] with the first [keep] bytes of [bytes], whatever is there
+ * and whatever the marker says: the player asked for exactly this file. The
+ * save being replaced is rotated into `.bak1` first (`.bak3` falls off), and
+ * the import marker is written so the auto import never later swaps the old
+ * file beside the ROM back in.
+ *
+ * @return false if the backup or the write failed; then the save is untouched.
+ */
+internal fun forceImportSave(private: File, bytes: ByteArray, keep: Int): Boolean = synchronized(SAVE_WRITE_LOCK) {
+    fun bak(n: Int) = File(private.parentFile, "${private.name}.bak$n")
+    // A file that shrank since it was checked would be zero-padded, not imported.
+    if (bytes.size < keep) return false
+    val kept = bytes.copyOf(keep)
+    if (private.isFile && private.length() > 0) {
+        val old = runCatching { private.readBytes() }.getOrNull() ?: return false
+        // Written aside first, so a failed backup costs no older generation.
+        val next = File(private.parentFile, "${private.name}.bak.new")
+        if (!atomicWrite(next, old)) return false
+        for (n in SAVE_BACKUPS - 1 downTo 1) if (bak(n).exists() && !bak(n).renameTo(bak(n + 1))) return false
+        if (!next.renameTo(bak(1))) return false
+    }
+    if (!atomicWrite(private, kept)) return false
+    if (!private.readBytes().contentEquals(kept)) return false
+    markImported(File(private.parentFile, "${private.name}.imported"))
 }
 
 private fun markImported(marker: File): Boolean =

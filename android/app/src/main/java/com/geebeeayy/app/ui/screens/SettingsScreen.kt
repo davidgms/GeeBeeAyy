@@ -37,7 +37,16 @@ import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.res.stringResource
+import com.geebeeayy.app.R
 import com.geebeeayy.app.data.CoverArt
+import com.geebeeayy.app.data.RomEntry
+import com.geebeeayy.app.data.SaveImport
+import com.geebeeayy.app.data.SaveImportRow
+import com.geebeeayy.app.engine.GbaEngine
 import com.geebeeayy.app.data.DisplaySettings
 import com.geebeeayy.app.data.RomBytes
 import com.geebeeayy.app.data.RomFolderManager
@@ -77,6 +86,10 @@ private val ScaleMode.label: String
 fun SettingsScreen(
     onBack: () -> Unit,
     onFoldersChanged: () -> Unit = {},
+    /** The library, to match imported saves against. */
+    roms: List<RomEntry> = emptyList(),
+    /** Id of the game running behind this screen, if Settings was opened from one. */
+    openGame: String? = null,
 ) {
     val context = LocalContext.current
     val folderManager = remember { RomFolderManager(context) }
@@ -161,6 +174,32 @@ fun SettingsScreen(
         }
     }
     val unavailable by RomFolderManager.unavailable.collectAsState()
+
+    // Read once, no persisted grant: the tree is only listed and its files read
+    // while this screen is up, and keeping access to somebody else's folder
+    // would be a permission the app has no use for afterwards.
+    var importRows by remember { mutableStateOf<List<SaveImportRow>?>(null) }
+    var importStatus by remember { mutableStateOf<String?>(null) }
+    var importBusy by remember { mutableStateOf(false) }
+    val scanning = stringResource(R.string.import_saves_scanning)
+    val noSaves = stringResource(R.string.import_saves_none)
+    val noFolder = stringResource(R.string.import_saves_unavailable)
+    val savePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let {
+            importBusy = true
+            importStatus = scanning
+            scope.launch(Dispatchers.IO) {
+                val rows = SaveImport.scan(context, it, roms, GbaEngine::saveFit)
+                withContext(Dispatchers.Main) {
+                    importBusy = false
+                    importStatus = if (rows == null) noFolder else if (rows.isEmpty()) noSaves else null
+                    importRows = rows?.takeIf { r -> r.isNotEmpty() }
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -302,6 +341,15 @@ fun SettingsScreen(
                     fontSize = 13.sp,
                     color = AmberResin,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+
+            SettingsSection(title = stringResource(R.string.import_saves_dialog_title)) {
+                SettingsItem(
+                    icon = Icons.Default.Save,
+                    title = stringResource(R.string.import_saves_title),
+                    subtitle = importStatus ?: stringResource(R.string.import_saves_subtitle),
+                    onClick = { if (!importBusy) savePicker.launch(null) },
                 )
             }
 
@@ -760,6 +808,152 @@ fun SettingsScreen(
     if (showRaLogin) {
         RaLoginDialog(onDismiss = { showRaLogin = false })
     }
+
+    importRows?.let { rows ->
+        SaveImportDialog(
+            rows = rows,
+            roms = roms,
+            onToggle = { i -> importRows = importRows?.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
+            onPick = { i, rom ->
+                scope.launch(Dispatchers.IO) {
+                    val updated = SaveImport.pick(context, rows[i], rom, GbaEngine::saveFit)
+                    withContext(Dispatchers.Main) {
+                        importRows = importRows?.mapIndexed { j, r -> if (i == j) updated else r }
+                    }
+                }
+            },
+            onDismiss = { importRows = null },
+            onConfirm = {
+                importRows = null
+                importBusy = true
+                scope.launch(Dispatchers.IO) {
+                    val result = SaveImport.apply(context, rows, openGame)
+                    val text = context.getString(R.string.import_saves_result, result.imported, result.skipped, result.failed) +
+                        if (result.refused.isEmpty()) "" else
+                            "\n" + context.getString(R.string.import_saves_refused, result.refused.joinToString())
+                    withContext(Dispatchers.Main) {
+                        importBusy = false
+                        importStatus = text
+                    }
+                }
+            },
+        )
+    }
+}
+
+private fun formatBytes(n: Long): String = if (n >= 1024) "${n / 1024} KB" else "$n B"
+
+private fun formatTime(millis: Long): String =
+    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(millis)
+
+@Composable
+private fun SaveImportDialog(
+    rows: List<SaveImportRow>,
+    roms: List<RomEntry>,
+    onToggle: (Int) -> Unit,
+    onPick: (Int, RomEntry) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val chosen = rows.count { it.selected && it.importable }
+    var picking by remember { mutableStateOf<Int?>(null) }
+    picking?.let { i ->
+        GamePickerDialog(
+            fileName = rows[i].fileName,
+            roms = roms,
+            onPick = { rom -> picking = null; onPick(i, rom) },
+            onDismiss = { picking = null },
+        )
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(stringResource(R.string.import_saves_dialog_title), fontWeight = FontWeight.Bold) },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                itemsIndexed(rows) { i, row ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        Checkbox(
+                            checked = row.selected,
+                            enabled = row.importable,
+                            onCheckedChange = { onToggle(i) },
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(row.fileName, fontSize = 14.sp)
+                            Text(row.rom?.name ?: "", fontSize = 12.sp, color = AmberResin)
+                            val mine = formatBytes(row.size) to formatTime(row.modified)
+                            val note = when {
+                                row.rom == null -> stringResource(R.string.import_saves_no_match)
+                                row.key == null -> stringResource(R.string.import_saves_unreadable)
+                                row.keep == null -> stringResource(R.string.import_saves_misfit, formatBytes(row.size))
+                                row.existingSize > 0 -> stringResource(
+                                    R.string.import_saves_existing,
+                                    formatBytes(row.existingSize), formatTime(row.existingModified), mine.first, mine.second,
+                                )
+                                else -> stringResource(R.string.import_saves_fresh, mine.first, mine.second)
+                            }
+                            Text(note, fontSize = 11.sp, color = if (row.importable) PineGlowMist.copy(alpha = 0.6f) else Error)
+                            if (row.rom == null || !row.importable) {
+                                TextButton(onClick = { picking = i }) {
+                                    Text(stringResource(R.string.import_saves_pick_game), color = GoldenSaplight)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = chosen > 0) {
+                Text(stringResource(R.string.import_saves_confirm, chosen), color = GoldenSaplight)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.import_saves_cancel), color = PineGlowMist) }
+        },
+    )
+}
+
+/**
+ * The library as a centred, titled, scrolling list. A dropdown anchored to
+ * the row ran off the screen once the library grew past a handful of games.
+ * The folder is shown because two folders can hold a game of the same name.
+ */
+@Composable
+private fun GamePickerDialog(
+    fileName: String,
+    roms: List<RomEntry>,
+    onPick: (RomEntry) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(stringResource(R.string.import_saves_pick_title, fileName), fontWeight = FontWeight.Bold) },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                items(roms.filter { it.exists }) { rom ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(rom) }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(rom.name, fontSize = 15.sp)
+                        rom.folderLabel?.let { Text(it, fontSize = 11.sp, color = PineGlowMist.copy(alpha = 0.6f)) }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.import_saves_cancel), color = PineGlowMist) }
+        },
+    )
 }
 
 @Composable
