@@ -891,7 +891,8 @@ private fun SaveImportDialog(
                                     TextButton(onClick = { menu = true }) {
                                         Text(stringResource(R.string.import_saves_pick_game), color = GoldenSaplight)
                                     }
-                                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                    // The library can be long: cap the menu, it scrolls past this.
+                                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.heightIn(max = 280.dp)) {
                                         roms.filter { it.exists }.forEach { rom ->
                                             DropdownMenuItem(
                                                 text = { Text(rom.name) },
