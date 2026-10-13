@@ -5,6 +5,10 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
 import java.io.File
+import java.io.FileNotFoundException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Manual export of our battery saves into another emulator's folder: name
@@ -60,8 +64,7 @@ object SaveExport {
         val rootId = DocumentsContract.getTreeDocumentId(tree)
         val kids = RomFolderManager.listChildren(context, tree, rootId)?.filter { !it.isDir } ?: return null
         val found = roms.filter { it.exists }.mapNotNull { rom ->
-            val key = runCatching { RomBytes.read(context, rom.filePath)?.let(RomHeader::stateKey) }.getOrNull()
-                ?: return@mapNotNull null
+            val key = RomFiles.stateKey(context, rom.filePath) ?: return@mapNotNull null
             val save = RomFiles.privateSave(context, key).takeIf { it.isFile && it.length() > 0 } ?: return@mapNotNull null
             Triple(rom, key, save)
         }
@@ -89,7 +92,7 @@ object SaveExport {
      * so it is refused. Blocking.
      */
     fun apply(context: Context, tree: Uri, rows: List<SaveExportRow>, openGame: String?): SaveExportResult {
-        val openKey = openGame?.let { runCatching { RomBytes.read(context, it) }.getOrNull()?.let(RomHeader::stateKey) }
+        val openKey = openGame?.let { RomFiles.stateKey(context, it) }
         var exported = 0
         var skipped = 0
         var failed = 0
@@ -119,33 +122,41 @@ object SaveExport {
         return SaveExportResult(exported, skipped, failed, refused)
     }
 
-    /** True written, null identical so left alone, false the size did not match afterwards. */
+    /**
+     * True written and read back equal, null identical so left alone, false
+     * failed. A failure leaves their folder as it was: a file we created is
+     * deleted, a file we truncated gets its old bytes back.
+     */
     private fun write(context: Context, tree: Uri, r: SaveExportRow, bytes: ByteArray): Boolean? {
         val resolver = context.contentResolver
+        fun readBack(uri: Uri) = RomBytes.open(context, uri.toString()).use { it.readCapped(MAX_SAVE_BYTES) }
+        fun put(uri: Uri, data: ByteArray) {
+            // "wt": a plain "w" need not truncate, and a shorter save would keep a stale tail.
+            (resolver.openOutputStream(uri, "wt") ?: throw FileNotFoundException(uri.toString())).use { it.write(data) }
+        }
         val existing = r.targetDocId?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it) }
-        val target = if (existing != null) {
-            val old = RomBytes.open(context, existing.toString()).use { it.readCapped(MAX_SAVE_BYTES) }
+        if (existing != null) {
+            val old = readBack(existing)
             if (old.contentEquals(bytes)) return null
-            // One generation, app-private, made before anything in their folder changes.
-            val bak = File(File(context.filesDir, "export-backups"), r.targetName)
-            if (!atomicWrite(bak, old)) return false
-            existing
-        } else {
-            val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            DocumentsContract.createDocument(resolver, parent, "application/octet-stream", r.targetName) ?: return false
+            // Every replaced file is kept, app-private, before anything in their folder changes.
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+            if (!atomicWrite(File(File(context.filesDir, "export-backups"), "${r.targetName}.$stamp"), old)) return false
+            return runCatching { put(existing, bytes); readBack(existing).contentEquals(bytes) }.getOrDefault(false) ||
+                run { runCatching { put(existing, old) }; false }
         }
-        // "wt": a plain "w" need not truncate, and a shorter save would keep a stale tail.
-        val out = resolver.openOutputStream(target, if (existing != null) "wt" else "w") ?: return false
-        out.use { it.write(bytes) }
-        val (name, size) = resolver.query(
-            target,
-            arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE),
-            null, null, null,
-        )?.use { c -> if (c.moveToFirst()) c.getString(0) to (if (c.isNull(1)) -1L else c.getLong(1)) else null } ?: (null to -1L)
-        // Some providers append an extension to a new file; the other emulator needs the exact name.
-        if (existing == null && name != null && name != r.targetName) {
-            DocumentsContract.renameDocument(resolver, target, r.targetName)
-        }
-        return size == bytes.size.toLong()
+        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        var doc = DocumentsContract.createDocument(resolver, parent, "application/octet-stream", r.targetName) ?: return false
+        val ok = runCatching {
+            put(doc, bytes)
+            val name = resolver.query(doc, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            // Some providers append an extension to a new file; the other emulator needs the exact name.
+            if (name != null && name != r.targetName) {
+                doc = DocumentsContract.renameDocument(resolver, doc, r.targetName) ?: return@runCatching false
+            }
+            readBack(doc).contentEquals(bytes)
+        }.getOrDefault(false)
+        if (!ok) runCatching { DocumentsContract.deleteDocument(resolver, doc) }
+        return ok
     }
 }

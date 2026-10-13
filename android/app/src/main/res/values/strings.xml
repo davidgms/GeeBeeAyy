@@ -34,7 +34,7 @@
     <string name="export_saves_dialog_title">Export saves</string>
     <string name="export_saves_warning">Fully close the other emulator first, or it may overwrite what is written here.</string>
     <string name="export_saves_new">New file: %1$s</string>
-    <string name="export_saves_overwrite">Will overwrite: %1$s, %2$s. The current file is kept as a backup in this app.</string>
+    <string name="export_saves_overwrite">Will overwrite: %1$s, %2$s. The current file is backed up in this app first.</string>
     <string name="export_saves_confirm">Export %1$d</string>
     <string name="export_saves_result">Exported: %1$d. Skipped: %2$d. Failed: %3$d.</string>
     <string name="export_saves_refused">Game is open in the emulator, not exported: %1$s</string>
