@@ -20,7 +20,8 @@
     <string name="import_saves_confirm">Import %1$d</string>
     <string name="import_saves_cancel">Cancel</string>
     <string name="import_saves_pick_game">Pick game</string>
-    <string name="import_saves_no_match">No game matches this file</string>
+    <string name="import_saves_pick_title">Which game is %1$s for?</string>
+    <string name="import_saves_no_match">No game, or more than one, matches this file</string>
     <string name="import_saves_unreadable">Could not read the game or the file</string>
     <string name="import_saves_misfit">Does not fit this game: the file is %1$s. Accepted sizes: 512 B, 8 KB, 32 KB, 64 KB and 128 KB (or 16 B more).</string>
     <string name="import_saves_fresh">New: %1$s, %2$s</string>

@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.res.stringResource
 import com.geebeeayy.app.R
@@ -855,6 +856,15 @@ private fun SaveImportDialog(
     onConfirm: () -> Unit,
 ) {
     val chosen = rows.count { it.selected && it.importable }
+    var picking by remember { mutableStateOf<Int?>(null) }
+    picking?.let { i ->
+        GamePickerDialog(
+            fileName = rows[i].fileName,
+            roms = roms,
+            onPick = { rom -> picking = null; onPick(i, rom) },
+            onDismiss = { picking = null },
+        )
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = NightPanel,
@@ -864,7 +874,6 @@ private fun SaveImportDialog(
         text = {
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(rows) { i, row ->
-                    var menu by remember { mutableStateOf(false) }
                     Row(verticalAlignment = Alignment.Top) {
                         Checkbox(
                             checked = row.selected,
@@ -887,19 +896,8 @@ private fun SaveImportDialog(
                             }
                             Text(note, fontSize = 11.sp, color = if (row.importable) PineGlowMist.copy(alpha = 0.6f) else Error)
                             if (row.rom == null || !row.importable) {
-                                Box {
-                                    TextButton(onClick = { menu = true }) {
-                                        Text(stringResource(R.string.import_saves_pick_game), color = GoldenSaplight)
-                                    }
-                                    // The library can be long: cap the menu, it scrolls past this.
-                                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.heightIn(max = 280.dp)) {
-                                        roms.filter { it.exists }.forEach { rom ->
-                                            DropdownMenuItem(
-                                                text = { Text(rom.name) },
-                                                onClick = { menu = false; onPick(i, rom) },
-                                            )
-                                        }
-                                    }
+                                TextButton(onClick = { picking = i }) {
+                                    Text(stringResource(R.string.import_saves_pick_game), color = GoldenSaplight)
                                 }
                             }
                         }
@@ -912,6 +910,46 @@ private fun SaveImportDialog(
                 Text(stringResource(R.string.import_saves_confirm, chosen), color = GoldenSaplight)
             }
         },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.import_saves_cancel), color = PineGlowMist) }
+        },
+    )
+}
+
+/**
+ * The library as a centred, titled, scrolling list. A dropdown anchored to
+ * the row ran off the screen once the library grew past a handful of games.
+ * The folder is shown because two folders can hold a game of the same name.
+ */
+@Composable
+private fun GamePickerDialog(
+    fileName: String,
+    roms: List<RomEntry>,
+    onPick: (RomEntry) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(stringResource(R.string.import_saves_pick_title, fileName), fontWeight = FontWeight.Bold) },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                items(roms.filter { it.exists }) { rom ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(rom) }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(rom.name, fontSize = 15.sp)
+                        rom.folderLabel?.let { Text(it, fontSize = 11.sp, color = PineGlowMist.copy(alpha = 0.6f)) }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.import_saves_cancel), color = PineGlowMist) }
         },
