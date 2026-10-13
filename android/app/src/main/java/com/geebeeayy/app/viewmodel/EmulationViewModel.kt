@@ -821,9 +821,14 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Flush for a caller outside the loop (Settings exporting the open game):
-     * true when the save file is current. Blocking I/O, call off the main thread.
+     * true when the save file is current. The loop only takes the dirty bit
+     * once per frame, and it may be paused while Settings is open, so a write
+     * the game made since is taken here first. Blocking, call off the main thread.
      */
-    fun flushSave(): Boolean = flushSaveNow()
+    fun flushSave(): Boolean {
+        runBlocking { engineLock.withLock { if (romLoaded) checkSaveDirty() } }
+        return flushSaveNow()
+    }
 
     private fun flushPendingSave(): Boolean {
         val store = batterySave ?: return true
