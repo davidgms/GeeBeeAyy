@@ -5,7 +5,7 @@
 //! pushing keys in between. Slicing must not change the emulation: the last
 //! slice ends on exactly the cycle a single `run_frame` would.
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 /// `code` at the entry point, zero-padded past the cartridge header.
 fn rom(code: &[u32]) -> Vec<u8> {

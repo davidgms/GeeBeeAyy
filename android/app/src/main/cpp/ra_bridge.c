@@ -7,7 +7,7 @@
  *
  * Three things cross this boundary:
  *
- *   memory   C asks the Rust core for bytes, through `geebeeayy_peek_memory`
+ *   memory   C asks the Rust core for bytes, through `gbee_peek_memory`
  *   network  C asks Kotlin to fetch a URL; Kotlin answers later, by id
  *   events   C tells Kotlin an achievement was earned
  */
@@ -145,7 +145,7 @@ static uint32_t RC_CCONV ra_read_memory(uint32_t address, uint8_t* buffer,
    * game is opened, and the client exists before that - signing in does not
    * need an emulator. */
   if (g_peek == NULL) {
-    g_peek = (peek_fn)dlsym(RTLD_DEFAULT, "geebeeayy_peek_memory");
+    g_peek = (peek_fn)dlsym(RTLD_DEFAULT, "gbee_peek_memory");
   }
   if (g_peek == NULL || g_gba == NULL) {
     return 0;
@@ -268,7 +268,7 @@ static void RC_CCONV ra_server_call(const rc_api_request_t* request,
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeServerResponse(
+Java_com_gbee_emulator_engine_RaEngine_nativeServerResponse(
     JNIEnv* env, jclass clazz, jint slot, jint status, jbyteArray body) {
   rc_api_server_response_t response;
   jbyte* bytes = NULL;
@@ -425,14 +425,14 @@ static void RC_CCONV ra_load_callback(int result, const char* error_message,
 /* ----------------------------------------------------------------- exports */
 
 JNIEXPORT jboolean JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
   jclass local;
 
   if (g_client != NULL) {
     return JNI_TRUE;
   }
   (*env)->GetJavaVM(env, &g_vm);
-  local = (*env)->FindClass(env, "com/geebeeayy/app/engine/RaEngine");
+  local = (*env)->FindClass(env, "com/gbee/emulator/engine/RaEngine");
   if (local == NULL) {
     return JNI_FALSE;
   }
@@ -472,7 +472,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeInit(JNIEnv* env, jclass clazz) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeSetEmulator(JNIEnv* env, jclass clazz,
+Java_com_gbee_emulator_engine_RaEngine_nativeSetEmulator(JNIEnv* env, jclass clazz,
                                                          jlong handle) {
   (void)env;
   (void)clazz;
@@ -480,7 +480,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeSetEmulator(JNIEnv* env, jclass cla
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeLogin(JNIEnv* env, jclass clazz,
+Java_com_gbee_emulator_engine_RaEngine_nativeLogin(JNIEnv* env, jclass clazz,
                                                    jstring username, jstring password) {
   const char* user;
   const char* pass;
@@ -507,7 +507,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLogin(JNIEnv* env, jclass clazz,
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeLoginWithToken(JNIEnv* env, jclass clazz,
+Java_com_gbee_emulator_engine_RaEngine_nativeLoginWithToken(JNIEnv* env, jclass clazz,
                                                             jstring username, jstring token) {
   const char* user;
   const char* tok;
@@ -535,7 +535,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLoginWithToken(JNIEnv* env, jclass 
 
 /* The token, so the password is never stored. Null until a login succeeds. */
 JNIEXPORT jstring JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeToken(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeToken(JNIEnv* env, jclass clazz) {
   const rc_client_user_t* user;
   (void)clazz;
 
@@ -550,7 +550,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeToken(JNIEnv* env, jclass clazz) {
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeUsername(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeUsername(JNIEnv* env, jclass clazz) {
   const rc_client_user_t* user;
   (void)clazz;
 
@@ -565,7 +565,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeUsername(JNIEnv* env, jclass clazz)
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeLogout(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeLogout(JNIEnv* env, jclass clazz) {
   (void)env;
   (void)clazz;
   if (g_client != NULL) {
@@ -574,7 +574,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLogout(JNIEnv* env, jclass clazz) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeLoadGame(JNIEnv* env, jclass clazz,
+Java_com_gbee_emulator_engine_RaEngine_nativeLoadGame(JNIEnv* env, jclass clazz,
                                                       jstring hash) {
   const char* value;
   (void)clazz;
@@ -594,7 +594,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLoadGame(JNIEnv* env, jclass clazz,
 }
 
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeUnloadGame(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeUnloadGame(JNIEnv* env, jclass clazz) {
   (void)env;
   (void)clazz;
   if (g_client != NULL) {
@@ -604,7 +604,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeUnloadGame(JNIEnv* env, jclass claz
 
 /* Called once per emulated frame, from the emulation thread. */
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeDoFrame(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeDoFrame(JNIEnv* env, jclass clazz) {
   (void)env;
   (void)clazz;
   if (g_client != NULL) {
@@ -614,7 +614,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeDoFrame(JNIEnv* env, jclass clazz) 
 
 /* Called while paused, so the session stays alive without evaluating. */
 JNIEXPORT void JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
   (void)env;
   (void)clazz;
   if (g_client != NULL) {
@@ -626,7 +626,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeIdle(JNIEnv* env, jclass clazz) {
  * value. No packing, so nothing is truncated and a tab in a title is just a
  * character. */
 JNIEXPORT jobjectArray JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass clazz) {
   rc_client_leaderboard_list_t* list;
   jobjectArray out;
   jclass string_class;
@@ -699,7 +699,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeLeaderboards(JNIEnv* env, jclass cl
  * is rcheevos' own answer to that, stored beside our state file.
  */
 JNIEXPORT jbyteArray JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeSerializeProgress(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeSerializeProgress(JNIEnv* env, jclass clazz) {
   int size;
   jbyteArray out;
   jbyte* bytes;
@@ -729,7 +729,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeSerializeProgress(JNIEnv* env, jcla
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeDeserializeProgress(JNIEnv* env, jclass clazz,
+Java_com_gbee_emulator_engine_RaEngine_nativeDeserializeProgress(JNIEnv* env, jclass clazz,
                                                                  jbyteArray data) {
   jbyte* bytes;
   jsize size;
@@ -757,7 +757,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeDeserializeProgress(JNIEnv* env, jc
  * hundreds; flat rather than tab-packed so a long or tabbed title survives.
  */
 JNIEXPORT jobjectArray JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass clazz) {
   rc_client_achievement_list_t* list;
   jobjectArray out;
   jclass string_class;
@@ -838,7 +838,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeAchievements(JNIEnv* env, jclass cl
 /* -------------------------------------------------------- identification */
 
 JNIEXPORT jstring JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeHashRom(JNIEnv* env, jclass clazz,
+Java_com_gbee_emulator_engine_RaEngine_nativeHashRom(JNIEnv* env, jclass clazz,
                                                      jbyteArray data) {
   jsize size;
   jbyte* bytes;
@@ -862,7 +862,7 @@ Java_com_geebeeayy_app_engine_RaEngine_nativeHashRom(JNIEnv* env, jclass clazz,
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_geebeeayy_app_engine_RaEngine_nativeVersion(JNIEnv* env, jclass clazz) {
+Java_com_gbee_emulator_engine_RaEngine_nativeVersion(JNIEnv* env, jclass clazz) {
   (void)clazz;
   return (*env)->NewStringUTF(env, RCHEEVOS_VERSION_STRING);
 }

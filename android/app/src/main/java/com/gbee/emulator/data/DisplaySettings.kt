@@ -1,0 +1,368 @@
+package com.gbee.emulator.data
+
+import android.content.Context
+
+/** How the 240x160 frame buffer is mapped onto the on-screen area. */
+enum class ScaleMode {
+    /** Largest size preserving the 3:2 aspect ratio; may land on a fractional pixel scale. */
+    FIT,
+
+    /** Largest whole-number multiple that fits, preserving aspect ratio. Falls back to [FIT]
+     *  when the available area is smaller than the native 240x160 resolution. */
+    INTEGER,
+
+    /** Fills the whole available area, ignoring aspect ratio. */
+    STRETCH,
+}
+
+/**
+ * Display preferences, persisted across launches.
+ *
+ * Plain SharedPreferences, matching [RomFolderManager]'s pattern - this app
+ * has no DataStore dependency and these are a handful of small values, not a
+ * case for adding one.
+ */
+class DisplaySettings(context: Context) {
+    private val prefs = context.getSharedPreferences("display_settings", Context.MODE_PRIVATE)
+
+    fun getScaleMode(): ScaleMode =
+        prefs.getString(KEY_SCALE_MODE, null)
+            ?.let { saved -> runCatching { ScaleMode.valueOf(saved) }.getOrNull() }
+            ?: ScaleMode.INTEGER
+
+    fun setScaleMode(mode: ScaleMode) {
+        prefs.edit().putString(KEY_SCALE_MODE, mode.name).apply()
+    }
+
+    /**
+     * Which way up the app is allowed to sit.
+     *
+     * Replaces a `force_portrait` boolean, which could lock upright or let go
+     * and had no way to say *landscape*. That old value is still read as the
+     * fallback, so an install that had portrait locked stays locked: `true`
+     * becomes [ScreenOrientation.PORTRAIT], `false` becomes
+     * [ScreenOrientation.AUTO].
+     */
+    fun getScreenOrientation(): ScreenOrientation {
+        prefs.getString(KEY_ORIENTATION, null)?.let { saved ->
+            runCatching { ScreenOrientation.valueOf(saved) }.getOrNull()?.let { return it }
+        }
+        return if (prefs.getBoolean(KEY_FORCE_PORTRAIT, true)) {
+            ScreenOrientation.PORTRAIT
+        } else {
+            ScreenOrientation.AUTO
+        }
+    }
+
+    fun setScreenOrientation(orientation: ScreenOrientation) {
+        prefs.edit().putString(KEY_ORIENTATION, orientation.name).apply()
+    }
+
+    /**
+     * Whether a running game hides the status and navigation bars.
+     *
+     * Worth about 200px on a 20:9 phone, on a picture already limited by
+     * width. The bars come back on a swipe from the edge, and the moment the
+     * player leaves the game.
+     */
+    fun getFullscreenInGame(): Boolean = prefs.getBoolean(KEY_FULLSCREEN, true)
+
+    fun setFullscreenInGame(fullscreen: Boolean) {
+        prefs.edit().putBoolean(KEY_FULLSCREEN, fullscreen).apply()
+    }
+
+    /**
+     * Whether the battery and clock strip shows along the bottom in game.
+     *
+     * On by default, and worth having as a switch precisely because the bar it
+     * stands in for can be brought back: with the system bars visible this is
+     * a second clock.
+     */
+    fun getShowStatusStrip(): Boolean = prefs.getBoolean(KEY_STATUS_STRIP, true)
+
+    fun setShowStatusStrip(show: Boolean) {
+        prefs.edit().putBoolean(KEY_STATUS_STRIP, show).apply()
+    }
+
+    /**
+     * Whether the core averages each frame with the one before it.
+     *
+     * Defaults to on, because it is what the hardware did: the GBA's LCD was
+     * slow enough to smear two frames together, and games counted on it to
+     * fake transparency. Off shows exactly what the PPU drew, flicker and all.
+     */
+    fun getInterframeBlend(): Boolean = prefs.getBoolean(KEY_INTERFRAME_BLEND, true)
+
+    fun setInterframeBlend(on: Boolean) {
+        prefs.edit().putBoolean(KEY_INTERFRAME_BLEND, on).apply()
+    }
+
+    /**
+     * How many times real time fast forward runs, or 0 for unlimited.
+     *
+     * The ratio is a promise the audio clock enforces: the loop runs this
+     * many emulated frames per real frame period, so 2 really is 2x. A
+     * device that cannot keep up degrades to whatever it can do, with the
+     * audio underrunning, rather than quietly ignoring the number.
+     *
+     * Unlimited keeps the old behaviour - no audio, no throttle, whatever the
+     * CPU gives - which is what you want for seeking through a long cutscene
+     * and is why mGBA, RetroArch and BizHawk all keep an unbounded mode
+     * beside the ratio.
+     *
+     * 2x is the default, matching NanoBoyAdvance and Azahar, and sits inside
+     * the headroom a phone actually has.
+     */
+    fun getFastForwardRatio(): Int =
+        prefs.getInt(KEY_FAST_FORWARD_RATIO, 2).let { saved ->
+            if (saved == 0 || saved in 2..MAX_FAST_FORWARD_RATIO) saved else 2
+        }
+
+    /**
+     * Whether fast forward plays silence.
+     *
+     * The samples are still written, because the write is the frame clock.
+     * Only their contents are zeroed. Worth having above 4x: the device
+     * cannot produce samples fast enough to keep the track fed, and an
+     * underrunning track buzzes.
+     */
+    fun getMuteOnFastForward(): Boolean = prefs.getBoolean(KEY_MUTE_FAST_FORWARD, false)
+
+    fun setMuteOnFastForward(mute: Boolean) {
+        prefs.edit().putBoolean(KEY_MUTE_FAST_FORWARD, mute).apply()
+    }
+
+    fun setFastForwardRatio(ratio: Int) {
+        prefs.edit().putInt(KEY_FAST_FORWARD_RATIO, ratio).apply()
+    }
+
+    /**
+     * Whether the emulator's sound plays.
+     *
+     * Muting does not stop the audio being written - that write is the frame
+     * clock, and skipping it would let the loop free-run. The samples are
+     * zeroed instead.
+     */
+    fun getSoundEnabled(): Boolean = prefs.getBoolean(KEY_SOUND_ENABLED, true)
+
+    fun setSoundEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SOUND_ENABLED, enabled).apply()
+    }
+
+    /** How large the letters on the on-screen buttons are drawn. */
+    fun getControlFontSize(): ControlFontSize =
+        prefs.getString(KEY_CONTROL_FONT, null)
+            ?.let { saved -> runCatching { ControlFontSize.valueOf(saved) }.getOrNull() }
+            ?: ControlFontSize.MEDIUM
+
+    fun setControlFontSize(size: ControlFontSize) {
+        prefs.edit().putString(KEY_CONTROL_FONT, size.name).apply()
+    }
+
+    /** How hard the phone answers a press of an on-screen button. */
+    fun getHapticStrength(): HapticStrength =
+        prefs.getString(KEY_HAPTICS, null)
+            ?.let { saved -> runCatching { HapticStrength.valueOf(saved) }.getOrNull() }
+            ?: HapticStrength.LIGHT
+
+    fun setHapticStrength(strength: HapticStrength) {
+        prefs.edit().putString(KEY_HAPTICS, strength.name).apply()
+    }
+
+    /**
+     * Half the width, in degrees, of each of the D-pad's four straight
+     * directions. What is left between them is a diagonal.
+     *
+     * 45 leaves no diagonals at all - the four sectors meet. 30, the default,
+     * gives a 60-degree straight and a 30-degree diagonal. Down at 15 the
+     * diagonals are twice as wide as the straights.
+     *
+     * There is no right answer here, which is why it is a setting and not a
+     * constant: it depends on the size of the thumb, where the pad sits, and
+     * whether the game is a platformer or a menu.
+     */
+    fun getDpadCardinalHalfDegrees(): Float =
+        prefs.getFloat(KEY_DPAD_CARDINAL, 30f)
+            .coerceIn(MIN_DPAD_CARDINAL_HALF, MAX_DPAD_CARDINAL_HALF)
+
+    fun setDpadCardinalHalfDegrees(degrees: Float) {
+        prefs.edit()
+            .putFloat(
+                KEY_DPAD_CARDINAL,
+                degrees.coerceIn(MIN_DPAD_CARDINAL_HALF, MAX_DPAD_CARDINAL_HALF),
+            )
+            .apply()
+    }
+
+    /** Which colour scheme the on-screen controls draw themselves in. */
+    fun getControlTint(): ControlTint =
+        prefs.getString(KEY_CONTROL_TINT, null)
+            ?.let { saved -> runCatching { ControlTint.valueOf(saved) }.getOrNull() }
+            ?: ControlTint.NIGHT
+
+    fun setControlTint(tint: ControlTint) {
+        prefs.edit().putString(KEY_CONTROL_TINT, tint.name).apply()
+    }
+
+    fun getScreenFilter(): ScreenFilter =
+        prefs.getString(KEY_SCREEN_FILTER, null)
+            ?.let { saved -> runCatching { ScreenFilter.valueOf(saved) }.getOrNull() }
+            ?: ScreenFilter.NONE
+
+    fun setScreenFilter(filter: ScreenFilter) {
+        prefs.edit().putString(KEY_SCREEN_FILTER, filter.name).apply()
+    }
+
+    /**
+     * Multiplier on the on-screen control sizes, [MIN_CONTROL_SCALE] to 1.0.
+     *
+     * Shrink only, because there is nowhere to grow: at 1.0 the button row
+     * already spans nearly the full width, so anything above it pushes L, R
+     * and the outer D-pad keys off the screen. Below 1.0 the buttons drop
+     * under the 48.dp minimum touch target Material and WCAG 2.1 SC 2.5.8 ask
+     * for, which is why the default stays at 1.0 and the floor is 0.7 rather
+     * than something smaller.
+     */
+    fun getControlScale(): Float =
+        prefs.getFloat(KEY_CONTROL_SCALE, 1.0f).coerceIn(MIN_CONTROL_SCALE, 1.0f)
+
+    fun setControlScale(scale: Float) {
+        prefs.edit().putFloat(KEY_CONTROL_SCALE, scale.coerceIn(MIN_CONTROL_SCALE, 1.0f)).apply()
+    }
+
+    /** Opacity of the on-screen controls, 0.3 to 1.0. */
+    /**
+     * Opacity of the on-screen controls.
+     *
+     * Defaults to 0.65 rather than opaque: the controls now sit *over* the
+     * picture instead of under it, so at 1.0 the bottom third of the game
+     * would be behind solid buttons. An existing install keeps whatever it
+     * had.
+     */
+    fun getControlOpacity(): Float =
+        prefs.getFloat(KEY_CONTROL_OPACITY, 0.65f).coerceIn(MIN_CONTROL_OPACITY, 1.0f)
+
+    fun setControlOpacity(opacity: Float) {
+        prefs.edit()
+            .putFloat(KEY_CONTROL_OPACITY, opacity.coerceIn(MIN_CONTROL_OPACITY, 1.0f))
+            .apply()
+    }
+
+    /**
+     * Whether the app may fetch box art for carts with no picture beside them.
+     *
+     * **Off by default, and it stays that way.** This is the only thing in the
+     * app that reaches the network without being asked to, so it has to be
+     * asked. It is also the licensing posture: the art belongs to each game's
+     * publisher, and a fetch the player switched on is a fetch the player
+     * made. See `docs/cover-art.md`.
+     */
+    fun getDownloadCoverArt(): Boolean = prefs.getBoolean(KEY_COVER_ART, false)
+
+    fun setDownloadCoverArt(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_COVER_ART, enabled).apply()
+    }
+
+    /**
+     * Whether opening a game jumps straight back into the quick save.
+     *
+     * Off by default: a player who opens a game expecting the title screen and
+     * lands mid-battle has lost their bearings, and the one who wants this
+     * knows they want it. The quick save is slot 0 - see `slotName`.
+     */
+    fun getAutoLoadQuickSave(): Boolean = prefs.getBoolean(KEY_AUTO_LOAD, false)
+
+    fun setAutoLoadQuickSave(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_LOAD, enabled).apply()
+    }
+
+    /**
+     * Whether to draw the frames-per-second and audio-underrun counter.
+     *
+     * Off by default: it is a diagnostic, and a number over the picture is
+     * clutter to everyone who is not chasing a stutter.
+     */
+    fun getShowPerformance(): Boolean = prefs.getBoolean(KEY_PERFORMANCE, false)
+
+    fun setShowPerformance(show: Boolean) {
+        prefs.edit().putBoolean(KEY_PERFORMANCE, show).apply()
+    }
+
+    /**
+     * Tell the player when the phone holds the screen below 60 Hz during a
+     * game. On by default on Xiaomi phones, where MIUI's smart refresh does it.
+     * See [com.gbee.emulator.ui.RateTip].
+     */
+    fun getRateTip(): Boolean =
+        prefs.getBoolean(KEY_RATE_TIP, com.gbee.emulator.ui.RateTip.defaultEnabled(android.os.Build.MANUFACTURER))
+
+    fun setRateTip(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_RATE_TIP, enabled).apply()
+    }
+
+    /**
+     * Output level, 0.0 to 1.0.
+     *
+     * Separate from the system volume because an emulator is often played
+     * alongside something else, and turning the whole phone down is the wrong
+     * tool. Applied to the AudioTrack, so the hardware does the scaling.
+     */
+    fun getVolume(): Float = prefs.getFloat(KEY_VOLUME, 1.0f).coerceIn(0f, 1f)
+
+    fun setVolume(volume: Float) {
+        prefs.edit().putFloat(KEY_VOLUME, volume.coerceIn(0f, 1f)).apply()
+    }
+
+    companion object {
+        /** 0.7 puts a 48.dp button at 34.dp, which is about as small as it
+         *  can get and still be hit reliably. */
+        const val MIN_CONTROL_SCALE = 0.7f
+
+        /**
+         * Below this the controls stop being findable by touch, which matters
+         * more than the extra visibility of the game behind them.
+         */
+        const val MIN_CONTROL_OPACITY = 0.3f
+
+        private const val KEY_SCALE_MODE = "scale_mode"
+        private const val KEY_FORCE_PORTRAIT = "force_portrait"
+        private const val KEY_ORIENTATION = "screen_orientation"
+        private const val KEY_FULLSCREEN = "fullscreen_in_game"
+        private const val KEY_STATUS_STRIP = "status_strip"
+        private const val KEY_CONTROL_SCALE = "control_scale"
+        private const val KEY_CONTROL_OPACITY = "control_opacity"
+        private const val KEY_SCREEN_FILTER = "screen_filter"
+        private const val KEY_INTERFRAME_BLEND = "interframe_blend"
+        private const val KEY_COVER_ART = "download_cover_art"
+        private const val KEY_AUTO_LOAD = "auto_load_quick_save"
+        private const val KEY_PERFORMANCE = "show_performance"
+        private const val KEY_RATE_TIP = "rate_tip"
+        private const val KEY_VOLUME = "volume"
+        private const val KEY_FAST_FORWARD_RATIO = "fast_forward_ratio"
+        private const val KEY_MUTE_FAST_FORWARD = "mute_fast_forward"
+        private const val KEY_CONTROL_TINT = "control_tint"
+        private const val KEY_CONTROL_FONT = "control_font_size"
+        private const val KEY_SOUND_ENABLED = "sound_enabled"
+        private const val KEY_HAPTICS = "haptic_strength"
+        private const val KEY_DPAD_CARDINAL = "dpad_cardinal_half_degrees"
+
+        /** At 45 the four straight sectors meet and there is no diagonal left. */
+        const val MAX_DPAD_CARDINAL_HALF = 45f
+
+        /** At 15 a diagonal is twice as wide as a straight. */
+        const val MIN_DPAD_CARDINAL_HALF = 15f
+
+        /**
+         * Highest ratio offered.
+         *
+         * Measured on a Mi 10T Pro: a game with headroom hits 2x, 3x and 4x
+         * exactly and peaks around 5.5x, after which a higher ratio is
+         * *slower* as well as choppier - the decimation pass and the audio
+         * read both grow with it, and the picture is published once per
+         * batch. 8 is past the peak already and is there for the games that
+         * are CPU-bound anyway, where the only thing left to trade is
+         * smoothness.
+         */
+        const val MAX_FAST_FORWARD_RATIO = 8
+    }
+}

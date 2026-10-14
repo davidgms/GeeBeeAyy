@@ -6,7 +6,7 @@
 //! Everything here drives the machine the way a cartridge does: values go in
 //! through `MemoryBus`, never into `Dma` directly.
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 /// Build a minimal ROM image: `code` at the entry point, zero-padded past the
 /// 0xC0-byte header the cartridge loader requires.

@@ -6,14 +6,14 @@
   byte-based pair. Grepping the Android tree for the old names to update every
   caller surfaced a second, independent JNI implementation.
 - **Finding**: `android/app/src/main/cpp/jni_bridge.c` is a hand-written C
-  file that `extern`-declares the C ABI (`geebeeayy_*`) and re-implements the
-  same `Java_com_geebeeayy_app_engine_GbaEngine_*` JNI exports that
+  file that `extern`-declares the C ABI (`gbee_*`) and re-implements the
+  same `Java_com_gbee_emulator_engine_GbaEngine_*` JNI exports that
   `core/src/ffi.rs` already provides directly via the `jni` crate. It is not
   wired into the build at all - `android/app/build.gradle.kts` has no
   `externalNativeBuild`/CMake block referencing it, so it never compiles into
   the APK. It is also stale: it still calls the now-removed
-  `geebeeayy_save_state_create`/`geebeeayy_load_state`/
-  `geebeeayy_save_state_destroy`, and it is missing `nativeSetKeys`,
+  `gbee_save_state_create`/`gbee_load_state`/
+  `gbee_save_state_destroy`, and it is missing `nativeSetKeys`,
   `nativeSaveTakeDirty`, `nativeSaveRead`, `nativeSaveWrite`,
   `nativeStateRead` and `nativeStateWrite` entirely - none of the FFI
   additions from the last two save-data passes ever touched it, because

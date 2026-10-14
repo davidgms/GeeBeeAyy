@@ -1,4 +1,4 @@
-# GeeBeeAyy! - Android Roadmap
+# GBee Emulator - Android Roadmap
 
 The plan, ordered by what actually blocks the next milestone.
 
@@ -101,7 +101,7 @@ roughly the order to do it in.
 - [x] Initialise `0x04000130` (`KEYINPUT`) to `0x03FF` in `MemoryBus::new`.
       The register is active-low and `io_regs` is zero-filled, so today every
       read reports all ten buttons held down, forever.
-- [x] Add `geebeeayy_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
+- [x] Add `gbee_set_keys(handle, u16)` to `core/src/ffi.rs`, plus the JNI
       export.
 - [x] Call it from the touch overlay in `EmulationScreen.kt`. Unverified:
       no Android toolchain here, so CI is what will compile it.
@@ -143,7 +143,7 @@ decoder and memory-map bugs that the hand-written tests had missed entirely.
 
 ### 0.5 Rebuild the native library - `mobile-app-developer`
 
-- [x] `android/app/src/main/jniLibs/*/libgeebeeayy_core.so` are **not
+- [x] `android/app/src/main/jniLibs/*/libgbee_core.so` are **not
       committed at all** - `.gitignore`'s `*.so` rule matches them, and
       `git ls-files` confirms neither copy is tracked. They only exist on
       whichever machine last ran a local build, so a fresh clone has no
@@ -512,7 +512,7 @@ Details in [`.claude/memory.md`](.claude/memory.md).
       a JIT built on a wrong interpreter inherits every bug and makes it harder
       to find.
 - [~] **Screenshots** - a menu entry writes the current frame to
-      `Pictures/GeeBeeAyy/<rom key>_<timestamp>.png` at native 240x160,
+      `Pictures/GBee/<rom key>_<timestamp>.png` at native 240x160,
       deliberately not upscaled: a screenshot records what the emulator
       produced, and the scaling is a display choice the viewer can make again.
       Verified on a device. Screen *recording* is still undone.
@@ -522,7 +522,7 @@ Details in [`.claude/memory.md`](.claude/memory.md).
       `android/app/src/main/cpp/`, built with the NDK. **It is deliberately not
       in `core/`**: that crate has two Rust dependencies and no C, and deciding
       what an achievement means is not emulation. The core gained exactly one
-      capability for it - `geebeeayy_peek_memory`, a side-effect-free read of
+      capability for it - `gbee_peek_memory`, a side-effect-free read of
       the three regions an achievement runtime asks a GBA for (352 KB: both
       work RAMs and save memory). Everything else reads 0.
       Three things cross the JNI boundary: memory (C to Rust, via `dlsym`
@@ -725,7 +725,9 @@ on one developer's phone and an app a stranger can install.
       turns into an `UnsatisfiedLinkError` that only appears in the release
       build, never in debug.
 - [ ] **Play Console listing** - description, screenshots, content rating and
-      the data-safety form. The honest answer to the data-safety questions is
+      the data-safety form. The store title is **GBee - GBA Emulator**, so the
+      listing matches a search for "gba"; the app itself is GBee Emulator and
+      its package is `com.gbee.emulator`. The honest answer to the data-safety questions is
       that the app collects nothing. It reaches the network in three cases only:
       RetroAchievements, after the player signs in; cover art, only when the
       player enables it; and homebrew downloads, only on request.
@@ -735,7 +737,7 @@ on one developer's phone and an app a stranger can install.
 - [ ] **Internal testing track first**, on a device that is not the
       development phone, then production.
 
-**Exit criterion:** a stranger can install GeeBeeAyy! from Google Play, point
+**Exit criterion:** a stranger can install GBee Emulator from Google Play, point
 it at their own legally dumped ROM, and play it.
 
 ### The iOS gate

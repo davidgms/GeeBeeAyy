@@ -4,8 +4,8 @@
 //! github.com/mgba-emu/suite), whose expected values were recorded on
 //! hardware with no link cable attached.
 
-use geebeeayy_core::memory::MemoryBus;
-use geebeeayy_core::Gba;
+use gbee_core::memory::MemoryBus;
+use gbee_core::Gba;
 
 const SIOCNT: u32 = 0x0400_0128;
 const RCNT: u32 = 0x0400_0134;

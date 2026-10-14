@@ -8,9 +8,9 @@ metadata:
 `android/app/src/test/**` is plain JVM JUnit - no Robolectric, no mockito
 (see `CLAUDE.md`). Two classes needed under test on 2026-09-17 both wrap a
 real Android object that throws "not mocked" outside an instrumented test:
-`ControlLayoutStore` (`android/app/src/main/java/com/geebeeayy/app/data/ControlLayoutStore.kt`,
+`ControlLayoutStore` (`android/app/src/main/java/com/gbee/emulator/data/ControlLayoutStore.kt`,
 wraps `Context.getSharedPreferences`) and `Haptics`
-(`android/app/src/main/java/com/geebeeayy/app/ui/Haptics.kt`, wraps
+(`android/app/src/main/java/com/gbee/emulator/ui/Haptics.kt`, wraps
 `Vibrator`/`SystemClock`).
 
 The pattern used both times, and worth repeating for the next one of these:
@@ -22,12 +22,12 @@ needs another method of the class, a closure, instead of touching `prefs`/
 - `ControlLayoutStore.Companion.resolveLayoutForGame(chosen, layoutIds,
   defaultLayoutId, landscape, orientationOf)` - the fallback chain behind
   `getLayoutForGame`, tested in
-  `android/app/src/test/java/com/geebeeayy/app/data/ControlLayoutStoreTest.kt`
+  `android/app/src/test/java/com/gbee/emulator/data/ControlLayoutStoreTest.kt`
   with an in-memory `Map<String, LayoutOrientation>` standing in for the
   store.
 - `Haptics.Companion.shouldBuzz(nowMs, lastBuzzMs)` - the debounce decision
   behind `press()`, tested in
-  `android/app/src/test/java/com/geebeeayy/app/ui/HapticsTest.kt`.
+  `android/app/src/test/java/com/gbee/emulator/ui/HapticsTest.kt`.
 
 Both are small, behaviour-preserving extractions (the original method now
 just calls the companion function with its real inputs) and were flagged as

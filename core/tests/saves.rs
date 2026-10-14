@@ -4,7 +4,7 @@
 //! `Cartridge::save_read`/`save_write` had no callers and `MemoryBus` had no
 //! arm for 0x0E000000, so every in-game save write was silently discarded.
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 const SAVE_BASE: u32 = 0x0E00_0000;
 
@@ -125,7 +125,7 @@ fn save_state_round_trips_through_bytes() {
     let bytes = gba.save_state().data;
 
     gba.cpu.registers[0] = 0;
-    let restored = geebeeayy_core::savestate::SaveState { data: bytes };
+    let restored = gbee_core::savestate::SaveState { data: bytes };
     gba.load_state(&restored).expect("state should restore");
     assert_eq!(gba.cpu.registers[0], 0xDEAD);
 }
@@ -135,7 +135,7 @@ fn a_truncated_save_state_is_rejected() {
     let mut gba = gba_with("SRAM_V100");
     let mut bytes = gba.save_state().data;
     bytes.truncate(bytes.len() / 2);
-    let state = geebeeayy_core::savestate::SaveState { data: bytes };
+    let state = gbee_core::savestate::SaveState { data: bytes };
     assert!(
         gba.load_state(&state).is_err(),
         "a truncated state must be rejected, not read short"
@@ -189,7 +189,7 @@ fn a_rejected_save_state_leaves_the_machine_untouched() {
 
     let mut corrupt = before.clone();
     corrupt.truncate(corrupt.len() - 64);
-    let bad = geebeeayy_core::savestate::SaveState { data: corrupt };
+    let bad = gbee_core::savestate::SaveState { data: corrupt };
     assert!(gba.load_state(&bad).is_err());
 
     assert_eq!(
@@ -429,7 +429,7 @@ fn eeprom_marker_is_detected() {
 fn the_header_checksum_covers_only_0xa0_to_0xbc() {
     let mut rom = vec![0u8; 0x200];
     rom[0xA0..0xAC].copy_from_slice(b"CHECKSUMTEST");
-    let before = geebeeayy_core::cart::header_checksum(&rom);
+    let before = gbee_core::cart::header_checksum(&rom);
 
     // Junk anywhere below 0xA0 is outside the checked range and must not
     // change the answer.
@@ -437,7 +437,7 @@ fn the_header_checksum_covers_only_0xa0_to_0xbc() {
         *b = (i as u8).wrapping_mul(7).wrapping_add(3);
     }
     assert_eq!(
-        geebeeayy_core::cart::header_checksum(&rom),
+        gbee_core::cart::header_checksum(&rom),
         before,
         "bytes below 0xA0 must not be part of the header checksum"
     );
@@ -445,13 +445,13 @@ fn the_header_checksum_covers_only_0xa0_to_0xbc() {
     // A byte inside the range must.
     rom[0xB0] = 0x5A;
     assert_ne!(
-        geebeeayy_core::cart::header_checksum(&rom),
+        gbee_core::cart::header_checksum(&rom),
         before,
         "bytes in 0xA0..=0xBC must be part of the header checksum"
     );
 
     // And a header whose complement matches loads without complaint.
-    rom[0xBD] = geebeeayy_core::cart::header_checksum(&rom);
+    rom[0xBD] = gbee_core::cart::header_checksum(&rom);
     let mut gba = Gba::new();
     gba.load_rom(&rom).expect("ROM should load");
     assert_eq!(gba.cartridge().title(), "CHECKSUMTEST");
@@ -577,7 +577,7 @@ fn a_save_state_with_an_absurd_length_field_is_rejected_not_allocated() {
     );
     bytes[at..at + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
 
-    let state = geebeeayy_core::savestate::SaveState { data: bytes };
+    let state = gbee_core::savestate::SaveState { data: bytes };
     assert!(
         state.restore(&mut gba).is_err(),
         "a length past the end of the blob must be an error, not an allocation"
@@ -927,7 +927,7 @@ fn a_short_eeprom_save_erases_the_rest_of_the_chip() {
 
 mod save_fit {
     use super::{big_eeprom_rom, rom_with};
-    use geebeeayy_core::cart::save_fit;
+    use gbee_core::cart::save_fit;
 
     const K: usize = 1024;
 
@@ -1004,15 +1004,12 @@ mod save_fit {
 
     #[test]
     fn the_c_abi_returns_the_fit_or_minus_one() {
-        use geebeeayy_core::ffi::geebeeayy_save_fit;
+        use gbee_core::ffi::gbee_save_fit;
         let rom = rom_with("SRAM_V100");
-        let fit = |len| unsafe { geebeeayy_save_fit(rom.as_ptr(), rom.len(), len) };
+        let fit = |len| unsafe { gbee_save_fit(rom.as_ptr(), rom.len(), len) };
         assert_eq!(fit(32 * K + 16), 32 * 1024);
         assert_eq!(fit(100), -1);
-        assert_eq!(
-            unsafe { geebeeayy_save_fit(std::ptr::null(), 0, 32 * K) },
-            -1
-        );
+        assert_eq!(unsafe { gbee_save_fit(std::ptr::null(), 0, 32 * K) }, -1);
     }
 
     #[test]
@@ -1027,7 +1024,7 @@ mod save_fit {
 
 mod save_size {
     use super::{big_eeprom_rom, rom_with};
-    use geebeeayy_core::cart::{save_fit, save_size};
+    use gbee_core::cart::{save_fit, save_size};
 
     const K: usize = 1024;
 
@@ -1095,11 +1092,11 @@ mod save_size {
 
     #[test]
     fn the_c_abi_returns_the_size_or_minus_one() {
-        use geebeeayy_core::ffi::geebeeayy_rom_save_size;
-        let size = |rom: &[u8]| unsafe { geebeeayy_rom_save_size(rom.as_ptr(), rom.len()) };
+        use gbee_core::ffi::gbee_rom_save_size;
+        let size = |rom: &[u8]| unsafe { gbee_rom_save_size(rom.as_ptr(), rom.len()) };
         assert_eq!(size(&rom_with("FLASH1M_V103")), 128 * 1024);
         assert_eq!(size(&rom_with("EEPROM_V122")), 8 * 1024);
         assert_eq!(size(&rom_with("NOTHING")), 0);
-        assert_eq!(unsafe { geebeeayy_rom_save_size(std::ptr::null(), 0) }, -1);
+        assert_eq!(unsafe { gbee_rom_save_size(std::ptr::null(), 0) }, -1);
     }
 }

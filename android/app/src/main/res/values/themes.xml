@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GeeBeeAyy" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Theme.GBee" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/golden_saplight</item>
         <item name="colorPrimaryContainer">@color/amber_resin</item>
         <item name="colorSecondary">@color/neon_violet</item>

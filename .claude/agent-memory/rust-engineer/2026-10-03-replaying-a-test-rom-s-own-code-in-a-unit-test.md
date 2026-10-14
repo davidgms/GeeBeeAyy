@@ -13,7 +13,7 @@ equivalent does not reproduce them: the IRQ dispatcher's length (libgba
 1. Probe binary runs the ROM until the CPU sits on the interesting `swi`/store
    (match `bus.read32(pc)` plus a register value), then dumps
    `read32(0x03007FFC)` (the IRQ handler) and IWRAM around PC.
-2. Disassemble with capstone from `/home/david/projects/GeeBeeAyy/temp/venv/bin/python3`
+2. Disassemble with capstone from `/home/david/projects/gbee-emulator/temp/venv/bin/python3`
    (`md.skipdata = True`, or it stops at the first data word).
 3. Copy the words into the test at the same addresses; fix up literal-pool
    words that point at RAM you relocate; set the loop registers directly

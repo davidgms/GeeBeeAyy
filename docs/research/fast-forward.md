@@ -14,7 +14,7 @@ distinct answers in the whole field.
 Both files were read for this note; line numbers are from the current
 `feat/interframe-blending` tree.
 
-`android/app/src/main/java/com/geebeeayy/app/viewmodel/EmulationViewModel.kt`:
+`android/app/src/main/java/com/gbee/emulator/viewmodel/EmulationViewModel.kt`:
 
 - `FAST_FORWARD_BATCH = 4` (line 90). While fast-forwarding the loop calls
   `engine.runFrames(4)` (line 490) instead of `engine.runFrame()`.
@@ -26,7 +26,7 @@ Both files were read for this note; line numbers are from the current
 - The loop then does `yield(); continue` (lines 530-532), skipping both
   `audio.write` and `delayUntilDeadline`. There is no throttle of any kind.
 
-`android/app/src/main/java/com/geebeeayy/app/engine/AudioOutput.kt`:
+`android/app/src/main/java/com/gbee/emulator/engine/AudioOutput.kt`:
 
 - `SAMPLE_RATE = 48_000`, `BUFFERED_FRAMES = 2`, so the AudioTrack holds
   1,600 samples, about 33 ms.
@@ -52,12 +52,12 @@ Two smaller things found while reading, worth recording:
 
 - `audioSamples` is `SAMPLES_PER_FRAME * 8 = 6400` floats, but the core emits
   `48000 / 59.7275 = 803.65` samples per frame, not 800. Eight frames is 6,429
-  samples, so a batch of 8 truncates. `geebeeayy_audio_copy`
+  samples, so a batch of 8 truncates. `gbee_audio_copy`
   (`core/src/ffi.rs:190`) copies `min(len, max_samples)` and then clears the
   whole buffer, so the overflow is silently dropped rather than corrupting
   anything. Any batch size above 7 loses samples.
 - `GbaScreen` in
-  `android/app/src/main/java/com/geebeeayy/app/ui/screens/EmulationScreen.kt:738`
+  `android/app/src/main/java/com/gbee/emulator/ui/screens/EmulationScreen.kt:738`
   converts all 38,400 pixels from RGB to ARGB and calls `Bitmap.setPixels` in
   the composition phase, on the UI thread, once per published frame. Compose
   coalesces recompositions to the display refresh, so publishing more often
@@ -747,7 +747,7 @@ Two details:
 - `audioSamples` is 6,400 floats and one frame is 803.65 samples, so it holds
   7.96 frames. Raise it to `SAMPLES_PER_FRAME * 12` (or size it from the
   maximum ratio) before allowing a ratio above 7, or the last frames of a
-  batch are silently truncated by `geebeeayy_audio_copy`.
+  batch are silently truncated by `gbee_audio_copy`.
 - If the device cannot sustain `R`, the write simply stops being the
   bottleneck and the speed settles at whatever the CPU gives, with the audio
   underrunning. That is the same failure mode we have today, but it is now the
@@ -765,7 +765,7 @@ looks smooth clamps presentation to the display; see PPSSPP's
 one part that belongs in `core/`, and it is the difference between fast
 forward that is capped by the PPU and fast forward that is capped by the CPU.
 Add a render flag to `Gba::run_frames` (or a `Gba::set_render_enabled`), plumb
-it through `geebeeayy_run_frames` in `core/src/ffi.rs` and
+it through `gbee_run_frames` in `core/src/ffi.rs` and
 `nativeRunFrames`, and have the PPU skip pixel composition on frames the
 frontend will not show, exactly as SkyEmu passes `render` into
 `gba_tick_ppu` and BizHawk passes it into `FrameAdvance`. Only the last frame

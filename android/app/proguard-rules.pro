@@ -4,9 +4,9 @@
 # builds have `isMinifyEnabled = true`. That is a silent break waiting to
 # happen, because two native libraries find Kotlin by name:
 #
-#   - libgeebeeayy_core (Rust) exports `Java_com_geebeeayy_app_engine_GbaEngine_*`
+#   - libgbee_core (Rust) exports `Java_com_gbee_emulator_engine_GbaEngine_*`
 #     and is bound to GbaEngine's `external fun`s by their names.
-#   - libgeebeeayy_ra (C) calls *back* into RaEngine with GetStaticMethodID,
+#   - libgbee_ra (C) calls *back* into RaEngine with GetStaticMethodID,
 #     looking up `onServerRequest`, `onEvent`, `onLogin` and `onGameLoaded` by
 #     exact name and signature. Nothing in Kotlin calls them, so R8 sees four
 #     unused private methods and deletes them.
@@ -22,13 +22,13 @@
 
 # The engine bindings, whole. Small classes, and every member is part of the
 # contract with the native side.
--keep class com.geebeeayy.app.engine.GbaEngine { *; }
--keep class com.geebeeayy.app.engine.RaEngine { *; }
+-keep class com.gbee.emulator.engine.GbaEngine { *; }
+-keep class com.gbee.emulator.engine.RaEngine { *; }
 
 # The callbacks the C bridge looks up by name. Listed explicitly as well as
 # covered above, so a future refactor that narrows the rule above cannot
 # quietly drop them.
--keepclassmembers class com.geebeeayy.app.engine.RaEngine {
+-keepclassmembers class com.gbee.emulator.engine.RaEngine {
     static void onServerRequest(int, java.lang.String, java.lang.String);
     static void onEvent(int, int, java.lang.String, java.lang.String, int);
     static void onLogin(int, java.lang.String);

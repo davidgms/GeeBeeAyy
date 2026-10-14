@@ -4,7 +4,7 @@
   `.github/` existed before). Needed to know what actually builds the Android
   side, since the developer has no local SDK/NDK and no phone.
 - **Finding 1 - the committed `.so` claim was false.** CLAUDE.md and
-  `ROADMAP.md` (item 0.5) both said `android/app/src/main/jniLibs/*/libgeebeeayy_core.so`
+  `ROADMAP.md` (item 0.5) both said `android/app/src/main/jniLibs/*/libgbee_core.so`
   was "committed" and merely stale. `git ls-files android/app/src/main/jniLibs`
   returns nothing - `.gitignore`'s `*.so` rule (under "Build artifacts")
   matches them and they were never force-added. A fresh clone has no native

@@ -1,6 +1,6 @@
 # Achievements
 
-Research 2026-09-23. The question was "can GeeBeeAyy have achievements, what
+Research 2026-09-23. The question was "can GBee have achievements, what
 does it take, does it work on every game, and is it legal". Everything marked
 **measured** was checked directly in this session; everything else is labelled.
 
@@ -19,7 +19,7 @@ than by code:
 2. **Hardcore later, or never.** Hardcore unlocks are only granted to emulators
    on RetroAchievements' approved list, and the rule is that an emulator "must
    have been publicly available for at least 6 months before it will be
-   considered". GeeBeeAyy is not publicly available at all yet. So hardcore is
+   considered". GBee is not publicly available at all yet. So hardcore is
    at minimum six months after a public release, whatever we build.
 
 That is not a reason to wait. It is a reason to build the softcore path and not
@@ -60,7 +60,7 @@ address space. Its GBA memory map is **three regions** (measured, from
 or the cartridge ROM.
 
 So `ffi.rs` grows one capability: a way to see those three blocks. The cheap
-shape is a pointer per region, the same pattern `geebeeayy_frame_buffer_ptr`
+shape is a pointer per region, the same pattern `gbee_frame_buffer_ptr`
 already uses, so the achievement runtime reads them directly rather than
 crossing the FFI boundary thousands of times per frame. Plus a reset signal,
 which the runtime needs to know a run restarted.

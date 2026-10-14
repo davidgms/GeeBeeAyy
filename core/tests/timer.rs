@@ -1,7 +1,7 @@
 //! Timer overflow and cascade regression tests. No ROM or BIOS image needed.
 
-use geebeeayy_core::memory::MemoryBus;
-use geebeeayy_core::timer::Timer;
+use gbee_core::memory::MemoryBus;
+use gbee_core::timer::Timer;
 
 const IF: u32 = 0x0400_0202;
 
@@ -113,7 +113,7 @@ fn a_prescaled_timer_overflows_after_its_full_period() {
 /// high byte, so `strb` to the control byte never started the timer.
 #[test]
 fn a_byte_write_to_the_control_register_starts_the_timer() {
-    let mut gba = geebeeayy_core::Gba::new();
+    let mut gba = gbee_core::Gba::new();
     gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
     gba.bus.write16(0x0400_0100, 0xFFF0); // TM0CNT_L reload
     gba.bus.write8(0x0400_0102, (ENABLE | IRQ) as u8);
@@ -134,7 +134,7 @@ fn timer_irq_probe(start: u16, nops: usize) -> u16 {
     const CODE: u32 = 0x0300_0000;
     const HANDLER: u32 = 0x0300_0400;
     const RESULT: u32 = 0x0300_0800;
-    let mut gba = geebeeayy_core::Gba::new();
+    let mut gba = gbee_core::Gba::new();
     gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
 
     let mut code = vec![
@@ -336,9 +336,9 @@ fn ticking_a_slice_at_once_matches_ticking_it_cycle_by_cycle() {
 }
 
 /// A machine with `code` (ARM words) in IWRAM and the CPU about to run it.
-fn iwram_machine(code: &[u32]) -> geebeeayy_core::Gba {
+fn iwram_machine(code: &[u32]) -> gbee_core::Gba {
     const CODE: u32 = 0x0300_0000;
-    let mut gba = geebeeayy_core::Gba::new();
+    let mut gba = gbee_core::Gba::new();
     gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");
     for (i, &w) in code.iter().enumerate() {
         gba.bus.write32(CODE + 4 * i as u32, w);

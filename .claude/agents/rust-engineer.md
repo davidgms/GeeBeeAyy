@@ -330,7 +330,7 @@ Concurrency patterns:
 - Ask `search-specialist` when hardware behaviour is ambiguous, rather than
   reasoning from memory about what a register does. GBATEK settles it.
 - Tell `mobile-app-developer` when the core changes: the committed
-  `jniLibs/*/libgeebeeayy_core.so` goes stale immediately, and a device test
+  `jniLibs/*/libgbee_core.so` goes stale immediately, and a device test
   against a stale library tests the old bug.
 
 Always prioritize memory safety, performance, and correctness while leveraging Rust's unique features for system reliability.

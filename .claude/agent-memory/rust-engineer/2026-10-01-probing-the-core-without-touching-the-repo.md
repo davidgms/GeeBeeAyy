@@ -8,7 +8,7 @@ metadata:
 On a read-only review ("change no files except your memory"), `temp/` is still
 inside the repository. Put probes in the session scratchpad instead: a tiny
 binary crate whose `Cargo.toml` has
-`geebeeayy-core = { path = "/home/david/projects/GeeBeeAyy/core" }`, built with
+`gbee-core = { path = "/home/david/projects/gbee-emulator/core" }`, built with
 `CARGO_TARGET_DIR` pointing into the scratchpad. Everything `pub` on `Gba`
 (`cpu`, `bus`, `apu.snapshot()`, `bios::handle_swi`, `bus.eeprom_begin_dma`,
 `bus.read16_mut`) is reachable, so most hypotheses can be confirmed in one

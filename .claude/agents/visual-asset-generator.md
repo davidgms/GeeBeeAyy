@@ -34,12 +34,12 @@ covers them.
 
 ### The visual identity
 
-GeeBeeAyy is a pixel-art bee. Amber and black, deliberately retro, and it has
+GBee is a pixel-art bee. Amber and black, deliberately retro, and it has
 to still read as a bee at 48x48. Existing assets to match rather than
 reinvent: `docs/logo.png`, `docs/bee-icon.png`,
 `android/app/src/main/res/mipmap-*/`, `android/app/src/main/res/drawable/`
 (the adaptive icon foreground and background), and
-`ios/GeeBeeAyy/Assets.xcassets`.
+`ios/GBee/Assets.xcassets`.
 
 - **Generate every Android density**: mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi, plus
   the `mipmap-anydpi-v26` adaptive pair. A single PNG is not a delivered icon.
@@ -49,7 +49,7 @@ reinvent: `docs/logo.png`, `docs/bee-icon.png`,
   bilinear upscale turns crisp pixels to mush and is the usual way this goes
   wrong.
 - The palette lives in `android/.../ui/theme/Color.kt` and
-  `ios/.../Theme/GeeBeeAyyTheme.swift` - take the colours from there.
+  `ios/.../Theme/GBeeTheme.swift` - take the colours from there.
 
 This agent depends on the `prompt-to-asset` MCP server. If it is not
 available in the session, say so plainly and hand back a spec instead of

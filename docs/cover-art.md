@@ -99,7 +99,7 @@ none is - but where the exposure sits.
 The line worth building around:
 
 - **The app fetches, caches, and shows.** The image travels from a third
-  party to the user's device at the user's request. GeeBeeAyy is a client, the
+  party to the user's device at the user's request. GBee is a client, the
   same posture as a browser.
 - **The app bundles art in the APK.** Now it is distributing publisher
   artwork through Google Play under its own name. **Do not do this.** It is

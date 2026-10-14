@@ -1,4 +1,4 @@
-# GeeBeeAyy! - iOS Roadmap
+# GBee Emulator - iOS Roadmap
 
 **Do not start any of this yet.**
 
@@ -22,7 +22,7 @@ should go back to `ROADMAP.md` instead.
 ## Where iOS actually stands
 
 `ios/` holds about 750 lines: SwiftUI views (Splash, ROM browser, Emulation,
-Settings), a `GbaEngine.swift` wrapper and a `GeeBeeAyyTheme`. There is **no
+Settings), a `GbaEngine.swift` wrapper and a `GBeeTheme`. There is **no
 Xcode project and no `Package.swift`**, so none of it has ever been compiled.
 Treat every line of it as a draft that has not met a compiler, because that is
 what it is.
@@ -71,7 +71,7 @@ Owned by `swift-expert`, with `mobile-app-developer` on the build.
       a translation of the Kotlin one.
 - [ ] TestFlight, then App Store.
 
-**Exit criterion:** a stranger can install GeeBeeAyy! from the App Store, point
+**Exit criterion:** a stranger can install GBee Emulator from the App Store, point
 it at their own legally dumped ROM, and play it - with the same games working
 the same way they do on Android.
 

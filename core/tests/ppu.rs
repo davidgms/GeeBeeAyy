@@ -22,7 +22,7 @@
 //!   https://github.com/pinobatch/240p-test-mini/releases/download/v0.23/240pee_mb.gba
 //! ```
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 use std::collections::HashMap;
 
 /// Run a ppu ROM for a few frames and tally the frame buffer's colours.
@@ -1225,9 +1225,9 @@ fn mode2_sorts_its_affine_bgs_by_priority_then_bg_number() {
 /// ~226 cycles a line on hardware; it read set for 272 here.
 #[test]
 fn the_hblank_flag_rises_at_cycle_1006_while_the_irq_still_fires_at_960() {
-    use geebeeayy_core::dma::Dma;
-    use geebeeayy_core::memory::MemoryBus;
-    use geebeeayy_core::ppu::Ppu;
+    use gbee_core::dma::Dma;
+    use gbee_core::memory::MemoryBus;
+    use gbee_core::ppu::Ppu;
 
     let mut ppu = Ppu::new();
     let mut bus = MemoryBus::new();

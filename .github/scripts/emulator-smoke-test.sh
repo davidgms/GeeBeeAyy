@@ -16,13 +16,13 @@ fi
 echo "Installing ${apk_path}"
 adb install -r "${apk_path}"
 
-adb shell monkey -p com.geebeeayy.app -c android.intent.category.LAUNCHER 1
+adb shell monkey -p com.gbee.emulator -c android.intent.category.LAUNCHER 1
 sleep 5
 
-if ! adb shell pidof com.geebeeayy.app; then
-  echo "com.geebeeayy.app is not running after launch - crashed or failed to start"
+if ! adb shell pidof com.gbee.emulator; then
+  echo "com.gbee.emulator is not running after launch - crashed or failed to start"
   adb logcat -d | tail -300
   exit 1
 fi
 
-echo "com.geebeeayy.app launched and is still running."
+echo "com.gbee.emulator launched and is still running."

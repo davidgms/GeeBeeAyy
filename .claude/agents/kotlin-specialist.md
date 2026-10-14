@@ -1,6 +1,6 @@
 ---
 name: kotlin-specialist
-description: "Use PROACTIVELY for the Android frontend under `android/app/src/main/java/com/geebeeayy/app/**`: Jetpack Compose screens, `EmulationViewModel` and its coroutine loop, the Kotlin side of the JNI bridge in `GbaEngine.kt`, `AudioOutput.kt` and the AudioTrack path, and the Gradle Kotlin DSL. Triggers: Compose, composable, recomposition, ViewModel, StateFlow, coroutine, suspend, AudioTrack, audio latency, external fun, JNI declaration, build.gradle.kts, ActivityResultContracts, touch controls, save state slot, ROM picker."
+description: "Use PROACTIVELY for the Android frontend under `android/app/src/main/java/com/gbee/emulator/**`: Jetpack Compose screens, `EmulationViewModel` and its coroutine loop, the Kotlin side of the JNI bridge in `GbaEngine.kt`, `AudioOutput.kt` and the AudioTrack path, and the Gradle Kotlin DSL. Triggers: Compose, composable, recomposition, ViewModel, StateFlow, coroutine, suspend, AudioTrack, audio latency, external fun, JNI declaration, build.gradle.kts, ActivityResultContracts, touch controls, save state slot, ROM picker."
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 memory: project

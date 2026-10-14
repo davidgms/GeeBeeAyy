@@ -1,4 +1,4 @@
-# AGENTS.md - GeeBeeAyy
+# AGENTS.md - GBee
 
 **[`CLAUDE.md`](CLAUDE.md) is the authoritative version of these conventions**
 and carries the parts this summary leaves out: the architecture boundary, the

@@ -1,4 +1,4 @@
-# Project Memory - GeeBeeAyy!
+# Project Memory - GBee Emulator
 
 ## Purpose
 
@@ -56,7 +56,7 @@ Answer hardware questions from these rather than from memory:
 - ARM7TDMI TRM - https://developer.arm.com/documentation/ddi0029/
 - mGBA, SkyEmu, NanoBoyAdvance - reference implementations worth reading when
   a behaviour is ambiguous. **Read them for behaviour, never copy or translate
-  their code**: GeeBeeAyy is MIT, mGBA is MPL-2.0 (file-level copyleft) and
+  their code**: GBee is MIT, mGBA is MPL-2.0 (file-level copyleft) and
   NanoBoyAdvance GPL-3.0. Derive code from GBATEK and hardware test tables;
   port only permissively licensed originals, with their notice in the source
   and in `THIRD_PARTY_NOTICES.md`. On 2026-10-04 the multiply-carry model
@@ -124,7 +124,7 @@ JS-rendered page that cannot be fetched as static text. GBATEK's *ARM CPU
 Exceptions* page reproduces the same exception-entry table and is fetchable,
 so it is the practical primary source even though the TRM outranks it.
 
-### 2026-08-28 - `libgeebeeayy_core.so` was never actually committed
+### 2026-08-28 - `libgbee_core.so` was never actually committed
 
 CLAUDE.md's own architecture section and `ROADMAP.md` item 0.5 both asserted
 the jniLibs `.so` files were "committed" and merely stale. `git ls-files
@@ -258,15 +258,15 @@ See `docs/save-data.md` for the save FFI it was catching errors in.
 
 Grepping the Android tree for JNI method names to check for callers of a
 removed FFI function turns up `android/app/src/main/cpp/jni_bridge.c`, a
-hand-written C file that redeclares the `geebeeayy_*` C ABI and re-implements
-`Java_com_geebeeayy_app_engine_GbaEngine_*`. It looks like an alternative to
+hand-written C file that redeclares the `gbee_*` C ABI and re-implements
+`Java_com_gbee_emulator_engine_GbaEngine_*`. It looks like an alternative to
 the JNI exports `core/src/ffi.rs` already provides directly (the `jni` crate
-implements the same `Java_com_geebeeayy_app_engine_GbaEngine_*` symbols
+implements the same `Java_com_gbee_emulator_engine_GbaEngine_*` symbols
 itself). It is not built: `android/app/build.gradle.kts` has no
 `externalNativeBuild`/CMake block, so nothing ever compiles this file into
 the APK. It is also stale proof of that - it still calls the removed
-`geebeeayy_save_state_create`/`geebeeayy_load_state`/
-`geebeeayy_save_state_destroy` and has no `nativeSetKeys`, save, or
+`gbee_save_state_create`/`gbee_load_state`/
+`gbee_save_state_destroy` and has no `nativeSetKeys`, save, or
 save-state-bytes exports at all, meaning nobody has touched it through two
 rounds of FFI changes. Do not treat it as something to keep in sync; it is
 either dead weight worth deleting or an intentional dual-build path nobody
@@ -546,7 +546,7 @@ anything the roadmap calls done.
 ### 2026-08-31 - Android: no wake lock, and integer scaling was losing a whole step to padding
 
 Two frontend faults found on the device, both one-liners.
-`android/app/src/main/java/com/geebeeayy/app/ui/screens/EmulationScreen.kt` had
+`android/app/src/main/java/com/gbee/emulator/ui/screens/EmulationScreen.kt` had
 no `keepScreenOn` anywhere, so the display slept mid-play while the emulator
 kept running behind it. And the portrait `ScreenContainer` used
 `padding(horizontal = 24.dp)`, which leaves 948 px of a 1080 px screen -
@@ -831,7 +831,7 @@ Four frontend items, all verified on the device rather than assumed:
   with the subtitle saying when the buttons drop below the 48.dp touch target.
   One `graphicsLayer` on the control block does it - Compose maps pointer
   input through the same transform, so the targets stay in register.
-- **Screenshots** at native 240x160 into `Pictures/GeeBeeAyy`.
+- **Screenshots** at native 240x160 into `Pictures/GBee`.
 
 **Application**: two of these four were "the core side is done, nothing can
 reach it" - rewind had no FFI, and the audio buffer had no one asking whether
@@ -1067,7 +1067,7 @@ is the only way to close it completely.
 1. **`rcheevos` belongs on the Android side, never in `core/`.** It is C, and
    `core/` is a Rust crate whose whole rule is `log` and `thiserror`. Deciding
    what an achievement means is not emulation. The core gained exactly one
-   thing: `geebeeayy_peek_memory`.
+   thing: `gbee_peek_memory`.
 
 2. **The peek must not reuse `read8`.** `read8`'s first act is to answer the
    EEPROM window with "chip ready", which is right for a game polling after a
@@ -1454,7 +1454,7 @@ of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
   its end. Savestate restore goes through it too (with `save_data()`'s full-size buffer, except a
   small-mode EEPROM's 512 bytes, whose unreachable upper 7.5 KB now restores as 0xFF).
 - `cart::save_fit(rom, len)` is the import size rule (exact chip size or +16 mGBA RTC footer;
-  EEPROM accepts 512 and 8192 whichever the header says). C `geebeeayy_save_fit`, JNI static
+  EEPROM accepts 512 and 8192 whichever the header says). C `gbee_save_fit`, JNI static
   `GbaEngine.nativeSaveFit`.
 - `core/tests/jni_exports.rs` only finds Kotlin externals on lines that START with `external fun` or
   `private external fun`. Put `@JvmStatic` (or any annotation/modifier) on the line above, or the

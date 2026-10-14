@@ -1,18 +1,18 @@
 [package]
-name = "geebeeayy-core"
+name = "gbee-core"
 version = "0.1.0"
 edition = "2021"
-description = "GeeBeeAyy! GBA Emulation Core"
+description = "GBee Emulator GBA Emulation Core"
 license = "MIT"
-authors = ["GeeBeeAyy! Contributors"]
+authors = ["GBee Emulator Contributors"]
 
 [lib]
-name = "geebeeayy_core"
+name = "gbee_core"
 path = "src/lib.rs"
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [[bin]]
-name = "geebeeayy"
+name = "gbee"
 path = "src/main.rs"
 
 [target.'cfg(target_os = "android")'.dependencies]

@@ -1,10 +1,10 @@
-# GeeBeeAyy! privacy policy
+# GBee Emulator privacy policy
 
 Effective date: 2026-10-13
 
 ## Who we are
 
-GeeBeeAyy! is a free, open source Game Boy Advance emulator for Android. The
+GBee Emulator is a free, open source Game Boy Advance emulator for Android. The
 source code is public. There is no company server behind the app: we do not run
 any backend, database or analytics service.
 

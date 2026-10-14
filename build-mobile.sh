@@ -97,10 +97,10 @@ build_android_arm64() {
     cargo build --manifest-path "$CORE_DIR/Cargo.toml" --target aarch64-linux-android --release
 
     mkdir -p "$ANDROID_JNI_DIR/arm64-v8a"
-    cp "$CORE_DIR/target/aarch64-linux-android/release/libgeebeeayy_core.so" \
+    cp "$CORE_DIR/target/aarch64-linux-android/release/libgbee_core.so" \
        "$ANDROID_JNI_DIR/arm64-v8a/"
 
-    echo "Installed: $ANDROID_JNI_DIR/arm64-v8a/libgeebeeayy_core.so"
+    echo "Installed: $ANDROID_JNI_DIR/arm64-v8a/libgbee_core.so"
 }
 
 build_android_arm() {
@@ -111,10 +111,10 @@ build_android_arm() {
     cargo build --manifest-path "$CORE_DIR/Cargo.toml" --target armv7-linux-androideabi --release
 
     mkdir -p "$ANDROID_JNI_DIR/armeabi-v7a"
-    cp "$CORE_DIR/target/armv7-linux-androideabi/release/libgeebeeayy_core.so" \
+    cp "$CORE_DIR/target/armv7-linux-androideabi/release/libgbee_core.so" \
        "$ANDROID_JNI_DIR/armeabi-v7a/"
 
-    echo "Installed: $ANDROID_JNI_DIR/armeabi-v7a/libgeebeeayy_core.so"
+    echo "Installed: $ANDROID_JNI_DIR/armeabi-v7a/libgbee_core.so"
 }
 
 case "$TARGET" in
@@ -137,14 +137,14 @@ case "$TARGET" in
     echo "Building for iOS arm64 (device)..."
     rustup target add aarch64-apple-ios 2>/dev/null || true
     cargo build --manifest-path "$CORE_DIR/Cargo.toml" --target aarch64-apple-ios --release
-    echo "Output: $CORE_DIR/target/aarch64-apple-ios/release/libgeebeeayy_core.a"
+    echo "Output: $CORE_DIR/target/aarch64-apple-ios/release/libgbee_core.a"
     ;;
 
   ios-sim)
     echo "Building for iOS Simulator (x86_64)..."
     rustup target add x86_64-apple-ios 2>/dev/null || true
     cargo build --manifest-path "$CORE_DIR/Cargo.toml" --target x86_64-apple-ios --release
-    echo "Output: $CORE_DIR/target/x86_64-apple-ios/release/libgeebeeayy_core.a"
+    echo "Output: $CORE_DIR/target/x86_64-apple-ios/release/libgbee_core.a"
     ;;
 
   help|*)

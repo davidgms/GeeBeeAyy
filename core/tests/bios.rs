@@ -4,8 +4,8 @@
 //! over it, so the dispatch path (decoder -> `Cpu::swi` -> `bios::handle_swi`)
 //! is exercised rather than the handler alone. No ROM or BIOS image needed.
 
-use geebeeayy_core::cpu::Cpu;
-use geebeeayy_core::memory::MemoryBus;
+use gbee_core::cpu::Cpu;
+use gbee_core::memory::MemoryBus;
 
 const BASE: u32 = 0x0300_0000;
 const DATA: u32 = 0x0300_1000;

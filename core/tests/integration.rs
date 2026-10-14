@@ -1,7 +1,7 @@
 //! End-to-end smoke test: a hand-assembled ROM drives the CPU, the memory bus
 //! and the PPU through one full frame.
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 /// Build a minimal ROM image: `code` at the entry point, zero-padded past the
 /// 0xC0-byte header the cartridge loader requires.
@@ -277,8 +277,8 @@ fn loading_a_rom_resets_the_machine() {
 /// recorded on hardware, and agree with GBATEK's register descriptions.
 #[test]
 fn io_reads_return_readable_bits_and_open_bus_like_the_mgba_io_read_suite() {
-    use geebeeayy_core::cpu::Cpu;
-    use geebeeayy_core::memory::MemoryBus;
+    use gbee_core::cpu::Cpu;
+    use gbee_core::memory::MemoryBus;
 
     let mut data = vec![0u8; 0x200];
     for (i, half) in [
@@ -387,7 +387,7 @@ fn commercial_games_stay_in_mapped_memory_at_their_usual_cost() {
 /// last bytes of an odd-sized ROM, past its end, and the region boundaries.
 #[test]
 fn wide_reads_match_the_byte_path() {
-    use geebeeayy_core::memory::MemoryBus;
+    use gbee_core::memory::MemoryBus;
     let mut bus = MemoryBus::new();
     let rom: Vec<u8> = (0..0x1003u32).map(|i| (i * 7 + 3) as u8).collect();
     bus.load_rom(&rom);
@@ -435,7 +435,7 @@ fn wide_reads_match_the_byte_path() {
 /// (shifted right by 1)". It used to read 0.
 #[test]
 fn rom_reads_past_the_end_return_the_address_halfword() {
-    use geebeeayy_core::memory::MemoryBus;
+    use gbee_core::memory::MemoryBus;
     let mut bus = MemoryBus::new();
     bus.load_rom(&[0xAA; 0x100]);
     // The suite's address: 0x092468AC / 2 = 0x04923456.
@@ -474,8 +474,8 @@ fn a_dma_from_past_the_end_of_rom_reads_the_address_halfword() {
 /// VBlankIntrWait.
 #[test]
 fn the_bios_reads_as_its_last_fetched_opcode_from_outside() {
-    use geebeeayy_core::cpu::Cpu;
-    use geebeeayy_core::memory::MemoryBus;
+    use gbee_core::cpu::Cpu;
+    use gbee_core::memory::MemoryBus;
     let mut bus = MemoryBus::new();
     let code = [
         0xE591_0000u32, // ldr r0, [r1]

@@ -1,4 +1,4 @@
-# GeeBeeAyy design system
+# GBee design system
 
 The whole system comes from one picture: [`gb-keyart.png`](gb-keyart.png). GB
 in his room, at night, holding a Game Boy Advance. Every colour below was
@@ -23,7 +23,7 @@ His vibe, in the order it has to read:
 ### The rules
 
 - **He is always GB.** Never "G", never "G-Bee", never "the bee" in
-  user-facing copy. The app is GeeBeeAyy; the character is GB.
+  user-facing copy. The app is GBee; the character is GB.
 - **Shades never come off.** They are his face. No eyes behind them, ever.
 - **He never wears a shirt.** Stripes are the outfit.
 - **He never speaks in the UI chrome.** He can appear next to a message; he
@@ -133,15 +133,15 @@ Do not put small text on `AmberResin` permanently.
 
 | File | Owns |
 |---|---|
-| `android/app/src/main/java/com/geebeeayy/app/ui/theme/Color.kt` | The source of truth |
-| `android/app/src/main/java/com/geebeeayy/app/ui/theme/Theme.kt` | Material 3 mapping |
+| `android/app/src/main/java/com/gbee/emulator/ui/theme/Color.kt` | The source of truth |
+| `android/app/src/main/java/com/gbee/emulator/ui/theme/Theme.kt` | Material 3 mapping |
 | `android/app/src/main/res/values/themes.xml` | The same hexes, for the XML theme and system bars |
-| `ios/GeeBeeAyy/Theme/GeeBeeAyyTheme.swift` | The iOS mirror |
+| `ios/GBee/Theme/GBeeTheme.swift` | The iOS mirror |
 
 Four files, one palette. Change one, change all four.
 
 There is **no light theme**. The app is a night-themed emulator, and
-`GeeBeeAyyTheme(darkTheme = false)` resolves to the same scheme on purpose.
+`GBeeTheme(darkTheme = false)` resolves to the same scheme on purpose.
 
 ---
 
@@ -187,7 +187,7 @@ project exists, add both TTFs to the target and list them under
 
 ## 4. Spacing, shape, motion
 
-Spacing is a 4dp grid. iOS already names it in `GeeBeeAyyDesign`; Android uses
+Spacing is a 4dp grid. iOS already names it in `GBeeDesign`; Android uses
 the same numbers inline.
 
 | Name | dp |

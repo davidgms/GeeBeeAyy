@@ -121,14 +121,14 @@ jobs:
         run: rm -f core/.cargo/config.toml .cargo/config.toml
 
       # -o writes straight into the Gradle jniLibs layout
-      # (<abi>/libgeebeeayy_core.so), overwriting whatever stale copy was
+      # (<abi>/libgbee_core.so), overwriting whatever stale copy was
       # already there. --lib skips the desktop CLI binary target, which
       # nothing here needs.
       # x86_64 is here for the emulator smoke test below, not for shipping:
       # android/app/build.gradle.kts adds x86_64 to abiFilters for the debug
       # build type only, so the release APK still carries just the two ARM
       # slices.
-      - name: Build libgeebeeayy_core.so for arm64-v8a, armeabi-v7a and x86_64
+      - name: Build libgbee_core.so for arm64-v8a, armeabi-v7a and x86_64
         working-directory: core
         # 16 KB page alignment, which Play requires; NDK r27 defaults to 4 KB
         # and needs both flags. Extends RUSTFLAGS if the runner sets any.
@@ -139,8 +139,8 @@ jobs:
       - name: Upload native libraries
         uses: actions/upload-artifact@v4
         with:
-          name: libgeebeeayy_core-so
-          path: android/app/src/main/jniLibs/*/libgeebeeayy_core.so
+          name: libgbee_core-so
+          path: android/app/src/main/jniLibs/*/libgbee_core.so
           if-no-files-found: error
 
       # There is no Gradle wrapper committed in android/ (no gradlew, no
@@ -168,7 +168,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: geebeeayy-debug-apk
+          name: gbee-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -201,7 +201,7 @@ jobs:
         if: ${{ steps.release_key.outputs.present == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: geebeeayy-release-aab
+          name: gbee-release-aab
           path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
@@ -248,7 +248,7 @@ jobs:
       - name: Download debug APK
         uses: actions/download-artifact@v4
         with:
-          name: geebeeayy-debug-apk
+          name: gbee-debug-apk
           path: apk
 
       - name: Set up JDK 17

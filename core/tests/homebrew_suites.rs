@@ -36,7 +36,7 @@
 
 use std::collections::BTreeMap;
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 const KEY_A: u16 = 1 << 0;
 const KEY_START: u16 = 1 << 3;

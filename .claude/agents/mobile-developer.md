@@ -32,7 +32,7 @@ them.
 
 ### This project's stack, and your lane inside it
 
-**GeeBeeAyy!** is a Game Boy Advance emulator: a Rust core
+**GBee Emulator** is a Game Boy Advance emulator: a Rust core
 (`core/`, ARM7TDMI interpreter, PPU, APU, DMA, timers) behind a C ABI and JNI
 bridge in `core/src/ffi.rs`, with a Kotlin + Jetpack Compose frontend
 (`android/`, minSdk 26, targetSdk 34, ABIs `arm64-v8a` and `armeabi-v7a`) and

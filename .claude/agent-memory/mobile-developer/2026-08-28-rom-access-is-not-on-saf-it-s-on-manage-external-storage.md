@@ -2,7 +2,7 @@
 
 - **Context**: Consultation on battery-save and save-state file layout before
   either is implemented.
-- **Finding**: `android/app/src/main/java/com/geebeeayy/app/data/RomFolderManager.kt`
+- **Finding**: `android/app/src/main/java/com/gbee/emulator/data/RomFolderManager.kt`
   stores raw path strings in `SharedPreferences("rom_folders")` and walks them
   with plain `java.io.File`. There is no `DocumentFile`, no
   `ACTION_OPEN_DOCUMENT_TREE`, no `takePersistableUriPermission` anywhere in

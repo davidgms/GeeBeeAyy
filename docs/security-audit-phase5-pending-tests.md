@@ -26,7 +26,7 @@ game.
   the debug build) and load it while signed in to RA. Expected: app stops
   responding. Confirms the ANR, not only the host hang.
 - [ ] **M1 - what backup really carries.** `adb shell bmgr backupnow
-  com.geebeeayy.app`, then inspect the transport, or a device-to-device
+  com.gbee.emulator`, then inspect the transport, or a device-to-device
   transfer. Android 12+ uses `data_extraction_rules`, 11 and lower
   `fullBackupContent`, so test one of each when the rules land.
 - [ ] **Foreign VIEW intent (L10).** A small sender app or `adb shell am start
@@ -35,7 +35,7 @@ game.
 - [ ] **Expired or revoked RA token.** A real account: revoke the token on
   retroachievements.org, then launch a game. Expected: token cleared and a
   login prompt, not a loop.
-- [ ] **Process death during a save.** `adb shell am kill com.geebeeayy.app`
+- [ ] **Process death during a save.** `adb shell am kill com.gbee.emulator`
   while a state is written; confirm the atomic write leaves the old file.
 - [x] **B1 - SAF on the main phone** (2026-10-11, #80, #81): both folders
   re-picked, favourites and last-played re-keyed, saves intact, games open,

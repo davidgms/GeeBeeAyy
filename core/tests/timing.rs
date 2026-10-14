@@ -10,7 +10,7 @@
 //! ROM under four WAITCNT settings, each with the prefetch buffer off and on,
 //! then in EWRAM and IWRAM, ARM and THUMB: the suite's twenty columns.
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 const TM0CNT: u32 = 0x0400_0100;
 const SP: u32 = 0x0300_7F00;

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.geebeeayy.app"
+    namespace = "com.gbee.emulator"
 
     // android.util.Log returns defaults instead of throwing in JVM tests, so
     // RaEngine can run off-device.
@@ -13,7 +13,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.geebeeayy.app"
+        applicationId = "com.gbee.emulator"
         minSdk = 26
         targetSdk = 36
         // CI run number keeps it monotonic for Play; local builds get 1. It

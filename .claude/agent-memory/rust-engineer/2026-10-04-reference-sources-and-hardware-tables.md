@@ -9,7 +9,7 @@ metadata:
   lists a repo's files without auth (the code-search API needs auth), then
   `curl -sSLO https://raw.githubusercontent.com/...` per file. Worked for
   mgba-emu/suite, mgba-emu/mgba, zaydlang/multiplication-algorithm.
-- **Check the licence before porting anything.** GeeBeeAyy is MIT. mGBA is
+- **Check the licence before porting anything.** GBee is MIT. mGBA is
   MPL-2.0 and NanoBoyAdvance GPL-3.0: read them for behaviour, never copy or
   translate their code. On 2026-10-04 a port from NBA had to be rewritten
   from the zlib original and the branch history rewritten. Find the original

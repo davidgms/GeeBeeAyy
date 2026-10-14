@@ -1,4 +1,4 @@
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 /// The tone ROM must actually make the APU emit samples. Before the register
 /// map was rewritten no PSG channel could be triggered at all.
@@ -58,7 +58,7 @@ fn a_psg_square_plays_the_frequency_the_rom_asked_for() {
         .windows(2)
         .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
         .count() as f64;
-    let seconds = samples.len() as f64 / geebeeayy_core::apu::SAMPLE_RATE as f64;
+    let seconds = samples.len() as f64 / gbee_core::apu::SAMPLE_RATE as f64;
     let got = crossings / 2.0 / seconds;
 
     assert!(
@@ -72,7 +72,7 @@ fn a_psg_square_plays_the_frequency_the_rom_asked_for() {
 /// the low-latency path was refused outright.
 #[test]
 fn the_core_emits_samples_at_48_khz() {
-    assert_eq!(geebeeayy_core::apu::SAMPLE_RATE, 48_000);
+    assert_eq!(gbee_core::apu::SAMPLE_RATE, 48_000);
 
     let mut gba = Gba::new();
     gba.load_rom(&vec![0u8; 0x200]).expect("ROM should load");

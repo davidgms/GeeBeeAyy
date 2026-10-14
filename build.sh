@@ -11,14 +11,14 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log() { echo -e "${BLUE}[GeeBeeAyy]${NC} $1"; }
+log() { echo -e "${BLUE}[GBee]${NC} $1"; }
 success() { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 usage() {
     cat <<EOF
-GeeBeeAyy! Build Script
+GBee Emulator Build Script
 
 Usage: $0 <command> [options]
 
@@ -66,7 +66,7 @@ build_core() {
     log "Building Rust core..."
     cd "${PROJECT_DIR}/core"
     cargo build --release
-    success "Core built: target/release/libgeebeeayy_core.a"
+    success "Core built: target/release/libgbee_core.a"
 }
 
 build_android() {
@@ -122,8 +122,8 @@ clean() {
 docker_build() {
     log "Building Docker image..."
     cd "${PROJECT_DIR}"
-    docker build -t geebeeayy:latest .
-    success "Docker image built: geebeeayy:latest"
+    docker build -t gbee:latest .
+    success "Docker image built: gbee:latest"
 }
 
 docker_shell() {

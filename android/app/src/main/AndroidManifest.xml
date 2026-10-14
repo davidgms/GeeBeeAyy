@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.geebeeayy.app">
+    package="com.gbee.emulator">
 
     <!-- Two things, and only two. Downloading freely distributable homebrew
          from the built-in catalogue, and - only once the player switches it
@@ -20,7 +20,7 @@
          screenshots go through MediaStore - audit item B1. -->
 
     <application
-        android:name=".GeeBeeAyyApplication"
+        android:name=".GBeeApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -29,7 +29,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.GeeBeeAyy">
+        android:theme="@style/Theme.GBee">
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"

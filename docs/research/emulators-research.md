@@ -19,7 +19,7 @@ What the others do instead:
 | Do not ask; measure the real panel period and present the newest frame each vsync | melonDS Android, FrameQueue (verified) | A "steady 60 fps but stutters" class of bug fixed (#1537) |
 | Ask for nothing | mGBA, gpSP, NBA, SkyEmu, Dolphin, RetroArch (until 2026-08), Lemuroid | - |
 
-GeeBeeAyy already sends both requests PPSSPP and Azahar send, on a
+GBee already sends both requests PPSSPP and Azahar send, on a
 SurfaceView that presents real frames (PR #47, #48). MIUI's cap sits above
 them (`docs/research/miui-smart-refresh.html`).
 
@@ -43,7 +43,7 @@ Every emulator picks a clock. Two families:
 - **Wall clock or vsync, audio stretched to follow:** Dolphin, PPSSPP,
   melonDS, melonDS Android, Azahar, SkyEmu, NanoBoyAdvance, RetroArch.
 - **Audio clock:** mGBA (maintainer: vsync cannot be the clock on panels
-  above 60 Hz, mgba#2199), gpSP via its frontend, GeeBeeAyy.
+  above 60 Hz, mgba#2199), gpSP via its frontend, GBee.
 
 Evidence for staying audio-clocked:
 
@@ -86,7 +86,7 @@ Considered and not recommended:
 - **Emulation inside `GLSurfaceView.onDrawFrame`** (Lemuroid): ties speed to
   the view lifecycle, which caused speed bugs (LibretroDroid #36, #46).
 
-## 4. Where GeeBeeAyy already matches good practice
+## 4. Where GBee already matches good practice
 
 - Battery saves debounced before writing (we use 2 s; mGBA 15 frames, SkyEmu 10).
 - Save-state round-trip test exists (`core/tests/saves.rs`
