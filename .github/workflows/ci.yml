@@ -130,6 +130,10 @@ jobs:
       # slices.
       - name: Build libgeebeeayy_core.so for arm64-v8a, armeabi-v7a and x86_64
         working-directory: core
+        # 16 KB page alignment, which Play requires; NDK r27 defaults to 4 KB
+        # and needs both flags. Extends RUSTFLAGS if the runner sets any.
+        env:
+          RUSTFLAGS: ${{ env.RUSTFLAGS }} -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384
         run: cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../android/app/src/main/jniLibs build --release --lib
 
       - name: Upload native libraries
@@ -166,6 +170,39 @@ jobs:
         with:
           name: geebeeayy-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      # Release bundle for Play: master pushes only, never a PR (same-repo PRs
+      # get secrets too). `secrets` cannot be read in a step `if`, so this
+      # step turns "the key exists" into an output, and the key itself is
+      # handed only to the step that signs.
+      - name: Check for the release key
+        id: release_key
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        env:
+          HAS_KEY: ${{ secrets.GBA_KEYSTORE_B64 != '' }}
+        run: echo "present=$HAS_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed release AAB
+        if: ${{ steps.release_key.outputs.present == 'true' }}
+        working-directory: android
+        env:
+          GBA_KEYSTORE_B64: ${{ secrets.GBA_KEYSTORE_B64 }}
+          GBA_KEYSTORE_PASSWORD: ${{ secrets.GBA_KEYSTORE_PASSWORD }}
+          GBA_KEY_ALIAS: ${{ secrets.GBA_KEY_ALIAS }}
+          GBA_KEY_PASSWORD: ${{ secrets.GBA_KEY_PASSWORD }}
+        run: |
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/release.jks"' EXIT
+          echo "$GBA_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          GBA_KEYSTORE="$RUNNER_TEMP/release.jks" gradle bundleRelease
+
+      - name: Upload release AAB
+        if: ${{ steps.release_key.outputs.present == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: geebeeayy-release-aab
+          path: android/app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
   # Installs the APK built above on a real emulator and confirms the app

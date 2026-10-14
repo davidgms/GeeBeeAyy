@@ -62,3 +62,7 @@ temp/
 
 # Personal, per-developer agent memory. The shared one is .claude/agent-memory/.
 .claude/agent-memory-local/
+
+# Signing keys
+*.jks
+*.keystore
