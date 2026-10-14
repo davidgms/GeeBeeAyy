@@ -20,6 +20,9 @@ import java.net.URL
  * game, so the cache is left to grow rather than given an eviction policy it
  * would never reach.
  */
+/** True for an `https://` URL. RA requests and badges carry account data, so nothing else is opened. */
+internal fun isHttps(url: String): Boolean = url.startsWith("https://", ignoreCase = true)
+
 object BadgeCache {
 
     private const val TAG = "GeeBeeAyy/BadgeCache"
@@ -60,7 +63,7 @@ object BadgeCache {
     }
 
     private fun download(url: String, into: File): Boolean = runCatching {
-        if (!url.startsWith("https://", ignoreCase = true)) {
+        if (!isHttps(url)) {
             Log.w(TAG, "refusing non-https badge URL")
             return@runCatching false
         }

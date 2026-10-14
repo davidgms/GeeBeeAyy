@@ -41,12 +41,13 @@ If you enable it in Settings, the app asks thumbnails.libretro.com for the box
 art of a game, and the request contains the game's official title from the
 public No-Intro catalogue. The app finds that title from the code inside the
 game, or uses the file name only when it is exactly one of those catalogue
-titles, so a file name you chose yourself is never sent. Pictures are saved on
+titles. Any other file name never leaves your device. Pictures are saved on
 your device.
 
 **3. Homebrew downloads - only when you tap download.** The Homebrew catalog
-fetches the free test and demo games you choose from github.com and
-raw.githubusercontent.com. Only the download request is made.
+fetches the free test and demo games you choose from GitHub and its
+file-storage hosts (github.com, raw.githubusercontent.com and the hosts GitHub
+redirects release downloads to). Only the download request is made.
 
 Like any internet request, these servers can see your IP address and the
 standard request details. We do not receive or see any of it; the servers named

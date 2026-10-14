@@ -51,8 +51,8 @@ def main() -> int:
         if serial and serial.group(1) not in table:
             table[serial.group(1)] = name
 
-    previous = json.loads(OUT.read_text()) if OUT.is_file() else {}
-    OUT.write_text(json.dumps(dict(sorted(table.items())), indent=0, ensure_ascii=False))
+    previous = json.loads(OUT.read_text(encoding="utf-8")) if OUT.is_file() else {}
+    OUT.write_text(json.dumps(dict(sorted(table.items())), indent=0, ensure_ascii=False), encoding="utf-8")
 
     names = sorted({name for name, _ in entries})
     NAMES_OUT.write_text("\n".join(names) + "\n", encoding="utf-8")

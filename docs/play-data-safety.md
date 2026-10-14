@@ -9,8 +9,8 @@ server and no analytics, so every "yes" below is a third-party transfer.
 Paths are relative to `android/app/src/main/`; Kotlin is under
 `java/com/geebeeayy/app/`.
 
-Re-verify before each release: this reflects the tree at 2026-10-13, branch
-`feat/release-signing-16k`. Nothing here was exercised on a device or with a
+Re-verify before each release: this reflects the tree at 2026-10-13 on branch
+`feat/privacy-policy-and-cover-names` (line numbers drift). Nothing here was exercised on a device or with a
 traffic capture; it is read from code only.
 
 ## Evidence: every network path
@@ -21,19 +21,20 @@ HTTP library. The core (`core/src`) makes no network call.
 
 | Path | Code | Trigger |
 |---|---|---|
-| RetroAchievements API | `engine/RaEngine.kt:316-317` (`fetch`), called from `:298-300` | rcheevos asks for a URL; only after sign-in (see below) |
-| RA badge images | `data/BadgeCache.kt:60` | achievements list open; needs a signed-in session to have a URL |
-| Cover art | `data/CoverArt.kt:179-180`, `BASE` at `:211` | setting `getDownloadCoverArt()` , default `false` (`data/DisplaySettings.kt:260`), toggle at `ui/screens/SettingsScreen.kt:565-568` |
+| RetroAchievements API | `engine/RaEngine.kt:316-322` (`fetch`), called from `:298-300` | rcheevos asks for a URL; only after sign-in (see below) |
+| RA badge images | `data/BadgeCache.kt:65-70` | achievements list open; needs a signed-in session to have a URL |
+| Cover art | `data/CoverArt.kt:205-206`, `BASE` at `:237-238` | setting `getDownloadCoverArt()` , default `false` (`data/DisplaySettings.kt:260`), toggle at `ui/screens/SettingsScreen.kt:565-569` |
 | Homebrew | `data/HomebrewDownloader.kt:135`, URLs in `data/HomebrewCatalog.kt:42-106` | player taps download |
 
 `AndroidManifest.xml:10` declares `INTERNET`; there is no other network
 permission. No `networkSecurityConfig` and no `usesCleartextTraffic`, so the
-targetSdk 34 default (cleartext blocked) applies.
+platform default applies: `android/app/build.gradle.kts` sets targetSdk 36
+(`:18`), and cleartext HTTP is blocked by default for targetSdk 28 and up.
 
 ## Do ROMs or saves leave the device?
 
 No. No code path writes ROM or save bytes to a network stream: the only
-`outputStream` on a connection is the RA POST body (`engine/RaEngine.kt:326-329`),
+`outputStream` on a connection is the RA POST body (`engine/RaEngine.kt:330-335`),
 which holds what rcheevos built (login, hash, unlock and score requests), not
 files. ROM bytes are given to `RaEngine.hashRom` (`:236`, native
 `ra_bridge.c:841`), which returns an MD5 string; only the hash goes out
@@ -48,21 +49,21 @@ is outside "collect" as Play defines it. It is stated in the policy.
 
 ## Backup rules and the RA token
 
-`res/xml/backup_rules.xml:5` (Android 11 and lower) and
-`res/xml/data_extraction_rules.xml:4-10` (Android 12+, both `cloud-backup` and
+`res/xml/backup_rules.xml:6` (Android 11 and lower) and
+`res/xml/data_extraction_rules.xml:6,9` (Android 12+, both `cloud-backup` and
 `device-transfer`) each exclude `sharedpref` `retroachievements.xml`. That is
 the file `engine/RaCredentials.kt:20` writes (`getSharedPreferences(
 "retroachievements", MODE_PRIVATE)`), holding keys `user` and `token`
-(`:36-37`). So the token and username are excluded from backup. Everything else
+(`:37-38`). So the token and username are excluded from backup. Everything else
 (saves, states, other settings) is included, deliberately (comment in
 `backup_rules.xml:2-4`). The token is stored unencrypted in the app's private
-storage (`RaCredentials.kt:14-18`), which is not a Data safety matter but is
+storage (`RaCredentials.kt:13-18`), which is not a Data safety matter but is
 true.
 
 ## Is anything sent without the player signing in?
 
 No RetroAchievements traffic. `RaEngine.start` only sends a token login when a
-saved token exists (`RaEngine.kt:151-155`). `loadGame` is called for every game
+saved token exists (`RaEngine.kt:150-155`). `loadGame` is called for every game
 (`EmulationViewModel.kt:527`, `RaEngine.kt:189`) but rcheevos
 returns `RC_LOGIN_REQUIRED` without a request when no user is signed in
 (`cpp/rcheevos/src/client/rc_client.c:2715`). Not exercised on a device.
@@ -76,16 +77,27 @@ Everything is HTTPS in practice. No finding of plain HTTP, with notes:
   The library also contains `http://` variants (`:14-15`) selected only by
   `rc_api_set_host("http://retroachievements.org")`; `cpp/ra_bridge.c` never
   calls it, so they are dead code here.
-- Cover art: `https://thumbnails.libretro.com/...` (`CoverArt.kt:211`).
+- Cover art: hardcoded `https://thumbnails.libretro.com/...` constant
+  (`CoverArt.kt:237-238`); no runtime URL is involved, so no guard is needed.
 - Homebrew: all eight URLs are `https://github.com` or
-  `https://raw.githubusercontent.com` (`HomebrewCatalog.kt:42-106`), and the
-  download is verified by size and SHA-256 (`HomebrewDownloader.kt:150-160`
- ), so transit tampering is also caught.
-- **Finding F1 (fixed):** `RaEngine.fetch` and `BadgeCache.download` used to
-  open whatever URL they were handed, and the badge URL comes from a server
-  response. Both now refuse anything that is not `https://`, so "all
-  connections use HTTPS" is enforced by the code, not only by the platform's
-  cleartext default.
+  `https://raw.githubusercontent.com` (`HomebrewCatalog.kt:42-106`), hardcoded.
+  GitHub release URLs redirect to GitHub's file-storage hosts. The download is
+  verified by size and SHA-256 (`HomebrewDownloader.kt:155-160`), so transit
+  tampering is also caught.
+- **Finding F1 (fixed):** the two paths that take a URL from outside the
+  code, RetroAchievements requests (URLs built by rcheevos) and badge images
+  (URL from a server response, `RaEngine.kt:260`), used to open whatever they
+  were handed. Both now refuse anything that is not `https://`
+  (`isHttps` at `BadgeCache.kt:23-24`, checked at `BadgeCache.kt:66` and
+  `RaEngine.kt:318`). Cover art and homebrew do not need a guard: their URLs
+  are hardcoded `https://` constants (`CoverArt.kt:237-238`,
+  `HomebrewCatalog.kt:42-106`).
+- **Redirects:** Android's `HttpURLConnection` follows up to five redirects,
+  across origins, but "doesn't follow redirects from HTTPS to HTTP or vice
+  versa" (developer.android.com/reference/java/net/HttpURLConnection, checked
+  2026-10-13). So a redirect cannot downgrade a request to cleartext, and
+  cleartext is blocked by the targetSdk default anyway. Two independent
+  barriers; neither was exercised on a device.
 
 ## Finding F2 (fixed: option C, chosen 2026-10-13)
 
@@ -110,7 +122,7 @@ third-party transfers.
 
 ### Section 2: Is all of the user data collected by your app encrypted in transit?
 
-**Yes.** See "Transport security". (Re-check F1 before relying on it.)
+**Yes.** See "Transport security".
 
 ### Section 3: Do you provide a way for users to request that their data is deleted?
 
@@ -136,7 +148,7 @@ reads no advertising ID or Android ID; see the IP address note).
 
 | Data type | Collected | Shared | Optional | Purpose | Evidence |
 |---|---|---|---|---|---|
-| Personal info > User IDs (RA username, and the one-time password) | Yes | No | Yes, only if the player signs in | App functionality, Account management | `RaEngine.kt:177-179` (login), `RaCredentials.kt:20-37` (stored token) |
+| Personal info > User IDs (RA username, and the one-time password) | Yes | No | Yes, only if the player signs in | App functionality, Account management | `RaEngine.kt:177-179` (login), `RaCredentials.kt:20-38` (stored token) |
 | App activity > Other actions (game hash, unlocks, leaderboard scores, rich presence) | Yes | No | Yes, only when signed in | App functionality | `RaEngine.kt:236`, `EmulationViewModel.kt:526-527`, `:298-300` |
 
 For both: **Processed ephemerally: No** (RA keeps them on its servers);
@@ -173,11 +185,12 @@ sent anything from the app to key on it. Not verified with Play or with a
 traffic capture; confirm in review. The privacy policy states that the servers
 see it.
 
-**Homebrew downloads.** Request to GitHub only; no user data is in it. Not
+**Homebrew downloads.** Request to GitHub and its file-storage hosts (release
+URLs redirect there) only; no user data is in it. Not
 declared.
 
 **Badge images.** A GET to `media.retroachievements.org` for a public image
-(`BadgeCache.kt:60`). Only possible in a signed-in session. Covered by the RA
+(`BadgeCache.kt:70`). Only possible in a signed-in session. Covered by the RA
 rows; no separate entry.
 
 ### Section 5: Privacy policy URL

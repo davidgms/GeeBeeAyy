@@ -98,4 +98,13 @@ class CoverArtTest {
         assertEquals(emptyList<String>(), CoverArt.candidateNames(null, "my secret copy", index, names))
         assertEquals(emptyList<String>(), CoverArt.candidateNames("ZZZZ", "my secret copy", index, names))
     }
+
+    @Test
+    fun `only https URLs are opened for RA requests and badges`() {
+        assertTrue(isHttps("https://retroachievements.org/dorequest.php"))
+        assertTrue(isHttps("HTTPS://media.retroachievements.org/Badge/1.png"))
+        assertEquals(false, isHttps("http://retroachievements.org/dorequest.php"))
+        assertEquals(false, isHttps(" https://retroachievements.org"))
+        assertEquals(false, isHttps("ftp://example.org"))
+    }
 }
