@@ -3,6 +3,7 @@ package com.geebeeayy.app.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -19,7 +20,12 @@ import java.net.URL
  * game, so the cache is left to grow rather than given an eviction policy it
  * would never reach.
  */
+/** True for an `https://` URL. RA requests and badges carry account data, so nothing else is opened. */
+internal fun isHttps(url: String): Boolean = url.startsWith("https://", ignoreCase = true)
+
 object BadgeCache {
+
+    private const val TAG = "GeeBeeAyy/BadgeCache"
 
     // A badge is a 64x64 PNG; the cap stops a hostile or broken server from
     // filling the disk.
@@ -57,6 +63,10 @@ object BadgeCache {
     }
 
     private fun download(url: String, into: File): Boolean = runCatching {
+        if (!isHttps(url)) {
+            Log.w(TAG, "refusing non-https badge URL")
+            return@runCatching false
+        }
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 20_000

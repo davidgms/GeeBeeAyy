@@ -12,8 +12,9 @@ Run it when the DAT gets a new release, roughly once a year:
 
     python3 tools/gen-cover-index.py
 
-It rewrites android/app/src/main/assets/gba-game-codes.json in place and
-prints what changed.
+It rewrites android/app/src/main/assets/gba-game-codes.json and
+gba-game-names.txt (every DAT name, sorted, one per line - the only file names
+the app will ever put in a thumbnail URL) in place and prints what changed.
 """
 
 import json
@@ -29,6 +30,7 @@ DAT_URL = (
 OUT = pathlib.Path(__file__).resolve().parent.parent / (
     "android/app/src/main/assets/gba-game-codes.json"
 )
+NAMES_OUT = OUT.with_name("gba-game-names.txt")
 
 
 def main() -> int:
@@ -49,8 +51,12 @@ def main() -> int:
         if serial and serial.group(1) not in table:
             table[serial.group(1)] = name
 
-    previous = json.loads(OUT.read_text()) if OUT.is_file() else {}
-    OUT.write_text(json.dumps(dict(sorted(table.items())), indent=0, ensure_ascii=False))
+    previous = json.loads(OUT.read_text(encoding="utf-8")) if OUT.is_file() else {}
+    OUT.write_text(json.dumps(dict(sorted(table.items())), indent=0, ensure_ascii=False), encoding="utf-8")
+
+    names = sorted({name for name, _ in entries})
+    NAMES_OUT.write_text("\n".join(names) + "\n", encoding="utf-8")
+    print(f"{len(names)} names -> {NAMES_OUT} ({NAMES_OUT.stat().st_size / 1024:.0f} KB)")
 
     added = table.keys() - previous.keys()
     removed = previous.keys() - table.keys()

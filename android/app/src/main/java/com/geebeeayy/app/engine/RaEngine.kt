@@ -314,6 +314,11 @@ object RaEngine {
     }
 
     private suspend fun fetch(url: String, postData: String?): Pair<Int, ByteArray> {
+        // Credentials ride on these requests; never over cleartext. The caller treats this like any I/O error.
+        if (!com.geebeeayy.app.data.isHttps(url)) {
+            Log.w(TAG, "refusing non-https request")
+            throw java.io.IOException("non-https URL refused")
+        }
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 30_000

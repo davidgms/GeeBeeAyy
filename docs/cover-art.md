@@ -79,7 +79,7 @@ Checked both names under `BTME`: **both return 200**. Taking the first is fine.
 | | |
 |---|---|
 | `INTERNET` permission | **already declared**, for the homebrew downloader. The manifest comment saying nothing else makes a request would need updating. |
-| Lookup asset | game code to name: 2763 entries, 141 KB JSON, **38 KB gzipped**. Plus the name list for the filename path: 3691 names, **36 KB gzipped**. |
+| Lookup asset | game code to name: 2757 entries, 146 KB JSON (DAT of 2026-10-13). Plus the name list for the filename path: 3498 unique names, 149 KB. Shipped as `gba-game-names.txt`, and it is also the privacy gate: a file name is put in a thumbnail URL only when it exactly equals one of these names, so a renamed or private file name never leaves the device. |
 | Image library | **none.** `RomArtwork` already decodes and downsamples with `BitmapFactory`; a fetch is a stream into `cacheDir`. Adding Coil or Glide would pull a dependency graph into an app that deliberately has almost none. |
 | New code | a downloader, one more location in `RomArtwork.findFile`, a Settings toggle. |
 | Failure path | 404, no network, no match - the initials tile, which already exists. |
