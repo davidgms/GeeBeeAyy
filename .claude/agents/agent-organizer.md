@@ -54,7 +54,7 @@ table below is written out inline instead of pointing at
 
 ## Project context
 
-**GeeBeeAyy!** - a Game Boy Advance emulator with a pixel bee theme. A Rust
+**GBee Emulator** - a Game Boy Advance emulator with a pixel bee theme. A Rust
 emulation core with native Android (primary) and iOS (secondary) frontends.
 Read `CLAUDE.md` first; it carries the binding conventions.
 
@@ -82,8 +82,8 @@ which are Portuguese-BR.
 | Agent | Owns | Do not route here |
 |-------|------|-------------------|
 | `rust-engineer` | Everything under `core/`: ARM7TDMI decoders, PPU, APU, memory bus and I/O, DMA, timers, cart saves, save states, HLE BIOS, and `ffi.rs` | Frontend code of any kind |
-| `kotlin-specialist` | `android/app/src/main/java/com/geebeeayy/app/**`: Compose screens, `EmulationViewModel`, the Kotlin side of the JNI bridge, `AudioOutput` | Emulation behaviour; Gradle NDK plumbing |
-| `swift-expert` | `ios/GeeBeeAyy/**`: SwiftUI views, `GbaEngine.swift`, the bridging header | Emulation behaviour; the Xcode build itself |
+| `kotlin-specialist` | `android/app/src/main/java/com/gbee/emulator/**`: Compose screens, `EmulationViewModel`, the Kotlin side of the JNI bridge, `AudioOutput` | Emulation behaviour; Gradle NDK plumbing |
+| `swift-expert` | `ios/GBee/**`: SwiftUI views, `GbaEngine.swift`, the bridging header | Emulation behaviour; the Xcode build itself |
 | `mobile-developer` | Runtime app architecture across both platforms: storage and file access, lifecycle and backgrounding, battery and thermal, permissions, state restoration | Screen-level UI code; build scripts |
 | `mobile-app-developer` | Build and release: `build.sh`, `build-mobile.sh`, cargo-ndk, the `jniLibs` refresh, ADB device testing, store submission, platform parity | Application code |
 | `search-specialist` | Real GBA hardware questions: GBATEK, the ARM7TDMI TRM, TONC, how mGBA/SkyEmu/NanoBoyAdvance handle a case | Questions about this codebase |

@@ -39,17 +39,16 @@ covers them.
 artefacts get built, how they reach a device, and whether the two platforms
 behave the same.
 
-- **`android/app/src/main/jniLibs/*/libgeebeeayy_core.so` is *not* committed -
+- **`android/app/src/main/jniLibs/*/libgbee_core.so` is *not* committed -
   `.gitignore`'s `*.so` rule matches it and `git ls-files` confirms it -
   which means a fresh clone has no native library at all, not a stale one.**
   `.github/workflows/ci.yml`'s `android` job (added 2026-08-28) now rebuilds
   both ABIs with `cargo-ndk` on every push and uploads them as artifacts.
   Producing a current `.so` is still your standing responsibility whenever
   `core/` changes; it now happens through CI instead of a manual commit.
-- **`android/app/src/main/cpp/` is dead.** `build.gradle.kts` declares no
-  `externalNativeBuild`, so its CMakeLists never runs - and it points at
-  `libgeebeeayyayy_core.so`, a filename that does not exist. Either delete the
-  directory or wire it up; do not leave it as a decoy.
+- **`android/app/src/main/cpp/` builds `libgbee_ra.so`** (rcheevos, for
+  RetroAchievements) through `build.gradle.kts`'s `externalNativeBuild`. It
+  is C, not part of `core/`, and Gradle builds it - unlike `libgbee_core.so`.
 - The Docker image carries the whole Android SDK/NDK toolchain, which is the
   reliable path on a machine without a local SDK.
 - **No ROM or BIOS image is ever committed**, including homebrew test suites.

@@ -4,7 +4,7 @@
   `SubagentStop` hook (`.claude/hooks/agent-memory.py`) caught it and sent me back.
 - **Finding**: The false claim came from having *decided* to write during reasoning and then
   narrating the decision as completed fact. Nothing in my own output distinguished the two, which
-  is exactly the failure mode `/home/david/projects/GeeBeeAyy/.claude/agents/agent-organizer.md:57`
+  is exactly the failure mode `/home/david/projects/gbee-emulator/.claude/agents/agent-organizer.md:57`
   warns about for other agents ("Agents have reported writes that never landed") - it applies to
   this agent as much as to the specialists it reviews.
 - **Application**: Never write "recorded", "appended" or "wrote" in a report before the tool call

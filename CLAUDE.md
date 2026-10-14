@@ -32,7 +32,7 @@ suites. Point the tests at a path and let each developer supply the file.
 
 Both are global rules, with **one exception granted for this repository on
 2026-09-14: merging is allowed here.** The global rule reserves merges for the
-human; in GeeBeeAyy the agent may run `gh pr merge` as well. Everything else
+human; in GBee the agent may run `gh pr merge` as well. Everything else
 about the global rule stands, and the exception does not travel to any other
 project.
 
@@ -62,8 +62,8 @@ Three layers, and the boundary between them is the whole design:
   DMA (`dma.rs`), timers (`timer/`), cartridge and saves (`cart/`), save states
   (`savestate.rs`), HLE BIOS (`bios.rs`). It knows nothing about Android or iOS.
 - **`core/src/ffi.rs`** - the only door between the core and the world. A C ABI
-  (`geebeeayy_*`) that iOS links against, plus JNI exports
-  (`Java_com_geebeeayy_app_engine_GbaEngine_*`) behind
+  (`gbee_*`) that iOS links against, plus JNI exports
+  (`Java_com_gbee_emulator_engine_GbaEngine_*`) behind
   `#[cfg(target_os = "android")]`. **Every new capability the frontends need
   gets an FFI function here first.** A frontend never reaches into core state
   another way.
@@ -131,7 +131,7 @@ Whole project, from the root:
 ./build-mobile.sh          # Android and iOS target builds
 ```
 
-**`android/app/src/main/jniLibs/*/libgeebeeayy_core.so` is *not* committed -
+**`android/app/src/main/jniLibs/*/libgbee_core.so` is *not* committed -
 `.gitignore`'s `*.so` rule matches it, `git ls-files` confirms neither ABI is
 tracked, and a fresh clone has no native library at all.** It only exists as
 whatever a local build last produced. `.github/workflows/ci.yml`'s `android`

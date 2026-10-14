@@ -4,8 +4,8 @@
 //! (temp/phase5/probes) with the byte offsets they used. Every one must be
 //! rejected, and a rejected state must leave the running machine untouched.
 
-use geebeeayy_core::savestate::SaveState;
-use geebeeayy_core::Gba;
+use gbee_core::savestate::SaveState;
+use gbee_core::Gba;
 
 /// A 0x400-byte ROM running `code` from 0x08000000, with `title` in the
 /// header and a save-library `marker` at 0x300 - the probes' `cart()`.

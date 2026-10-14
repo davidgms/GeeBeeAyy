@@ -3,10 +3,10 @@
 //! Nothing here needs a ROM or a BIOS image: the HLE IRQ handler that
 //! `MemoryBus::new` installs at 0x18 is exercised directly.
 
-use geebeeayy_core::cpu::{Cpu, Mode};
-use geebeeayy_core::dma::Dma;
-use geebeeayy_core::memory::MemoryBus;
-use geebeeayy_core::timer::Timer;
+use gbee_core::cpu::{Cpu, Mode};
+use gbee_core::dma::Dma;
+use gbee_core::memory::MemoryBus;
+use gbee_core::timer::Timer;
 
 const BASE: u32 = 0x0300_0000;
 const KEYINPUT: u32 = 0x0400_0130;
@@ -338,7 +338,7 @@ fn a_halted_cpu_is_woken_by_vblank() {
     // interrupts are requested, that is when (IE AND IF) is not zero... the
     // state of CPUs IRQ disable bit in CPSR register, and the IME register are
     // don't care".
-    use geebeeayy_core::Gba;
+    use gbee_core::Gba;
     let mut gba = Gba::new();
     let mut data = vec![0u8; 0x200];
     data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
@@ -366,7 +366,7 @@ fn a_halted_cpu_is_woken_by_vblank() {
 #[test]
 fn intr_wait_forces_ime() {
     // GBATEK, SWI 04h: "The function forcefully sets IME=1."
-    use geebeeayy_core::Gba;
+    use gbee_core::Gba;
     let mut gba = Gba::new();
     let mut data = vec![0u8; 0x200];
     data[0..4].copy_from_slice(&0xEF05_0000u32.to_le_bytes()); // swi 5
@@ -381,7 +381,7 @@ fn a_halted_cpu_still_sees_hblank() {
     // A halted step used to advance a whole scanline in one go, which walks
     // straight over the HBlank boundary: a game that halts with the HBlank
     // IRQ enabled got one interrupt a frame instead of one per line.
-    use geebeeayy_core::Gba;
+    use gbee_core::Gba;
     let mut gba = Gba::new();
     let mut data = vec![0u8; 0x200];
     data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
@@ -413,7 +413,7 @@ fn vblank_intr_wait_is_not_satisfied_by_an_hblank() {
     // cleared by the time the game's own handler returns. The first interrupt
     // of any kind - an HBlank, 160 times a frame - therefore released a wait
     // that should have run to line 160, and the game came back mid-frame.
-    use geebeeayy_core::Gba;
+    use gbee_core::Gba;
     let mut gba = Gba::new();
     let mut data = vec![0u8; 0x200];
     data[0..4].copy_from_slice(&0xEF05_0000u32.to_le_bytes()); // swi 5
@@ -504,7 +504,7 @@ fn writing_the_timer_registers_through_the_bus_starts_the_timer() {
     // and the timer unit never heard about it. No timer a game started ever
     // ran, so no timer interrupt fired and DMA sound - which is driven
     // entirely by timer overflows - was dead.
-    use geebeeayy_core::Gba;
+    use gbee_core::Gba;
     let mut gba = Gba::new();
     let mut data = vec![0u8; 0x200];
     data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .
@@ -528,7 +528,7 @@ fn tm_cnt_l_reads_the_running_counter_not_the_reload() {
     // TMxCNT_L is write-reload, read-counter. Reads used to return whatever
     // reload the game last wrote there, so a game timing anything off a timer
     // read the same value forever.
-    use geebeeayy_core::Gba;
+    use gbee_core::Gba;
     let mut gba = Gba::new();
     let mut data = vec![0u8; 0x200];
     data[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // b .

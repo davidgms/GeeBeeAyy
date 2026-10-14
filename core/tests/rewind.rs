@@ -1,7 +1,7 @@
 //! Rewind: the ring buffer, and that a rewind actually goes back in time.
 
-use geebeeayy_core::rewind::Rewind;
-use geebeeayy_core::Gba;
+use gbee_core::rewind::Rewind;
+use gbee_core::Gba;
 
 fn rom() -> Vec<u8> {
     // mov r0, #0 ; add r0, r0, #1 ; b .-4  - a counter that keeps climbing, so
@@ -106,47 +106,47 @@ fn the_rewind_ffi_walks_backwards_and_stops_when_empty() {
     use std::ffi::c_void;
 
     unsafe {
-        let handle = geebeeayy_core::ffi::geebeeayy_create();
+        let handle = gbee_core::ffi::gbee_create();
         assert!(!handle.is_null());
 
         let mut rom = vec![0u8; 0x200];
         // `b .` so the machine advances its clock and nothing else.
         rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
-        geebeeayy_core::ffi::geebeeayy_load_rom(handle, rom.as_ptr(), rom.len());
+        gbee_core::ffi::gbee_load_rom(handle, rom.as_ptr(), rom.len());
 
         // Zero capacity is the default, so a push does nothing and a pop has
         // nothing to give.
-        geebeeayy_core::ffi::geebeeayy_rewind_push(handle);
-        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_pop(handle), 0);
-        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_memory(handle), 0);
+        gbee_core::ffi::gbee_rewind_push(handle);
+        assert_eq!(gbee_core::ffi::gbee_rewind_pop(handle), 0);
+        assert_eq!(gbee_core::ffi::gbee_rewind_memory(handle), 0);
 
-        geebeeayy_core::ffi::geebeeayy_rewind_configure(handle, 3);
+        gbee_core::ffi::gbee_rewind_configure(handle, 3);
         for _ in 0..5 {
-            geebeeayy_core::ffi::geebeeayy_run_frame(handle);
-            geebeeayy_core::ffi::geebeeayy_rewind_push(handle);
+            gbee_core::ffi::gbee_run_frame(handle);
+            gbee_core::ffi::gbee_rewind_push(handle);
         }
         // The ring is bounded: five pushes into a depth of three keep three.
-        assert!(geebeeayy_core::ffi::geebeeayy_rewind_memory(handle) > 0);
+        assert!(gbee_core::ffi::gbee_rewind_memory(handle) > 0);
         for step in 0..3 {
             assert_eq!(
-                geebeeayy_core::ffi::geebeeayy_rewind_pop(handle),
+                gbee_core::ffi::gbee_rewind_pop(handle),
                 1,
                 "pop {step} should have restored a snapshot"
             );
         }
         assert_eq!(
-            geebeeayy_core::ffi::geebeeayy_rewind_pop(handle),
+            gbee_core::ffi::gbee_rewind_pop(handle),
             0,
             "a fourth pop must report the ring empty"
         );
-        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_memory(handle), 0);
+        assert_eq!(gbee_core::ffi::gbee_rewind_memory(handle), 0);
 
-        geebeeayy_core::ffi::geebeeayy_rewind_configure(handle, 2);
-        geebeeayy_core::ffi::geebeeayy_rewind_push(handle);
-        geebeeayy_core::ffi::geebeeayy_rewind_clear(handle);
-        assert_eq!(geebeeayy_core::ffi::geebeeayy_rewind_pop(handle), 0);
+        gbee_core::ffi::gbee_rewind_configure(handle, 2);
+        gbee_core::ffi::gbee_rewind_push(handle);
+        gbee_core::ffi::gbee_rewind_clear(handle);
+        assert_eq!(gbee_core::ffi::gbee_rewind_pop(handle), 0);
 
-        geebeeayy_core::ffi::geebeeayy_destroy(handle);
+        gbee_core::ffi::gbee_destroy(handle);
         let _: *mut c_void = std::ptr::null_mut();
     }
 }

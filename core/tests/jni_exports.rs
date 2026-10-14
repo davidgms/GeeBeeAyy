@@ -13,7 +13,7 @@ use std::path::Path;
 fn every_kotlin_external_fun_is_exported() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let kotlin = std::fs::read_to_string(
-        root.join("android/app/src/main/java/com/geebeeayy/app/engine/GbaEngine.kt"),
+        root.join("android/app/src/main/java/com/gbee/emulator/engine/GbaEngine.kt"),
     )
     .expect("GbaEngine.kt");
     let ffi = std::fs::read_to_string(root.join("core/src/ffi.rs")).expect("ffi.rs");
@@ -38,7 +38,7 @@ fn every_kotlin_external_fun_is_exported() {
     let missing: Vec<&&str> = declared
         .iter()
         .filter(|name| {
-            let symbol = format!("Java_com_geebeeayy_app_engine_GbaEngine_{name}");
+            let symbol = format!("Java_com_gbee_emulator_engine_GbaEngine_{name}");
             // The attribute has to be on the function itself, so look for the
             // pair rather than for either half on its own.
             match ffi.find(&format!("fn {symbol}")) {
@@ -59,21 +59,21 @@ fn every_kotlin_external_fun_is_exported() {
     );
 }
 
-/// `geebeeayy_load_rom`'s debug line used to index the first four bytes before
+/// `gbee_load_rom`'s debug line used to index the first four bytes before
 /// anything validated the length, so a short buffer panicked - and a panic
 /// unwinding out of an `extern "C"` function aborts the process rather than
 /// returning an error.
 #[test]
 fn load_rom_rejects_a_buffer_too_short_to_index() {
     unsafe {
-        let handle = geebeeayy_core::ffi::geebeeayy_create();
+        let handle = gbee_core::ffi::gbee_create();
         assert!(!handle.is_null());
         for len in 0..4usize {
             let data = vec![0u8; len];
-            let rc = geebeeayy_core::ffi::geebeeayy_load_rom(handle, data.as_ptr(), len);
+            let rc = gbee_core::ffi::gbee_load_rom(handle, data.as_ptr(), len);
             assert_eq!(rc, -1, "a {len}-byte ROM should be rejected, not panic");
         }
-        geebeeayy_core::ffi::geebeeayy_destroy(handle);
+        gbee_core::ffi::gbee_destroy(handle);
     }
 }
 
@@ -86,11 +86,11 @@ fn jni_state_and_save_writes_go_through_the_guarded_c_abi() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let ffi = std::fs::read_to_string(root.join("src/ffi.rs")).expect("ffi.rs");
     for (jni, c_abi) in [
-        ("nativeStateWrite", "geebeeayy_state_write("),
-        ("nativeSaveWrite", "geebeeayy_save_write("),
+        ("nativeStateWrite", "gbee_state_write("),
+        ("nativeSaveWrite", "gbee_save_write("),
     ] {
         let start = ffi
-            .find(&format!("fn Java_com_geebeeayy_app_engine_GbaEngine_{jni}"))
+            .find(&format!("fn Java_com_gbee_emulator_engine_GbaEngine_{jni}"))
             .unwrap_or_else(|| panic!("{jni} not found"));
         let body = &ffi[start..];
         let body = &body[..body.find("\n    }\n").expect("end of function")];

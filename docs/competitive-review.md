@@ -1,7 +1,7 @@
 # What a shipped GBA emulator has that we do not
 
 A walk through screenshots of `com.emu.gba1x`, taken 2026-09-10, against what
-GeeBeeAyy does today. The point is not to copy a menu tree - it is to find the
+GBee does today. The point is not to copy a menu tree - it is to find the
 places where we are missing something a player expects, and to be able to say
 out loud which of their choices we are deliberately not making.
 
@@ -67,7 +67,7 @@ being turned down and why.
 
 | Their app | Us | Verdict |
 |---|---|---|
-| **Share button** in the ROM list header | We save screenshots to `Pictures/GeeBeeAyy` and then forget about them | **Take, as share a screenshot.** We already take them; nothing in the app offers to send one anywhere. |
+| **Share button** in the ROM list header | We save screenshots to `Pictures/GBee` and then forget about them | **Take, as share a screenshot.** We already take them; nothing in the app offers to send one anywhere. |
 | **Orientation** as three choices - auto, portrait, landscape | `Force Portrait`, a boolean | **Take.** Ours can lock to portrait or let go, and cannot lock to landscape - which is the one a player holding a phone sideways for a whole session wants. |
 | **"Reset and start"**, distinct from opening the game | - | **Take, once auto load state exists.** Only means anything when opening a game normally resumes it; the two features arrive together or not at all. |
 | **"Delete save data"** from the list | Only reachable by deleting files by hand | **Take.** It sits in the same context menu as the rest. |

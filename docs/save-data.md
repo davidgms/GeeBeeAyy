@@ -78,10 +78,10 @@ Four functions, plus JNI mirrors. Deliberately small.
 
 | Function | Purpose |
 |---|---|
-| `geebeeayy_save_size` | Bytes in the battery save, 0 if the cart has no save chip |
-| `geebeeayy_save_read` | Copy the save out into a caller-owned buffer |
-| `geebeeayy_save_write` | Restore a save |
-| `geebeeayy_save_take_dirty` | Did save memory change since last asked; clears |
+| `gbee_save_size` | Bytes in the battery save, 0 if the cart has no save chip |
+| `gbee_save_read` | Copy the save out into a caller-owned buffer |
+| `gbee_save_write` | Restore a save |
+| `gbee_save_take_dirty` | Did save memory change since last asked; clears |
 
 There is deliberately **no `save_type` function**. The size uniquely identifies
 the type (512 / 32K / 64K / 8K / 128K are all distinct) and the frontend's real
@@ -93,9 +93,9 @@ two:
 
 | Function | Purpose |
 |---|---|
-| `geebeeayy_state_size` | Bytes a state taken now would occupy |
-| `geebeeayy_state_read` | Copy a state out; 0 if the buffer is too small |
-| `geebeeayy_state_write` | Restore a state; -1 if rejected |
+| `gbee_state_size` | Bytes a state taken now would occupy |
+| `gbee_state_read` | Copy a state out; 0 if the buffer is too small |
+| `gbee_state_write` | Restore a state; -1 if rejected |
 
 This **replaced** an opaque-handle API (`save_state_create` / `load_state` /
 `save_state_destroy`) that handed Kotlin a `Long` it could only give back or

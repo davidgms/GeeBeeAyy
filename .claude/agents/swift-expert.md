@@ -1,6 +1,6 @@
 ---
 name: swift-expert
-description: "Use PROACTIVELY for the iOS frontend under `ios/GeeBeeAyy/**`: the SwiftUI views (Splash, ROMBrowser, Emulation, Settings), `GbaEngine.swift`, the bridging header over the core's C ABI, `GeeBeeAyyTheme`, and the Xcode project this target still lacks. Triggers: SwiftUI, @State, @Observable, ObservableObject, async/await, actor, bridging header, UnsafePointer, UnsafeMutableRawPointer, AVAudioEngine, CoreAudio, Xcode project, Info.plist, MFi controller, iCloud sync."
+description: "Use PROACTIVELY for the iOS frontend under `ios/GBee/**`: the SwiftUI views (Splash, ROMBrowser, Emulation, Settings), `GbaEngine.swift`, the bridging header over the core's C ABI, `GBeeTheme`, and the Xcode project this target still lacks. Triggers: SwiftUI, @State, @Observable, ObservableObject, async/await, actor, bridging header, UnsafePointer, UnsafeMutableRawPointer, AVAudioEngine, CoreAudio, Xcode project, Info.plist, MFi controller, iCloud sync."
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 memory: project
@@ -40,7 +40,7 @@ Swift sources and a bridging header, but no `.xcodeproj` and no
 Assume nothing here has ever been compiled, and say so rather than reporting
 untested work as done.
 
-- `GbaEngine.swift` binds the C ABI (`geebeeayy_*`) from `core/src/ffi.rs`,
+- `GbaEngine.swift` binds the C ABI (`gbee_*`) from `core/src/ffi.rs`,
   not the JNI exports - those are Android-only, behind
   `#[cfg(target_os = "android")]`.
 - The frontend renders, feeds audio, collects input and manages lifecycle.

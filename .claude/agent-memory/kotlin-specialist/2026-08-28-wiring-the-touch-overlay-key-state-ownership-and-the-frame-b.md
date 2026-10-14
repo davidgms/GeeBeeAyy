@@ -4,7 +4,7 @@
   D-pad/A/B were decorative (`onClick = { /* Handle press */ }`), plus the
   known `GbaScreen` per-frame `Bitmap.createBitmap` allocation.
 - **Finding (JNI contract)**: `core/src/ffi.rs:368-379` exports
-  `Java_com_geebeeayy_app_engine_GbaEngine_nativeSetKeys(handle: jlong, keys: jint)`,
+  `Java_com_gbee_emulator_engine_GbaEngine_nativeSetKeys(handle: jlong, keys: jint)`,
   a static method taking the bitmask directly (no boxing). GBATEK bit order:
   A=0, B=1, Select=2, Start=3, Right=4, Left=5, Up=6, Down=7, R=8, L=9. Set
   bit = pressed; the core inverts to active-low KEYINPUT itself.

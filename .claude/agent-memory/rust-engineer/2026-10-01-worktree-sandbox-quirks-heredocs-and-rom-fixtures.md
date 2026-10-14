@@ -17,7 +17,7 @@ When run isolated in `.claude/worktrees/agent-*`:
 - **`temp/roms/` does not exist in a worktree**, so every ROM-backed test
   (`tests/ppu.rs`, `gba_suite.rs`, `tonerom.rs`) silently skips and passes.
   The fixtures live in the main checkout's `temp/roms/`; symlink it:
-  `ln -s /home/david/projects/GeeBeeAyy/temp/roms <worktree>/temp/roms`.
+  `ln -s /home/david/projects/gbee-emulator/temp/roms <worktree>/temp/roms`.
   Without that, "cargo test passes" proves much less than it looks.
   Careful: `cd temp/roms && cp ../x` resolves `..` to the *main* `temp/`.
 - **The git guard matches substrings**: a `for` loop or `git -C ..` with a
@@ -28,4 +28,4 @@ When run isolated in `.claude/worktrees/agent-*`:
   ("changes directory to a location computed at runtime before running
   git"). Run git as its own call with `cd <absolute worktree root> && git`.
 - Reference emulator sources are already on disk, no download needed:
-  `/home/david/projects/GeeBeeAyy/temp/emulators-research/{mgba,nanoboyadvance}/src/`.
+  `/home/david/projects/gbee-emulator/temp/emulators-research/{mgba,nanoboyadvance}/src/`.

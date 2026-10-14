@@ -388,7 +388,7 @@ fn multiply_long(instruction: u32, cpu: &mut Cpu, bus: &MemoryBus) -> u32 {
 //
 // Upstream: https://github.com/zaydlang/multiplication-algorithm (impl.h,
 // bitwise.h). Altered: translated from C to Rust and adapted for
-// GeeBeeAyy's CPU core - reduced to the carry output (the product is
+// GBee's CPU core - reduced to the carry output (the product is
 // computed directly by the callers), the global accumulator shift register
 // made local, the 128-bit rotations done with `u128`. Licence notice of the
 // original, which applies to this section:

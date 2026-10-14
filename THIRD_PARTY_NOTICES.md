@@ -1,6 +1,6 @@
 # Third-party notices
 
-GeeBeeAyy is MIT-licensed (see `LICENSE`). The components below are third-party
+GBee is MIT-licensed (see `LICENSE`). The components below are third-party
 work that ships inside this repository or its builds, under their own licences.
 Libraries fetched by Cargo or Gradle at build time are not vendored here and
 carry their own licence files in their packages.
@@ -15,7 +15,7 @@ carry their own licence files in their packages.
 ## ARM7TDMI multiplication carry-flag model
 
 Altered source: translated from C (`impl.h`, `bitwise.h`) to Rust and adapted
-for GeeBeeAyy's CPU core. It is not the original software.
+for GBee's CPU core. It is not the original software.
 
 ```
 Copyright (c) 2024 zaydlang

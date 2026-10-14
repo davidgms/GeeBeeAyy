@@ -8,7 +8,7 @@ set -euo pipefail
 ANDROID_HOME="$HOME/android-sdk"
 CMDLINE_TOOLS_URL="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 
-echo "=== GeeBeeAyy! Android SDK Setup (WSL) ==="
+echo "=== GBee Emulator Android SDK Setup (WSL) ==="
 echo ""
 
 # Step 1: Install dependencies
@@ -42,7 +42,7 @@ echo "[4/4] Configuring environment..."
 SHELL_RC="$HOME/.bashrc"
 grep -q "ANDROID_HOME" "$SHELL_RC" 2>/dev/null || {
     echo "" >> "$SHELL_RC"
-    echo "# Android SDK (GeeBeeAyy)" >> "$SHELL_RC"
+    echo "# Android SDK (GBee)" >> "$SHELL_RC"
     echo "export ANDROID_HOME=\"$ANDROID_HOME\"" >> "$SHELL_RC"
     echo "export NDK_HOME=\"$ANDROID_HOME/ndk/27.0.12077973\"" >> "$SHELL_RC"
     echo "export PATH=\"\$ANDROID_HOME/cmdline-tools/latest/bin:\$PATH\"" >> "$SHELL_RC"

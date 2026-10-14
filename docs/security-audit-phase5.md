@@ -53,7 +53,7 @@ not run yet are in [`security-audit-phase5-pending-tests.md`](security-audit-pha
 - Fix: `sample_accum %= GBA_CLOCK` (or reject) on restore. Test first.
 
 ### H2 - ROM or zip read fully into the heap (INPUT-1, JNI-K-6, STORE-5)
-- `android/app/src/main/java/com/geebeeayy/app/data/RomBytes.kt:34-47` calls
+- `android/app/src/main/java/com/gbee/emulator/data/RomBytes.kt:34-47` calls
   `readBytes()` on the file or zip entry with no size cap. The caller catches
   only `Exception` (`EmulationViewModel.kt:483`), and `OutOfMemoryError` is not
   one, so a zip bomb or a huge `.gba` crashes the app on launch.
@@ -137,7 +137,7 @@ JNI-K-13, NET-8, STORE-6, PERM-3, EXPORT-2, INPUT-4, INPUT-5, INPUT-7.
 | B1 | `MANAGE_EXTERNAL_STORAGE` (PERM-1): Play allows it only for file managers and similar; an emulator has a working alternative. Move to SAF `ACTION_OPEN_DOCUMENT_TREE` + persisted Uri, saves app-private, screenshots via MediaStore. Optional sideload flavor keeps the permission. | Largest item, a real rewrite of `RomFolderManager`, `RomFiles`, `RomBytes`, `RomHeader` and the load path |
 | B2 | No release signing and no AAB in CI (LOG-4), `versionCode = 1` | fixed: env-driven `signingConfig`, `versionCode` from `GITHUB_RUN_NUMBER`, CI `bundleRelease` when `GBA_KEYSTORE_B64` exists |
 | B3 | targetSdk was 35; new apps must target 36 since 2026-08-31 | fixed: compileSdk and targetSdk 36, AGP 8.9.1, Gradle 8.11.1; `appCategory="game"` is set in the manifest |
-| B4 | 16 KB page size: `libgeebeeayy_core.so` (arm64, built 2026-10-08) and `libgeebeeayy_ra.so` have LOAD alignment 0x1000, not 0x4000 (`readelf -lW`). NDK r26/r27, no `max-page-size` flag anywhere | fixed: `max-page-size` and `common-page-size` 16384 through RUSTFLAGS for Rust and `target_link_options` in `CMakeLists.txt` for rcheevos; verify with `readelf -lW` and `zipalign -c -P 16` |
+| B4 | 16 KB page size: `libgbee_core.so` (arm64, built 2026-10-08) and `libgbee_ra.so` have LOAD alignment 0x1000, not 0x4000 (`readelf -lW`). NDK r26/r27, no `max-page-size` flag anywhere | fixed: `max-page-size` and `common-page-size` 16384 through RUSTFLAGS for Rust and `target_link_options` in `CMakeLists.txt` for rcheevos; verify with `readelf -lW` and `zipalign -c -P 16` |
 | B5 | No privacy policy; data-safety form must declare the RA username, activity and (unless M7 is fixed) file names | fixed in the repo: `docs/privacy-policy.md` and the form answers in `docs/play-data-safety.md`; publishing the policy URL and filling the form stay manual |
 
 Also: `ROADMAP.md` Phase 6 says the app "sends nothing anywhere". That is false
@@ -206,7 +206,7 @@ advisories, issues and fix commits. 81 upstream items, raw list in
 - **M4** got stronger: rcheevos PR #554 reproduced on our pin with a host
   harness (`temp/phase5/rc-harness/`, `emu-rcheevos-progress.log`, exit 124).
 - **B4** confirmed by `readelf` (Lemuroid hit the same Play rule).
-- **H2** and **L5** proven by `android/app/src/test/java/com/geebeeayy/app/data/Phase5ProofTest.kt`
+- **H2** and **L5** proven by `android/app/src/test/java/com/gbee/emulator/data/Phase5ProofTest.kt`
   (2 of 2 pass: a 40 MB zip entry is read whole; `..` passes the badge name check).
 - **CORE-8** gained three debug-only overflow sites in the HLE BIOS
   (`bios.rs:406, 481, 538`), Info.
@@ -224,7 +224,7 @@ advisories, issues and fix commits. 81 upstream items, raw list in
   our pin. #555 is missing but only touches Wii hashing, which we never call.
 - RetroArch CVE-2021-28927 (Windows command injection from file names),
   CVE-2025-9136 (`filestream_vscanf` read), CVE-2025-0459 (DLL search path):
-  no equivalent code in GeeBeeAyy. Lesson kept: never build a shell command
+  no equivalent code in GBee. Lesson kept: never build a shell command
   from a file name.
 - Cheats, ROM patches (IPS/UPS/BPS), 7z/rar, ELF loaders, movies, debugger,
   config files: features we do not have.

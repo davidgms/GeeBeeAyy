@@ -629,8 +629,8 @@ fn header_title(data: &[u8]) -> String {
 /// ```
 /// let mut rom = vec![0u8; 0x400];
 /// rom[0x100..0x109].copy_from_slice(b"SRAM_V100");
-/// assert_eq!(geebeeayy_core::cart::save_fit(&rom, 32 * 1024 + 16), Some(32 * 1024));
-/// assert_eq!(geebeeayy_core::cart::save_fit(&rom, 512), None);
+/// assert_eq!(gbee_core::cart::save_fit(&rom, 32 * 1024 + 16), Some(32 * 1024));
+/// assert_eq!(gbee_core::cart::save_fit(&rom, 512), None);
 /// ```
 pub fn save_fit(rom: &[u8], save_len: usize) -> Option<usize> {
     let file_is = |size: usize| save_len == size || save_len == size + 16;
@@ -653,7 +653,7 @@ pub fn save_fit(rom: &[u8], save_len: usize) -> Option<usize> {
 /// ```
 /// let mut rom = vec![0u8; 0x400];
 /// rom[0x100..0x10C].copy_from_slice(b"FLASH1M_V103");
-/// assert_eq!(geebeeayy_core::cart::save_size(&rom), 128 * 1024);
+/// assert_eq!(gbee_core::cart::save_size(&rom), 128 * 1024);
 /// ```
 pub fn save_size(rom: &[u8]) -> usize {
     save_sizes(rom).last().copied().unwrap_or(0)

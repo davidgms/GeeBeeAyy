@@ -1,0 +1,2636 @@
+package com.gbee.emulator.ui.screens
+
+import com.gbee.emulator.data.DisplaySettings
+import com.gbee.emulator.ui.RateTip
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import com.gbee.emulator.ui.clampedDrag
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.StateFlow
+import com.gbee.emulator.ui.picturePlacement
+import com.gbee.emulator.ui.GameSurfaceRenderer
+import androidx.compose.ui.viewinterop.AndroidView
+import android.view.SurfaceView
+import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.Image
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import android.os.BatteryManager
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.gbee.emulator.ui.findActivity
+import com.gbee.emulator.ui.requestGameDisplayMode
+import com.gbee.emulator.data.ControlButton
+import com.gbee.emulator.data.ControlPalette
+import com.gbee.emulator.data.ControlLayout
+import com.gbee.emulator.data.BadgeCache
+import com.gbee.emulator.data.ControlLayoutStore
+import com.gbee.emulator.engine.RaAchievement
+import com.gbee.emulator.engine.RaEngine
+import com.gbee.emulator.viewmodel.PerfStats
+import com.gbee.emulator.engine.RaGame
+import com.gbee.emulator.data.CustomButton
+import com.gbee.emulator.data.CustomButtonMode
+import com.gbee.emulator.data.LayoutOrientation
+import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.gbee.emulator.data.ScreenFilter
+import com.gbee.emulator.data.StateSlot
+import com.gbee.emulator.data.ScaleMode
+import com.gbee.emulator.engine.GbaEngine
+import com.gbee.emulator.ui.theme.*
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.floor
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+
+@Composable
+fun EmulationScreen(
+    frames: StateFlow<ByteArray?>,
+    isLoading: Boolean = false,
+    errorMessage: String? = null,
+    stateMessage: String? = null,
+    scaleMode: ScaleMode = ScaleMode.INTEGER,
+    screenFilter: ScreenFilter = ScreenFilter.NONE,
+    onDismissStateMessage: () -> Unit = {},
+    onBack: () -> Unit,
+    onPause: () -> Unit,
+    onFastForward: () -> Unit,
+    fastForward: Boolean = false,
+    isRewinding: Boolean = false,
+    onRewind: (Boolean) -> Unit = {},
+    controlScale: Float = 1f,
+    controlOpacity: Float = 1f,
+    onSaveState: (Int) -> Unit,
+    onLoadState: (Int) -> Unit,
+    stateSlots: () -> List<StateSlot> = { emptyList() },
+    onScreenshot: () -> Unit = {},
+    onSettings: () -> Unit = {},
+    onReset: () -> Unit = {},
+    fullscreen: Boolean = true,
+    showStatusStrip: Boolean = true,
+    soundEnabled: Boolean = true,
+    performance: PerfStats? = null,
+    onToggleSound: () -> Unit = {},
+    onKeyChange: (Int, Boolean) -> Unit = { _, _ -> },
+    gameKey: () -> String? = { null },
+) {
+    var isPaused by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+
+    // Layout editing. The offsets are held here while dragging and written
+    // back only on Done, so an abandoned edit leaves the saved layout alone.
+    val context = LocalContext.current
+    // Declared here rather than beside its first drawing use: which layout a
+    // game gets is chosen per orientation, so everything below needs it.
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val layoutStore = remember { ControlLayoutStore(context) }
+    var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
+    var activeLayoutId by remember { mutableStateOf(ControlLayoutStore.DEFAULT_LAYOUT_ID) }
+    var editingLayout by remember { mutableStateOf(false) }
+    // Whether this editing session has changed anything yet. Leaving with
+    // nothing touched must not ask a question the player has no answer to.
+    var editDirty by remember { mutableStateOf(false) }
+    var showLeaveEditConfirm by remember { mutableStateOf(false) }
+    var layoutsModalOpen by remember { mutableStateOf(false) }
+    // The button currently being dragged, so only it gets the outline - a
+    // player touches a button, sees it highlight, then drags it, rather than
+    // every button being outlined at once.
+    var selectedButton by remember { mutableStateOf<ControlButton?>(null) }
+    val offsets = remember { mutableStateMapOf<ControlButton, Offset>() }
+    /** Per-control size multipliers, alongside [offsets] and saved with them. */
+    val scales = remember { mutableStateMapOf<ControlButton, Float>() }
+    // Custom buttons (combos, sequences, hold toggles) belong to the layout
+    // the same way the real buttons' positions do, and they are staged behind
+    // Done the same way. They used to write their position the moment a drag
+    // ended, which is why leaving the editor put the fixed buttons back and
+    // left the custom ones where the abandoned edit had dropped them.
+    var customButtons by remember { mutableStateOf<List<CustomButton>>(emptyList()) }
+    val customOffsets = remember { mutableStateMapOf<String, Offset>() }
+    val customScales = remember { mutableStateMapOf<String, Float>() }
+    val heldToggles = remember { mutableStateMapOf<String, Boolean>() }
+    var selectedCustomId by remember { mutableStateOf<String?>(null) }
+    var customButtonsModalOpen by remember { mutableStateOf(false) }
+    fun loadLayout(layoutId: String) {
+        // A toggle-held custom button's keys are still down in the core -
+        // switching layouts out from under it must not leave them stuck.
+        heldToggles.forEach { (id, isHeld) ->
+            if (isHeld) {
+                customButtons.firstOrNull { it.id == id }?.keys?.forEach { key -> onKeyChange(key, false) }
+            }
+        }
+        offsets.clear()
+        scales.clear()
+        ControlButton.entries.forEach { button ->
+            val (x, y) = layoutStore.getControlOffset(layoutId, button)
+            offsets[button] = Offset(x, y)
+            scales[button] = layoutStore.getControlScale(layoutId, button)
+        }
+        customButtons = layoutStore.getCustomButtons(layoutId)
+        customOffsets.clear()
+        customScales.clear()
+        heldToggles.clear()
+        customButtons.forEach { button ->
+            val (x, y) = layoutStore.getCustomButtonOffset(layoutId, button.id)
+            customOffsets[button.id] = Offset(x, y)
+            customScales[button.id] = layoutStore.getCustomButtonScale(layoutId, button.id)
+        }
+    }
+    // Leaving the screen with a TOGGLE_HOLD button on used to leave those
+    // keys pressed in the ViewModel for the rest of the session: the release
+    // only ran on a layout switch or a delete, never on dispose.
+    DisposableEffect(Unit) {
+        onDispose {
+            heldToggles.forEach { (id, isHeld) ->
+                if (isHeld) {
+                    customButtons.firstOrNull { it.id == id }?.keys?.forEach { key ->
+                        onKeyChange(key, false)
+                    }
+                }
+            }
+        }
+    }
+
+    // The ROM loads asynchronously - its key (and so which layout it uses)
+    // is not known on first composition, only once loading finishes. Turning
+    // the phone re-runs this too: a portrait arrangement does not fit
+    // sideways, so each orientation has its own choice of layout.
+    LaunchedEffect(gameKey(), isLandscape) {
+        val key = gameKey() ?: return@LaunchedEffect
+        activeLayoutId = layoutStore.getLayoutForGame(key, isLandscape)
+        loadLayout(activeLayoutId)
+    }
+    // Undo/redo history for the current edit session: a stack of full-layout
+    // snapshots taken before each change (a drag gesture or Reset), not one
+    // per pixel of movement - a single drag is one undo step, not hundreds.
+    val undoStack = remember { mutableStateListOf<LayoutSnapshot>() }
+    val redoStack = remember { mutableStateListOf<LayoutSnapshot>() }
+    fun snapshot() =
+        LayoutSnapshot(offsets.toMap(), scales.toMap(), customOffsets.toMap(), customScales.toMap())
+    fun restore(state: LayoutSnapshot) {
+        offsets.clear(); offsets.putAll(state.offsets)
+        scales.clear(); scales.putAll(state.scales)
+        customOffsets.clear(); customOffsets.putAll(state.customOffsets)
+        customScales.clear(); customScales.putAll(state.customScales)
+    }
+    val pushUndoSnapshot: () -> Unit = {
+        undoStack.add(snapshot())
+        redoStack.clear()
+        editDirty = true
+    }
+    val undoEdit: () -> Unit = {
+        undoStack.removeLastOrNull()?.let { previous ->
+            redoStack.add(snapshot())
+            restore(previous)
+        }
+    }
+    val redoEdit: () -> Unit = {
+        redoStack.removeLastOrNull()?.let { next ->
+            undoStack.add(snapshot())
+            restore(next)
+        }
+    }
+    // One press of smaller/bigger, applied to whatever is selected. Each
+    // press is its own undo step, which is what a stepper should be: a slider
+    // would bury a whole gesture's worth of change behind one undo.
+    val resizeSelected: (Float) -> Unit = { delta ->
+        pushUndoSnapshot()
+        val customId = selectedCustomId
+        val button = selectedButton
+        // The same floor `movableControl` draws with. Without it the stepper
+        // kept accepting presses below what the screen would show: the value
+        // was stored, the undo stack grew, Cancel started asking about
+        // unsaved changes, and nothing moved.
+        val min = smallestUsefulControlScale(controlScale)
+        if (customId != null) {
+            customScales[customId] = ((customScales[customId] ?: 1f) + delta)
+                .coerceIn(min, ControlLayoutStore.MAX_CONTROL_SCALE)
+        } else if (button != null) {
+            scales[button] = ((scales[button] ?: 1f) + delta)
+                .coerceIn(min, ControlLayoutStore.MAX_CONTROL_SCALE)
+        }
+    }
+    val handleDragStart: (ControlButton) -> Unit = { button ->
+        pushUndoSnapshot()
+        selectedButton = button
+        selectedCustomId = null
+    }
+    // The selection outlives the drag on purpose: the size buttons in the
+    // edit bar act on whatever is selected, and clearing it here left nothing
+    // to act on the moment the finger came up.
+    val handleDragEnd: () -> Unit = {}
+    val handleCustomDragStart: (String) -> Unit = { id ->
+        pushUndoSnapshot()
+        selectedCustomId = id
+        selectedButton = null
+    }
+    // Nothing to do: the position is written by Done, along with everything
+    // else the editor staged.
+    val handleCustomDragEnd: () -> Unit = {}
+    // The three ways out of the editor - Done, Cancel and the system back
+    // button - are these two functions plus whether the caller leaves the
+    // screen afterwards.
+    fun saveLayoutEdits() {
+        ControlButton.entries.forEach { button ->
+            val o = offsets[button] ?: Offset.Zero
+            layoutStore.setControlOffset(activeLayoutId, button, o.x, o.y)
+            layoutStore.setControlScale(activeLayoutId, button, scales[button] ?: 1f)
+        }
+        customOffsets.forEach { (id, o) ->
+            layoutStore.setCustomButtonOffset(activeLayoutId, id, o.x, o.y)
+        }
+        customScales.forEach { (id, scale) ->
+            layoutStore.setCustomButtonScale(activeLayoutId, id, scale)
+        }
+        editingLayout = false
+        editDirty = false
+        selectedButton = null
+        selectedCustomId = null
+        undoStack.clear()
+        redoStack.clear()
+    }
+    fun discardLayoutEdits() {
+        // Re-reading the store is the whole revert: nothing this session
+        // touched was written to it.
+        loadLayout(activeLayoutId)
+        editingLayout = false
+        editDirty = false
+        selectedButton = null
+        selectedCustomId = null
+        undoStack.clear()
+        redoStack.clear()
+    }
+    // Makes `layout` the current game's layout - a radio pick just switches
+    // what is on screen; opening its editor also closes the modal and drops
+    // straight into dragging, since there is no point editing a layout that
+    // is not the one loaded.
+    fun selectLayout(layout: ControlLayout, openEditor: Boolean) {
+        activeLayoutId = layout.id
+        gameKey()?.let { layoutStore.setLayoutForGame(it, isLandscape, layout.id) }
+        loadLayout(layout.id)
+        undoStack.clear()
+        redoStack.clear()
+        selectedButton = null
+        if (openEditor) {
+            layoutsModalOpen = false
+            editingLayout = true
+            editDirty = false
+        }
+    }
+    var showSlots by remember { mutableStateOf(false) }
+    var showAchievements by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf(false) }
+    // What RetroAchievements said about this cart, and anything earned since.
+    // Null while it is still asking, and null for the two thirds of the GBA
+    // library that have no set at all.
+    val raGame by RaEngine.game.collectAsState()
+    var raNotice by remember { mutableStateOf<String?>(null) }
+    var raEarned by remember { mutableIntStateOf(0) }
+    LaunchedEffect(raGame) {
+        val loaded = raGame ?: return@LaunchedEffect
+        raEarned = RaEngine.achievements().count { it.unlocked }
+        raNotice = "${loaded.title} - ${loaded.achievementCount} achievements"
+    }
+    val raTrackers by RaEngine.trackers.collectAsState()
+    LaunchedEffect(Unit) {
+        RaEngine.leaderboardNotice.collect { raNotice = it }
+    }
+    LaunchedEffect(Unit) {
+        RaEngine.unlocks.collect { unlock ->
+            raEarned = RaEngine.achievements().count { it.unlocked }
+            raNotice = "Achievement unlocked: ${unlock.title} (${unlock.points})"
+        }
+    }
+
+    // A game is watched, not touched: without this the display times out
+    // mid-play and the emulator keeps running behind a black screen.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
+
+    // Adaptive refresh dropped the screen to 50 Hz mid-game and hid a sixth of
+    // the frames. See [gameDisplayMode]. Sent again on every resume: the
+    // request is lost when the window is torn down (RetroArch 7c65f1c).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(view, lifecycleOwner) {
+        val window = view.context.findActivity()?.window
+        var restore = window?.let(::requestGameDisplayMode)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && window != null) {
+                restore?.invoke()
+                restore = requestGameDisplayMode(window)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            restore?.invoke()
+        }
+    }
+
+    // The panel's live rate, for the readout and the low-rate tip. MIUI
+    // changes it under us, so it is listened to rather than read once
+    // (Lemuroid read it once and paced off a stale value, Lemuroid #1140).
+    var displayHz by remember { mutableFloatStateOf(0f) }
+    DisposableEffect(view) {
+        val displays = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+        @Suppress("DEPRECATION") // view.display is fine; defaultDisplay keeps API 26 simple.
+        fun read() { displayHz = view.display?.refreshRate ?: 0f }
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+            override fun onDisplayChanged(displayId: Int) = read()
+        }
+        read()
+        displays?.registerDisplayListener(listener, null)
+        onDispose { displays?.unregisterDisplayListener(listener) }
+    }
+
+    // MIUI's smart refresh can trap a game at 50 Hz; Home and back is the only
+    // reset that works without root. Told once per run. See [RateTip].
+    val rateTipEnabled = remember { DisplaySettings(context).getRateTip() }
+    var rateTipMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(displayHz, rateTipEnabled) {
+        if (!rateTipEnabled || RateTip.shownThisRun || displayHz >= 58f || displayHz <= 0f) return@LaunchedEffect
+        delay(RateTip.SETTLE_MS) // cancelled if the rate changes first
+        if (RateTip.shouldShow(displayHz, rateTipEnabled, RateTip.shownThisRun, RateTip.SETTLE_MS)) {
+            RateTip.shownThisRun = true
+            rateTipMessage = RateTip.MESSAGE.format(displayHz.roundToInt())
+        }
+    }
+
+    // The status and navigation bars are worth about 200px on a tall phone,
+    // on a picture already limited by width. Hidden while a game runs and put
+    // back on the way out - a setting that leaves them off after the player
+    // has left is a setting that looks like a bug.
+    DisposableEffect(view, fullscreen) {
+        val window = view.context.findActivity()?.window
+        val controller = window?.let { WindowInsetsControllerCompat(it, view) }
+        if (fullscreen && controller != null) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            // A swipe from the edge brings them back for a moment rather than
+            // for good: the player wants the clock, not a changed layout.
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            // Only undo what this effect did. `show` is not the plain inverse
+            // of `hide` below API 30 - it also clears the window's
+            // FLAG_FULLSCREEN - so it has no business running when nothing
+            // was hidden.
+            if (fullscreen) controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // Plain black rather than the palette's NightVoid: this is the
+            // in-game screen, so the background should recede and let the
+            // palette-coloured icons and buttons be the only colour on it.
+            // Dialogs (save states, layouts) and overlay chrome (the state
+            // toast, the layout-edit bar) keep NightVoid/NightPanel - they are
+            // not this background.
+            .background(Color.Black)
+            // With the bars hidden there is nothing to avoid. With them shown
+            // there is: targetSdk 35 draws edge to edge, and this screen has
+            // no Scaffold to inset it, so the back button would sit under the
+            // status bar and the StatusStrip under the navigation bar.
+            .then(
+                if (fullscreen) Modifier
+                else Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+            )
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Default.ArrowBack, "Back", tint = PineGlowMist)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Save, load, rewind, fast forward and pause live up here
+                // rather than among the game buttons: they are things you do
+                // *to* the emulator, and putting them beside A and B is how
+                // you fast-forward when you meant to jump.
+                IconButton(onClick = onToggleSound) {
+                    Icon(
+                        if (soundEnabled) Icons.Default.VolumeUp
+                        else Icons.Default.VolumeOff,
+                        contentDescription = if (soundEnabled) "Mute" else "Unmute",
+                        // Lit only when muted: the interesting state is the one
+                        // that explains why a game went quiet.
+                        tint = if (soundEnabled) PineGlowMist else GoldenSaplight,
+                    )
+                }
+                IconButton(onClick = { onSaveState(0) }) {
+                    Icon(Icons.Default.Save, "Save state", tint = PineGlowMist)
+                }
+                IconButton(onClick = { onLoadState(0) }) {
+                    Icon(Icons.Default.FolderOpen, "Load state", tint = PineGlowMist)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    onRewind(true)
+                                    tryAwaitRelease()
+                                    onRewind(false)
+                                },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.FastRewind,
+                        "Rewind",
+                        tint = if (isRewinding) GoldenSaplight else PineGlowMist,
+                    )
+                }
+                // On or off, with no speed to pick: fast forward is
+                // unthrottled and runs at whatever the device can manage.
+                IconButton(onClick = onFastForward) {
+                    Icon(
+                        Icons.Default.FastForward,
+                        "Fast forward",
+                        tint = if (fastForward) GoldenSaplight else PineGlowMist,
+                    )
+                }
+                IconButton(onClick = {
+                    isPaused = !isPaused
+                    onPause()
+                }) {
+                    Icon(
+                        if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        if (isPaused) "Resume" else "Pause",
+                        tint = if (isPaused) GoldenSaplight else PineGlowMist,
+                    )
+                }
+                // The menu has to be declared inside a Box wrapping its own
+                // button: `DropdownMenu` anchors to whatever it is nested in,
+                // not to whatever opened it, so sitting at the root of the
+                // screen put it in the bottom-left corner, a phone's width
+                // away from the icon that summons it.
+                Box {
+                    IconButton(onClick = { showMenu = !showMenu }) {
+                        Icon(Icons.Default.MoreVert, "Menu", tint = PineGlowMist)
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Save State") },
+                            onClick = { showMenu = false; onSaveState(0) },
+                            leadingIcon = { Icon(Icons.Default.Save, null, tint = AmberResin) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Load State") },
+                            onClick = { showMenu = false; onLoadState(0) },
+                            leadingIcon = { Icon(Icons.Default.FolderOpen, null, tint = AmberResin) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Save States...") },
+                            onClick = { showMenu = false; showSlots = true },
+                            leadingIcon = { Icon(Icons.Default.Bookmarks, null, tint = AmberResin) }
+                        )
+                        HorizontalDivider(color = NightEdge)
+                        DropdownMenuItem(
+                            text = { Text("Customise Layout") },
+                            onClick = {
+                                showMenu = false
+                                layouts = layoutStore.getLayouts()
+                                layoutsModalOpen = true
+                            },
+                            leadingIcon = { Icon(Icons.Default.OpenWith, contentDescription = null) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Reset game") },
+                            onClick = { showMenu = false; confirmReset = true },
+                            leadingIcon = {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Achievements") },
+                            onClick = { showMenu = false; showAchievements = true },
+                            leadingIcon = {
+                                Icon(Icons.Default.EmojiEvents, contentDescription = null)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Screenshot") },
+                            onClick = { showMenu = false; onScreenshot() },
+                            leadingIcon = { Icon(Icons.Default.PhotoCamera, contentDescription = null) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            onClick = { showMenu = false; onSettings() },
+                            leadingIcon = { Icon(Icons.Default.Settings, null, tint = AmberResin) }
+                        )
+                    }
+                }
+            }
+
+            if (isLandscape) {
+                // The same size and opacity the portrait overlay applies,
+                // applied here per control instead: landscape flanks the
+                // picture rather than floating over it, so there is no single
+                // overlay to hang the layer on. Without this the two settings
+                // did nothing at all in landscape.
+                val landscapeControlLayer = Modifier.graphicsLayer(
+                    scaleX = controlScale,
+                    scaleY = controlScale,
+                    alpha = controlOpacity,
+                )
+                CompositionLocalProvider(LocalGlobalControlScale provides controlScale) {
+                // Controls flank the screen rather than sitting under it, so
+                // nothing overlaps the play area on a wide/short display.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DPad(
+                        onKeyChange = onKeyChange,
+                        modifier = Modifier
+                            .padding(start = 16.dp)
+                            .then(landscapeControlLayer),
+                        editingLayout = editingLayout,
+                        selectedButton = selectedButton,
+                        offsets = offsets,
+                        scales = scales,
+                        onDragStart = handleDragStart,
+                        onDragEnd = handleDragEnd,
+                    )
+                    ScreenContainer(
+                        frames = frames,
+                        isLoading = isLoading,
+                        errorMessage = errorMessage,
+                        isPaused = isPaused,
+                        scaleMode = scaleMode,
+                        screenFilter = screenFilter,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                    // Landscape has the transport in the top bar too, so the
+                    // right-hand column is just the face buttons.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier
+                            .padding(end = 16.dp)
+                            .then(landscapeControlLayer),
+                    ) {
+                        ActionButtons(
+                            onKeyChange = onKeyChange,
+                            editingLayout = editingLayout,
+                            selectedButton = selectedButton,
+                            offsets = offsets,
+                            scales = scales,
+                            onDragStart = handleDragStart,
+                            onDragEnd = handleDragEnd,
+                        )
+                    }
+                }
+                }
+            } else {
+                // The controls float over the picture rather than sitting
+                // under it. Stacked, the screen gets the whole height instead
+                // of whatever the button block left over, which on a 20:9
+                // phone is most of the difference between a 3x and a 4x
+                // picture. The buttons are translucent so what they cover is
+                // still readable - see the opacity setting.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                ScreenContainer(
+                    frames = frames,
+                    isLoading = isLoading,
+                    errorMessage = errorMessage,
+                    isPaused = isPaused,
+                    scaleMode = scaleMode,
+                    screenFilter = screenFilter,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 24.dp a side left only 948 px of a 1080 px screen,
+                        // and integer scaling rounds that down to 3x. 8.dp
+                        // clears 960 px, which is exactly 4x.
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    // Pinned to the top, not centred. A 3:2 picture on a 20:9
+                    // phone is limited by width, never by height, so the extra
+                    // height this layout hands it buys nothing - it only
+                    // decides where the leftover black goes. Putting all of it
+                    // below the picture is what leaves room for the controls
+                    // to float without covering the game.
+                    pictureVerticalBias = 0f,
+                )
+
+                }
+            }
+        }
+
+        // Battery and clock, in the two bottom corners. Small and dim, and in
+        // the corners on purpose: Start and Select sit centred at the bottom,
+        // so this is the one strip of screen no control wants.
+        if (showStatusStrip && !editingLayout) {
+            StatusStrip(
+                // Persistent, not a toast. "Am I earning achievements right
+                // now" is a question asked at any moment, and a pill that
+                // faded four seconds after the game opened cannot answer it.
+                // The strip's middle was empty, and it is already the row
+                // about state at a glance. The top bar was not an option:
+                // its eight icons already span the full width.
+                achievements = raGame?.let { loaded ->
+                    "$raEarned/${loaded.achievementCount}"
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
+        // Every control in one layer, the fixed buttons and the player's own
+        // together. One transform rather than a size multiplier threaded
+        // through each button: Compose maps pointer input back through the
+        // layer, so a touch target grows with the drawing and stays in
+        // register. The layer covers the whole play area, so a control
+        // dragged over the picture is still drawn and still touchable there.
+        //
+        // The custom buttons used to sit outside this layer and so ignored
+        // both the size and the opacity settings - a player-made button
+        // stayed fully opaque over a game the fixed buttons let through.
+        CompositionLocalProvider(LocalGlobalControlScale provides controlScale) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = controlScale,
+                    scaleY = controlScale,
+                    alpha = controlOpacity,
+                    transformOrigin = TransformOrigin(0.5f, 1f),
+                )
+        ) {
+            // Landscape puts the D-pad and the face buttons beside the
+            // picture instead, in the row above; only portrait floats the
+            // whole set over it.
+            if (!isLandscape) {
+                GameControls(
+                    isPaused = isPaused,
+                    isFastForward = fastForward,
+                    isRewinding = isRewinding,
+                    onRewind = onRewind,
+                    onTogglePause = {
+                        isPaused = !isPaused
+                        onPause()
+                    },
+                    onToggleFastForward = onFastForward,
+                    onKeyChange = onKeyChange,
+                    editingLayout = editingLayout,
+                    offsets = offsets,
+                    scales = scales,
+                    selectedButton = selectedButton,
+                    onDragStart = handleDragStart,
+                    onDragEnd = handleDragEnd,
+                )
+            }
+
+            // Positioned absolutely rather than nudged from a natural spot
+            // like the fixed buttons - a player-made button has no natural
+            // position to nudge from. Visible and live during play, not just
+            // while editing; only the drag affordance is gated on that.
+            customButtons.forEach { button ->
+                Box(
+                    modifier = Modifier.movableControl(
+                        button.id,
+                        editingLayout,
+                        selectedCustomId,
+                        pillShape,
+                        customOffsets,
+                        handleCustomDragStart,
+                        handleCustomDragEnd,
+                        customScales,
+                    )
+                ) {
+                    CustomButtonView(
+                        button = button,
+                        editingLayout = editingLayout,
+                        held = heldToggles[button.id] == true,
+                        onToggleHeld = {
+                            val nowHeld = heldToggles[button.id] != true
+                            heldToggles[button.id] = nowHeld
+                            button.keys.forEach { key -> onKeyChange(key, nowHeld) }
+                        },
+                        onKeyChange = onKeyChange,
+                    )
+                }
+            }
+        }
+        }
+
+        if (editingLayout) {
+            LayoutEditBar(
+                selectionLabel = selectedCustomId
+                    ?.let { id -> customButtons.firstOrNull { it.id == id }?.name }
+                    ?: selectedButton?.label,
+                onResize = resizeSelected,
+                onDone = { saveLayoutEdits() },
+                onCancel = { discardLayoutEdits() },
+                onReset = {
+                    pushUndoSnapshot()
+                    layoutStore.resetLayoutOffsets(activeLayoutId)
+                    ControlButton.entries.forEach {
+                        offsets[it] = Offset.Zero
+                        scales[it] = 1f
+                    }
+                    customScales.keys.toList().forEach { customScales[it] = 1f }
+                },
+                canUndo = undoStack.isNotEmpty(),
+                canRedo = redoStack.isNotEmpty(),
+                onUndo = undoEdit,
+                onRedo = redoEdit,
+                onCustomButtons = { customButtonsModalOpen = true },
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
+
+        // The system back button used to walk straight out of an open editor,
+        // taking every unsaved change with it silently. It now offers to keep
+        // them, and either way leaves through `onBack` - the same exit the
+        // toolbar arrow uses, which is what stops the emulator.
+        BackHandler(enabled = editingLayout) {
+            if (editDirty) showLeaveEditConfirm = true else { discardLayoutEdits(); onBack() }
+        }
+
+        if (showLeaveEditConfirm) {
+            AlertDialog(
+                onDismissRequest = { showLeaveEditConfirm = false },
+                title = { Text("Unsaved layout changes") },
+                text = { Text("Save the changes to this layout before leaving?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showLeaveEditConfirm = false
+                        saveLayoutEdits()
+                        onBack()
+                    }) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showLeaveEditConfirm = false
+                        discardLayoutEdits()
+                        onBack()
+                    }) { Text("Don't save") }
+                },
+            )
+        }
+
+        if (customButtonsModalOpen) {
+            CustomButtonsListDialog(
+                buttons = customButtons,
+                onSave = { button ->
+                    // Release first, like onDelete does. Editing a held
+                    // TOGGLE_HOLD button replaces its key list and restarts
+                    // its pointerInput, so whatever it was holding would never
+                    // be released - rebinding a held button from L to R left L
+                    // down for the session.
+                    if (heldToggles[button.id] == true) {
+                        customButtons.firstOrNull { it.id == button.id }?.keys
+                            ?.forEach { key -> onKeyChange(key, false) }
+                        heldToggles.remove(button.id)
+                    }
+                    layoutStore.saveCustomButton(activeLayoutId, button)
+                    customButtons = layoutStore.getCustomButtons(activeLayoutId)
+                    customOffsets.getOrPut(button.id) {
+                        val (x, y) = layoutStore.getCustomButtonOffset(activeLayoutId, button.id)
+                        Offset(x, y)
+                    }
+                },
+                onDelete = { button ->
+                    if (heldToggles[button.id] == true) {
+                        button.keys.forEach { key -> onKeyChange(key, false) }
+                    }
+                    layoutStore.deleteCustomButton(activeLayoutId, button.id)
+                    customButtons = layoutStore.getCustomButtons(activeLayoutId)
+                    customOffsets.remove(button.id)
+                    heldToggles.remove(button.id)
+                },
+                onDismiss = { customButtonsModalOpen = false },
+            )
+        }
+
+        if (layoutsModalOpen) {
+            LayoutsDialog(
+                layouts = layouts.filter { it.orientation.appliesTo(isLandscape) },
+                activeLayoutId = activeLayoutId,
+                landscape = isLandscape,
+                onSelect = { layout -> selectLayout(layout, openEditor = false) },
+                onEdit = { layout -> selectLayout(layout, openEditor = true) },
+                onRename = { id, name, orientation ->
+                    layoutStore.renameLayout(id, name)
+                    layoutStore.setLayoutOrientation(id, orientation)
+                    layouts = layoutStore.getLayouts()
+                    // A layout just told to stop applying here cannot stay
+                    // loaded here either.
+                    if (id == activeLayoutId && !orientation.appliesTo(isLandscape)) {
+                        gameKey()?.let { key ->
+                            activeLayoutId = layoutStore.getLayoutForGame(key, isLandscape)
+                            loadLayout(activeLayoutId)
+                        }
+                    }
+                },
+                onDelete = { layout ->
+                    layoutStore.deleteLayout(layout.id)
+                    layouts = layoutStore.getLayouts()
+                    if (activeLayoutId == layout.id) {
+                        selectLayout(layouts.first { it.isDefault }, openEditor = false)
+                    }
+                },
+                onCreate = { name, orientation ->
+                    val created = layoutStore.createLayout(
+                        name,
+                        copyFrom = activeLayoutId,
+                        orientation = orientation,
+                    )
+                    layouts = layoutStore.getLayouts()
+                    if (orientation.appliesTo(isLandscape)) {
+                        selectLayout(created, openEditor = true)
+                    } else {
+                        layoutsModalOpen = false
+                    }
+                },
+                onDismiss = { layoutsModalOpen = false },
+            )
+        }
+
+        // Bottom left, above the battery reading. The first attempt put it
+        // under the toolbar, which on a 20:9 phone is exactly where the
+        // picture starts - a diagnostic that covers what it is diagnosing is
+        // no use. Down here the strip is the one band no control wants.
+        performance?.let { stats ->
+            Text(
+                text = "${stats.fps} fps  ${displayHz.roundToInt()} Hz" +
+                    if (stats.underruns > 0) "  ${stats.underruns} underruns" else "",
+                color = if (stats.underruns > 0) Error else LedGreen,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 30.dp),
+            )
+        }
+
+        // Bottom right, opposite the FPS readout. A tracker is the live value
+        // of a run in progress - a lap timer, a running score - so it has to
+        // be visible *while playing*, which rules out a dialog.
+        if (raTrackers.isNotEmpty()) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 30.dp),
+            ) {
+                raTrackers.values.forEach { value ->
+                    Text(value, color = GoldenSaplight, fontSize = 12.sp)
+                }
+            }
+        }
+
+        StateToast(
+            message = stateMessage,
+            onDismiss = onDismissStateMessage,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+
+        // Long enough to read a sentence and act on it.
+        StateToast(
+            message = rateTipMessage,
+            onDismiss = { rateTipMessage = null },
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 96.dp, start = 16.dp, end = 16.dp),
+            durationMs = 7_000,
+            icon = Icons.Default.Info,
+        )
+
+        // The same pill, one row lower, so a save message and an achievement
+        // arriving together do not sit on top of each other.
+        StateToast(
+            message = raNotice,
+            onDismiss = { raNotice = null },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 56.dp),
+        )
+
+        if (confirmReset) {
+            AlertDialog(
+                onDismissRequest = { confirmReset = false },
+                containerColor = NightPanel,
+                titleContentColor = GoldenSaplight,
+                textContentColor = PineGlowMist,
+                title = { Text("Reset game?", fontWeight = FontWeight.Bold) },
+                // Says what survives as well as what is lost: the battery save
+                // is the thing a player is afraid of losing, and it is the
+                // thing a reset keeps.
+                text = {
+                    Text(
+                        "The game restarts from the title screen. Anything " +
+                            "since your last in-game save is lost; the save " +
+                            "itself is kept, and so are your save states.",
+                        fontSize = 13.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { confirmReset = false; onReset() }) {
+                        Text("Reset", color = Error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmReset = false }) {
+                        Text("Cancel", color = PineGlowMist)
+                    }
+                },
+            )
+        }
+
+        if (showAchievements) {
+            AchievementsDialog(
+                game = raGame,
+                signedIn = RaEngine.user.collectAsState().value != null,
+                onDismiss = { showAchievements = false },
+            )
+        }
+
+        if (showSlots) {
+            SaveStateDialog(
+                slots = stateSlots(),
+                onSave = { slot -> showSlots = false; onSaveState(slot) },
+                onLoad = { slot -> showSlots = false; onLoadState(slot) },
+                onDismiss = { showSlots = false },
+            )
+        }
+
+    }
+}
+
+/**
+ * The black play-area box: frame buffer (or a status message) plus the pause
+ * overlay. Takes whatever size its [modifier] gives it - callers decide
+ * whether that is "rest of a portrait column" or "middle of a landscape
+ * row" - and [GbaScreen] letterboxes within it per [scaleMode].
+ */
+@Composable
+private fun ScreenContainer(
+    frames: StateFlow<ByteArray?>,
+    isLoading: Boolean,
+    errorMessage: String?,
+    isPaused: Boolean,
+    scaleMode: ScaleMode,
+    screenFilter: ScreenFilter = ScreenFilter.NONE,
+    modifier: Modifier = Modifier,
+    pictureVerticalBias: Float = 0.5f,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Only whether a frame exists, not the frame: collecting the frame
+        // itself recomposed this whole screen 60 times a second.
+        val hasFrame by remember(frames) { frames.map { it != null }.distinctUntilChanged() }
+            .collectAsState(initial = frames.value != null)
+        if (hasFrame) {
+            GbaScreen(
+                frames = frames,
+                scaleMode = scaleMode,
+                filter = screenFilter,
+                verticalBias = pictureVerticalBias,
+            )
+        } else if (errorMessage != null) {
+            Text(text = errorMessage, color = Color.Red, fontSize = 14.sp)
+        } else if (isLoading) {
+            Text(text = "Loading ROM...", color = AmberResin, fontSize = 14.sp)
+        } else {
+            Text(text = "No ROM loaded", color = PineGlowMist, fontSize = 14.sp)
+        }
+
+        if (isPaused) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.Pause,
+                        contentDescription = null, // labelled by the "PAUSED" text below
+                        tint = GoldenSaplight,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("PAUSED", color = GoldenSaplight, fontSize = 20.sp)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The banner shown while the touch overlay is being rearranged.
+ *
+ * Sits over the game rather than replacing it, so a player can see what the
+ * controls are covering while they move them.
+ */
+@Composable
+private fun LayoutEditBar(
+    selectionLabel: String?,
+    onResize: (Float) -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+    onReset: () -> Unit,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onCustomButtons: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(NightVoid.copy(alpha = 0.92f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        // The hint and the controls used to share one row with SpaceBetween.
+        // The text takes its full intrinsic width first, which left too little
+        // for five controls: "Reset" wrapped to two lines and "Done" was
+        // pushed off the right edge entirely, so there was no way out of edit
+        // mode. Giving the controls a row of their own fits them at any width.
+        // The hint and the size stepper share a row: the bar floats over the
+        // toolbar, and a third row buried the back button behind it.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selectionLabel?.let { "$it selected" } ?: "Touch a button, then drag it",
+                color = PineGlowMist,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // Greyed rather than hidden: a stepper that appears and vanishes
+            // makes the bar jump under the finger that is still dragging.
+            val canResize = selectionLabel != null
+            Text(
+                text = "Size",
+                color = if (canResize) PineGlowMist else PineGlowMist.copy(alpha = 0.3f),
+                fontSize = 14.sp,
+            )
+            IconButton(
+                onClick = { onResize(-ControlLayoutStore.CONTROL_SCALE_STEP) },
+                enabled = canResize,
+            ) {
+                Icon(
+                    Icons.Default.Remove,
+                    contentDescription = "Smaller",
+                    tint = if (canResize) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+            IconButton(
+                onClick = { onResize(ControlLayoutStore.CONTROL_SCALE_STEP) },
+                enabled = canResize,
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Bigger",
+                    tint = if (canResize) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+        ) {
+            IconButton(onClick = onCustomButtons) {
+                Icon(
+                    Icons.Default.AddCircle,
+                    contentDescription = "Custom buttons",
+                    tint = AmberResin,
+                )
+            }
+            IconButton(onClick = onUndo, enabled = canUndo) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Undo,
+                    contentDescription = "Undo",
+                    tint = if (canUndo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+            IconButton(onClick = onRedo, enabled = canRedo) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Redo,
+                    contentDescription = "Redo",
+                    tint = if (canRedo) AmberResin else PineGlowMist.copy(alpha = 0.3f),
+                )
+            }
+            TextButton(onClick = onReset) {
+                Text("Reset", color = AmberResin)
+            }
+            // Cancel next to Done, not hidden behind the system back button:
+            // Reset puts every control back at its base position, which is
+            // not the same as abandoning the edit and keeping the layout that
+            // was already saved.
+            TextButton(onClick = onCancel) {
+                Text("Cancel", color = PineGlowMist)
+            }
+            TextButton(onClick = onDone) {
+                Text("Done", color = GoldenSaplight, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun GbaScreen(
+    frames: StateFlow<ByteArray?>,
+    scaleMode: ScaleMode = ScaleMode.INTEGER,
+    filter: ScreenFilter = ScreenFilter.NONE,
+    /** 0 puts the picture at the top of its space, 1 at the bottom. See [picturePlacement]. */
+    verticalBias: Float = 0.5f,
+) {
+    val renderer = remember { GameSurfaceRenderer() }
+    // Settings first, then a redraw, so a paused game shows a filter or scale
+    // change at once instead of on the next frame that never comes.
+    LaunchedEffect(scaleMode, filter, verticalBias) {
+        renderer.scaleMode = scaleMode
+        renderer.filter = filter
+        renderer.verticalBias = verticalBias
+        withContext(Dispatchers.Default) { renderer.redraw() }
+    }
+    // Off the main thread: the pixel conversion and the draw both happen on
+    // the collector. StateFlow conflates, so a slow draw skips frames rather
+    // than queueing them.
+    LaunchedEffect(frames) {
+        withContext(Dispatchers.Default) { frames.collect { renderer.draw(it) } }
+    }
+    AndroidView(
+        factory = { context -> SurfaceView(context).apply { holder.addCallback(renderer) } },
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * Applies a button's saved nudge, and in [editing] mode lets it be dragged to
+ * a new one.
+ *
+ * The outline only shows on [selected] - the one the player currently has a
+ * finger on - not on every button at once: touch a button, see it highlight,
+ * then drag it.
+ *
+ * The drag is consumed here, so while editing the button underneath does not
+ * also fire - you are moving it, not pressing it.
+ */
+@Composable
+private fun <T> Modifier.movableControl(
+    button: T,
+    editing: Boolean,
+    selected: T?,
+    shape: Shape,
+    offsets: MutableMap<T, Offset>,
+    onDragStart: (T) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+    scales: Map<T, Float> = emptyMap(),
+): Modifier {
+    val offset = offsets[button] ?: Offset.Zero
+    // The global size multiplier is a second layer above this one, so the two
+    // multiply. Floored here as well as in the stepper, because the global
+    // slider can move after a control was already sized.
+    val scale = (scales[button] ?: 1f)
+        .coerceAtLeast(smallestUsefulControlScale(LocalGlobalControlScale.current))
+    // Where the control is drawn, scale included, and the box the controls
+    // share: the drag below keeps the first inside the second. See [clampedDrag].
+    val drawnBounds = remember { arrayOf(Rect.Zero, Rect.Zero) }
+    return this
+        .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+        // A layer, not a size change. Compose maps pointer input back through
+        // it, so the touch target grows with the drawing and stays in
+        // register - and the neighbours do not move to make room, which is
+        // the point of a layout the player positioned by hand.
+        .graphicsLayer(scaleX = scale, scaleY = scale)
+        .onGloballyPositioned {
+            drawnBounds[0] = it.boundsInWindow()
+            it.parentLayoutCoordinates?.let { parent -> drawnBounds[1] = parent.boundsInWindow() }
+        }
+        .then(
+            if (!editing) {
+                Modifier
+            } else {
+                Modifier
+                    .then(
+                        if (selected == button) {
+                            Modifier.border(2.dp, GoldenSaplight, shape)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .pointerInput(button) {
+                        detectDragGestures(
+                            onDragStart = { onDragStart(button) },
+                            onDragEnd = onDragEnd,
+                            onDragCancel = onDragEnd,
+                        ) { change, drag ->
+                            change.consume()
+                            val current = offsets[button] ?: Offset.Zero
+                            val allowed = clampedDrag(drawnBounds[0], drag, drawnBounds[1])
+                            // Moved along with the control, so several drag
+                            // events before the next layout pass still add up.
+                            drawnBounds[0] = drawnBounds[0].translate(allowed)
+                            offsets[button] = current + allowed
+                        }
+                    }
+            }
+        )
+}
+
+@Composable
+fun GameControls(
+    isPaused: Boolean,
+    isFastForward: Boolean,
+    isRewinding: Boolean,
+    onTogglePause: () -> Unit,
+    onToggleFastForward: () -> Unit,
+    onRewind: (Boolean) -> Unit,
+    onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
+    selectedButton: ControlButton? = null,
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
+    val controls = LocalControlPalette.current
+
+    // Every control is a direct child of this one full-size box, placed by
+    // alignment and a bottom padding rather than by a column of rows.
+    //
+    // The rows were why a control could not be dragged over the picture and a
+    // custom button could: a child moved outside its parent's bounds is not
+    // hit-tested out there, so a D-pad dragged up went dead, and the block's
+    // alpha layer cut off its drawing at the same edge. Giving every control
+    // the whole play area as its parent is what the custom buttons always had.
+    //
+    // The paddings reproduce where the rows used to put things: shoulders on
+    // top, D-pad hard left and face buttons hard right with nothing between
+    // them - thumbs rest at the edges of a phone, not in the middle - and
+    // Start and Select centred underneath.
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = EDGE_PADDING, bottom = SHOULDER_BOTTOM)
+                .movableControl(
+                    ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
+        ) {
+            PillButton("L", GbaEngine.KEY_L, onKeyChange)
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = EDGE_PADDING, bottom = SHOULDER_BOTTOM)
+                .movableControl(
+                    ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
+        ) {
+            PillButton("R", GbaEngine.KEY_R, onKeyChange)
+        }
+
+        DPad(
+            onKeyChange = onKeyChange,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = MAIN_PADDING, bottom = MAIN_BOTTOM),
+            editingLayout = editingLayout,
+            selectedButton = selectedButton,
+            offsets = offsets,
+            scales = scales,
+            onDragStart = onDragStart,
+            onDragEnd = onDragEnd,
+        )
+
+        // A above B. Side by side reads left-to-right as "B then A", which is
+        // the wrong way round from the hardware and puts the button pressed
+        // most under the weaker part of the thumb's arc.
+        ActionButton(
+            "A", GbaEngine.KEY_A, controls.fill, controls.pressed,
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = MAIN_PADDING, bottom = FACE_A_BOTTOM)
+                .movableControl(
+                    ControlButton.BUTTON_A, editingLayout, selectedButton, CircleShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                ),
+            onKeyChange,
+        )
+        ActionButton(
+            "B", GbaEngine.KEY_B, controls.fill, controls.pressed,
+            Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = MAIN_PADDING, bottom = FACE_B_BOTTOM)
+                .movableControl(
+                    ControlButton.BUTTON_B, editingLayout, selectedButton, CircleShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                ),
+            onKeyChange,
+        )
+
+        // Start and Select. Without these most games cannot get past a title
+        // screen, so they are not optional extras.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = START_SELECT_BOTTOM)
+                .offset(x = -START_SELECT_SPREAD * LocalControlFontScale.current)
+                .movableControl(
+                    ControlButton.SELECT, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
+        ) {
+            PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = START_SELECT_BOTTOM)
+                .offset(x = START_SELECT_SPREAD * LocalControlFontScale.current)
+                .movableControl(
+                    ControlButton.START, editingLayout, selectedButton, pillShape,
+                    offsets, onDragStart, onDragEnd, scales,
+                )
+        ) {
+            PillButton("START", GbaEngine.KEY_START, onKeyChange)
+        }
+    }
+}
+
+/**
+ * Where each control sits by default, measured up from the bottom of the play
+ * area. These reproduce the row layout they replaced: the D-pad is 144.dp and
+ * a face button 56.dp, so the A/B pair (56 + 16 + 56 = 128) sits 8.dp higher
+ * than the D-pad's foot to stay centred against it, exactly as the row that
+ * held them both did.
+ */
+private val EDGE_PADDING = 16.dp
+private val MAIN_PADDING = 24.dp
+private val SHOULDER_BOTTOM = 228.dp
+private val MAIN_BOTTOM = 72.dp
+private val FACE_B_BOTTOM = 80.dp
+private val FACE_A_BOTTOM = 152.dp
+private val START_SELECT_BOTTOM = 8.dp
+
+/**
+ * How far Start and Select sit either side of centre, before the button text
+ * size scales it.
+ *
+ * Scaled, because the pills grow with their label: at a fixed 56.dp the two
+ * of them touch once the text is large, and Start - composed last - wins the
+ * overlap and takes part of Select's touch area with it.
+ *
+ * An offset rather than padding: padding would change each pill's own bounds,
+ * and where the content then lands depends on how wide the word inside it is -
+ * "SELECT" is wider than "START", so the pair would not be symmetric.
+ */
+private val START_SELECT_SPREAD = 56.dp
+
+private val pillShape = RoundedCornerShape(24.dp)
+
+
+
+/**
+ * A wide, short button for the controls that are pressed deliberately rather
+ * than held during play. Height stays at 48dp so the touch target clears the
+ * Android minimum even though the shape is not circular.
+ */
+@Composable
+fun PillButton(label: String, key: Int, onKeyChange: (Int, Boolean) -> Unit) {
+    val controls = LocalControlPalette.current
+    var isPressed by remember { mutableStateOf(false) }
+
+    Button(
+        onClick = { /* Handled via pointerInput; a tap needs press+release reported. */ },
+        modifier = Modifier
+            .height(48.dp)
+            .widthIn(min = 72.dp)
+            .pointerInput(key) {
+                // The `finally` is what stops a key sticking down: this
+                // loop is cancelled when the pointerInput key changes or the
+                // button leaves the composition, and it can be cancelled with
+                // a finger still on the button. Rotating the screen with the
+                // D-pad held disposes the whole control block, so without
+                // this the key stayed pressed for the rest of the session.
+                try {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val down = event.changes.any { it.pressed }
+                            if (down != isPressed) {
+                                isPressed = down
+                                onKeyChange(key, down)
+                            }
+                        }
+                    }
+                } finally {
+                    if (isPressed) {
+                        isPressed = false
+                        onKeyChange(key, false)
+                    }
+                }
+            },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isPressed) controls.pressed else controls.fill,
+        ),
+        shape = RoundedCornerShape(24.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+    ) {
+        Text(
+            label,
+            color = if (isPressed) controls.labelPressed else controls.label,
+            fontSize = (13 * LocalControlFontScale.current).sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
+ * A player-defined [CustomButton]. Its gesture depends on [CustomButton.mode]:
+ * a combo presses and releases every key together like a real button would,
+ * a sequence fires once per tap and is not held, and a hold toggle flips
+ * [held] on tap rather than tracking the finger at all.
+ */
+@Composable
+fun CustomButtonView(
+    button: CustomButton,
+    held: Boolean,
+    onToggleHeld: () -> Unit,
+    onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+) {
+    val controls = LocalControlPalette.current
+    var isPressed by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Button(
+        onClick = { /* Handled via pointerInput; see below per mode. */ },
+        modifier = Modifier
+            .height(48.dp)
+            .widthIn(min = 64.dp)
+            // Keyed on `editingLayout` so opening the position editor cancels
+            // this block, which runs the `finally` below and lets go of
+            // anything still held. While it is open the parent's drag owns the
+            // touch: without this a button could not be picked up at all - the
+            // drag never starts - and touching it to move it pressed its keys
+            // into the running game. The D-pad has had the same guard since
+            // it became one cross.
+            .pointerInput(button.id, button.mode, button.keys, editingLayout) {
+                if (editingLayout) return@pointerInput
+                when (button.mode) {
+                    // The `finally` is not decoration: this loop is cancelled
+                    // whenever the pointerInput key changes or the button
+                    // leaves the composition, and it can be cancelled with the
+                    // combo's keys still pressed.
+                    CustomButtonMode.COMBO -> try {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val down = event.changes.any { it.pressed }
+                                if (down != isPressed) {
+                                    isPressed = down
+                                    button.keys.forEach { key -> onKeyChange(key, down) }
+                                }
+                            }
+                        }
+                    } finally {
+                        if (isPressed) {
+                            isPressed = false
+                            button.keys.forEach { key -> onKeyChange(key, false) }
+                        }
+                    }
+                    // Raw events, not `detectTapGestures`, and toggled on the
+                    // press rather than the release.
+                    //
+                    // `detectTapGestures` starts at `awaitFirstDown(
+                    // requireUnconsumed = true)`, so it never fires if
+                    // anything inner claimed the press first - and this sits
+                    // on a Material `Button`, which carries its own
+                    // `clickable`. Combo mode already reads the pointer
+                    // stream directly for the same reason, and combo mode is
+                    // the one that works.
+                    //
+                    // On the press is also the right moment for a control:
+                    // holding L should start the instant the finger lands,
+                    // not when it leaves.
+                    CustomButtonMode.TOGGLE_HOLD -> try {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val down = event.changes.any { it.pressed }
+                                if (down && !isPressed) {
+                                    isPressed = true
+                                    onToggleHeld()
+                                } else if (!down) {
+                                    isPressed = false
+                                }
+                            }
+                        }
+                    } finally {
+                        isPressed = false
+                    }
+                    // Same raw-pointer reason as TOGGLE_HOLD above.
+                    // The outer `finally` mirrors the one in TOGGLE_HOLD.
+                    // `isPressed` lives in `remember`, outside this block, so
+                    // a restart while a finger is down - editing this button
+                    // from the Custom Buttons dialog, say - would leave it
+                    // stuck true: the button would render pressed for good
+                    // and swallow the next tap, because the edge test is
+                    // `down && !isPressed`.
+                    CustomButtonMode.SEQUENCE -> try {
+                        awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val down = event.changes.any { it.pressed }
+                            if (down && !isPressed) {
+                                isPressed = true
+                                scope.launch {
+                                try {
+                                    for (key in button.keys) {
+                                        onKeyChange(key, true)
+                                        delay(SEQUENCE_PRESS_MS)
+                                        onKeyChange(key, false)
+                                        delay(SEQUENCE_GAP_MS)
+                                    }
+                                } finally {
+                                    // Cancelled between a press and its
+                                    // release - the two `delay`s are the
+                                    // cancellation points - would otherwise
+                                    // leave that key down for good.
+                                    button.keys.forEach { key -> onKeyChange(key, false) }
+                                }
+                                }
+                            } else if (!down) {
+                                isPressed = false
+                            }
+                        }
+                        }
+                    } finally {
+                        isPressed = false
+                    }
+                }
+            },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = when {
+                held -> controls.pressed
+                isPressed -> controls.pressed
+                else -> controls.fill
+            },
+        ),
+        shape = pillShape,
+        contentPadding = PaddingValues(horizontal = 12.dp),
+    ) {
+        Text(
+            button.name,
+            color = if (held || isPressed) controls.labelPressed else controls.label,
+            fontSize = (12 * LocalControlFontScale.current).sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** How long a scripted key-tap in a [CustomButtonMode.SEQUENCE] stays down,
+ *  and the gap before the next one - long enough for the core to register
+ *  each press as its own frame of input, short enough to still read as one
+ *  tap of the button. */
+private const val SEQUENCE_PRESS_MS = 60L
+private const val SEQUENCE_GAP_MS = 60L
+
+/**
+ * The D-pad: one cross with one touch area, not four buttons.
+ *
+ * It was four independent buttons, and four buttons can never produce a
+ * diagonal from a single finger - there is no shared corner to press. Half
+ * the GBA library assumes otherwise: every isometric map, every Mode 7 racer,
+ * every cursor that has to reach a tile at 45 degrees.
+ *
+ * The touch area is the whole square, not only the drawn arms. A finger in
+ * the top-right corner - outside the cross, on the hardware's dead plastic -
+ * reads as Up+Right. That is what makes a diagonal reachable on glass, where
+ * there is no ridge to feel for. Sliding a thumb from one sector to the next
+ * re-reads on every move, so Up to Up+Right is a slide, not a lift and a tap.
+ */
+@Composable
+fun DPad(
+    onKeyChange: (Int, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    editingLayout: Boolean = false,
+    selectedButton: ControlButton? = null,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
+    val cardinalHalf = LocalDpadCardinalHalf.current
+    val controls = LocalControlPalette.current
+    var held by remember { mutableStateOf(emptySet<Int>()) }
+
+    Box(
+        modifier = modifier.movableControl(
+            ControlButton.DPAD, editingLayout, selectedButton, DPadCrossShape, offsets, onDragStart, onDragEnd, scales
+        )
+    ) {
+        Canvas(
+            modifier = Modifier
+                .size(DPAD_SIZE)
+                .semantics { contentDescription = "Direction pad" }
+                // Keyed on editingLayout so flipping into the position editor
+                // cancels this block, which runs the `finally` below and
+                // releases anything still down. Dragging the pad must not
+                // also press it.
+                // cardinalHalf is in the key because the block captures it:
+                // recomposition alone would leave the old sector width in a
+                // gesture loop that is already running.
+                .pointerInput(editingLayout, cardinalHalf) {
+                    if (editingLayout) return@pointerInput
+                    try {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val pointer = event.changes.firstOrNull { it.pressed }
+                                val next = if (pointer == null) {
+                                    emptySet()
+                                } else {
+                                    dpadKeysAt(pointer.position, size, cardinalHalf)
+                                }
+                                if (next != held) {
+                                    (held - next).forEach { onKeyChange(it, false) }
+                                    (next - held).forEach { onKeyChange(it, true) }
+                                    held = next
+                                }
+                                event.changes.forEach { if (it.pressed) it.consume() }
+                            }
+                        }
+                    } finally {
+                        // Rotating the screen with a direction held disposes
+                        // this whole control block. Without the release the
+                        // key stayed down for the rest of the session.
+                        held.forEach { onKeyChange(it, false) }
+                        held = emptySet()
+                    }
+                }
+        ) {
+            val cross = crossPath(size)
+            drawPath(cross, controls.fill)
+
+            // Held arms are clipped to the cross, so the outer end keeps the
+            // cross's rounded cap and the inner end disappears under the dish.
+            if (held.isNotEmpty()) {
+                val arm = size.minDimension / 3f
+                val left = (size.width - arm) / 2f
+                val top = (size.height - arm) / 2f
+                clipPath(cross) {
+                    if (GbaEngine.KEY_UP in held) {
+                        drawRect(controls.pressed, Offset(left, 0f), Size(arm, size.height / 2f))
+                    }
+                    if (GbaEngine.KEY_DOWN in held) {
+                        drawRect(controls.pressed, Offset(left, size.height / 2f), Size(arm, size.height / 2f))
+                    }
+                    if (GbaEngine.KEY_LEFT in held) {
+                        drawRect(controls.pressed, Offset(0f, top), Size(size.width / 2f, arm))
+                    }
+                    if (GbaEngine.KEY_RIGHT in held) {
+                        drawRect(controls.pressed, Offset(size.width / 2f, top), Size(size.width / 2f, arm))
+                    }
+                }
+            }
+
+            // An arrow at the end of each arm, the way the moulded ones sit
+            // on an AGB-001 pad. They also say which way a diagonal is,
+            // which the plain cross could not: the corner between two arms
+            // presses both, and nothing on the shape hinted at that.
+            drawDpadArrow(GbaEngine.KEY_UP, held, controls)
+            drawDpadArrow(GbaEngine.KEY_DOWN, held, controls)
+            drawDpadArrow(GbaEngine.KEY_LEFT, held, controls)
+            drawDpadArrow(GbaEngine.KEY_RIGHT, held, controls)
+
+            // The dish is drawn at exactly the dead zone's radius, so what a
+            // player sees as the thumb rest is the region that reports nothing.
+            drawCircle(controls.dish, radius = size.minDimension / 2f * DPAD_DEAD_ZONE, center = center)
+        }
+    }
+}
+
+/**
+ * One moulded arrow, pointing out along its arm.
+ *
+ * Ink on the honey fill when that direction is held and a light mark on the
+ * dark panel when it is not - a single colour would vanish against one of the
+ * two, and the arrow is most worth seeing at the moment it lights up.
+ */
+private fun DrawScope.drawDpadArrow(key: Int, held: Set<Int>, controls: ControlPalette) {
+    val arm = size.minDimension / 3f
+    val half = arm * DPAD_ARROW_HALF_WIDTH
+    val depth = arm * DPAD_ARROW_DEPTH
+    val inset = arm * DPAD_ARROW_INSET
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+
+    // Apex first, then the two base corners, walked clockwise.
+    val points = when (key) {
+        GbaEngine.KEY_UP -> listOf(
+            Offset(cx, inset),
+            Offset(cx + half, inset + depth),
+            Offset(cx - half, inset + depth),
+        )
+        GbaEngine.KEY_DOWN -> listOf(
+            Offset(cx, size.height - inset),
+            Offset(cx - half, size.height - inset - depth),
+            Offset(cx + half, size.height - inset - depth),
+        )
+        GbaEngine.KEY_LEFT -> listOf(
+            Offset(inset, cy),
+            Offset(inset + depth, cy - half),
+            Offset(inset + depth, cy + half),
+        )
+        else -> listOf(
+            Offset(size.width - inset, cy),
+            Offset(size.width - inset - depth, cy + half),
+            Offset(size.width - inset - depth, cy - half),
+        )
+    }
+
+    val path = Path().apply {
+        moveTo(points[0].x, points[0].y)
+        lineTo(points[1].x, points[1].y)
+        lineTo(points[2].x, points[2].y)
+        close()
+    }
+    drawPath(path, if (key in held) controls.labelPressed else controls.label)
+}
+
+/**
+ * How small a control may end up once both size multipliers are applied.
+ *
+ * Settings' slider bottoms out at 0.7 and the layout editor's stepper at 0.6,
+ * and they are separate `graphicsLayer`s, so unfloored they multiplied to
+ * 0.42 - a 48.dp button drawn at 20.dp. 0.7 keeps the worst case at the
+ * smaller of the two rather than the product of both.
+ */
+private const val MIN_EFFECTIVE_CONTROL_SCALE = 0.7f
+
+/**
+ * The smallest per-control multiplier worth allowing, given [globalScale].
+ *
+ * One function so the layout editor's stepper and the drawing agree: a
+ * stepper that keeps going below what the screen will show stores a value
+ * nothing renders, and asks about unsaved changes for an edit that never
+ * happened.
+ */
+private fun smallestUsefulControlScale(globalScale: Float): Float =
+    (MIN_EFFECTIVE_CONTROL_SCALE / globalScale)
+        .coerceIn(ControlLayoutStore.MIN_CONTROL_SCALE, ControlLayoutStore.MAX_CONTROL_SCALE)
+
+/** Three 48dp arms, the same footprint the four separate buttons occupied. */
+private val DPAD_SIZE = 144.dp
+
+/**
+ * Arrow geometry, as fractions of one arm's width.
+ *
+ * Width and depth are 15% off the first drawn size: the arrows read as a
+ * moulded mark on the arm, not as the arm's content, and the first pass
+ * crowded the arm. The inset is untouched, so each tip stays where it was and
+ * the arrow shrinks back from it.
+ */
+private const val DPAD_ARROW_HALF_WIDTH = 0.187f
+private const val DPAD_ARROW_DEPTH = 0.255f
+private const val DPAD_ARROW_INSET = 0.24f
+
+/**
+ * Default half-width of a straight direction, in degrees. The live value comes
+ * from [LocalDpadCardinalHalf] and is a setting - there is no right answer,
+ * only the one that suits a particular thumb.
+ */
+private const val DPAD_CARDINAL_HALF_DEGREES = 30f
+
+/**
+ * Fraction of the cross's half-width that reports nothing. The centre is a
+ * thumb rest; without a dead zone the smallest wobble there flips between
+ * opposite directions, which reads as the pad fighting you.
+ */
+private const val DPAD_DEAD_ZONE = 0.22f
+
+/**
+ * Which directions a touch at [position] means, given a pad of [size].
+ *
+ * Internal rather than private so DPadDirectionTest can drive it directly:
+ * this is the part with the arithmetic, and it needs a test more than the
+ * drawing does.
+ */
+internal fun dpadKeysAt(
+    position: Offset,
+    size: IntSize,
+    cardinalHalfDegrees: Float = DPAD_CARDINAL_HALF_DEGREES,
+): Set<Int> {
+    val half = minOf(size.width, size.height) / 2f
+    if (half <= 0f) return emptySet()
+
+    val dx = position.x - size.width / 2f
+    val dy = position.y - size.height / 2f
+    if (hypot(dx, dy) < half * DPAD_DEAD_ZONE) return emptySet()
+
+    // Screen y grows downward, so it is negated to get ordinary maths angles:
+    // 0 right, 90 up, 180 left, 270 down.
+    var degrees = Math.toDegrees(atan2(-dy.toDouble(), dx.toDouble())).toFloat()
+    if (degrees < 0f) degrees += 360f
+
+    val cardinal = listOf(
+        0f to GbaEngine.KEY_RIGHT,
+        90f to GbaEngine.KEY_UP,
+        180f to GbaEngine.KEY_LEFT,
+        270f to GbaEngine.KEY_DOWN,
+    ).firstOrNull { (centre, _) ->
+        // Shortest angular distance to the sector's centre.
+        abs(((degrees - centre + 540f) % 360f) - 180f) <= cardinalHalfDegrees
+    }
+    if (cardinal != null) return setOf(cardinal.second)
+
+    return when {
+        degrees < 90f -> setOf(GbaEngine.KEY_UP, GbaEngine.KEY_RIGHT)
+        degrees < 180f -> setOf(GbaEngine.KEY_UP, GbaEngine.KEY_LEFT)
+        degrees < 270f -> setOf(GbaEngine.KEY_DOWN, GbaEngine.KEY_LEFT)
+        else -> setOf(GbaEngine.KEY_DOWN, GbaEngine.KEY_RIGHT)
+    }
+}
+
+/** Two rounded bars crossing - the AGB-001 rocker, which carries no arrows. */
+private fun crossPath(size: Size): Path {
+    val arm = size.minDimension / 3f
+    val radius = CornerRadius(arm * 0.28f)
+    return Path().apply {
+        addRoundRect(
+            RoundRect(Rect((size.width - arm) / 2f, 0f, (size.width + arm) / 2f, size.height), radius)
+        )
+        addRoundRect(
+            RoundRect(Rect(0f, (size.height - arm) / 2f, size.width, (size.height + arm) / 2f), radius)
+        )
+    }
+}
+
+/** Lets the position editor's selection border trace the cross rather than a
+ *  box around it, so what is highlighted is what will move. */
+private val DPadCrossShape = object : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
+        Outline.Generic(crossPath(size))
+}
+
+@Composable
+fun ActionButtons(
+    onKeyChange: (Int, Boolean) -> Unit,
+    editingLayout: Boolean = false,
+    selectedButton: ControlButton? = null,
+    offsets: MutableMap<ControlButton, Offset> = mutableMapOf(),
+    scales: Map<ControlButton, Float> = emptyMap(),
+    onDragStart: (ControlButton) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
+    val controls = LocalControlPalette.current
+    val buttonColor = controls.fill
+    val pressColor = controls.pressed
+
+    // A above B in a single column. Side by side reads left-to-right as "B
+    // then A", which is the wrong way round from the hardware and puts the
+    // button you press most under the weaker part of the thumb's arc.
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        val aModifier = Modifier.movableControl(
+            ControlButton.BUTTON_A, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd, scales
+        )
+        val bModifier = Modifier.movableControl(
+            ControlButton.BUTTON_B, editingLayout, selectedButton, CircleShape, offsets, onDragStart, onDragEnd, scales
+        )
+        ActionButton("A", GbaEngine.KEY_A, buttonColor, pressColor, aModifier, onKeyChange)
+        ActionButton("B", GbaEngine.KEY_B, buttonColor, pressColor, bModifier, onKeyChange)
+    }
+}
+
+@Composable
+fun ActionButton(
+    label: String,
+    key: Int,
+    backgroundColor: Color,
+    pressColor: Color,
+    modifier: Modifier = Modifier,
+    onKeyChange: (Int, Boolean) -> Unit,
+) {
+    val controls = LocalControlPalette.current
+    var isPressed by remember { mutableStateOf(false) }
+
+    Button(
+        onClick = { /* Handled via pointerInput below; a tap needs press+release reported. */ },
+        modifier = modifier
+            .size(56.dp)
+            .pointerInput(key) {
+                // The `finally` is what stops a key sticking down: this
+                // loop is cancelled when the pointerInput key changes or the
+                // button leaves the composition, and it can be cancelled with
+                // a finger still on the button. Rotating the screen with the
+                // D-pad held disposes the whole control block, so without
+                // this the key stayed pressed for the rest of the session.
+                try {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.any { it.pressed }
+                            if (pressed != isPressed) {
+                                isPressed = pressed
+                                onKeyChange(key, pressed)
+                            }
+                        }
+                    }
+                } finally {
+                    if (isPressed) {
+                        isPressed = false
+                        onKeyChange(key, false)
+                    }
+                }
+            },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isPressed) pressColor else backgroundColor,
+        ),
+        shape = CircleShape,
+        contentPadding = PaddingValues(0.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (isPressed) controls.labelPressed else controls.label,
+            fontSize = (20 * LocalControlFontScale.current).sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
+ * A floating confirmation over the play area.
+ *
+ * It replaces a full-width banner that sat in the layout column: that pushed
+ * the screen down every time it appeared, and stayed until someone tapped an
+ * X. This one floats, fades, and clears itself.
+ */
+/**
+ * Every achievement in the loaded game, earned ones first.
+ *
+ * Deliberately says *why* there is nothing to show when there is nothing:
+ * "no achievements" covers three different situations - nobody signed in,
+ * a game the database does not know, and a game it knows with no set - and
+ * a player cannot act on the difference without being told.
+ */
+/**
+ * The badge RetroAchievements drew for one achievement.
+ *
+ * Falls back to a trophy or a padlock while the image is still coming, and
+ * for good if it never does: a row with no picture still has to say whether
+ * it is earned, and that is what the icon was already for.
+ */
+@Composable
+private fun AchievementBadge(achievement: RaAchievement) {
+    val context = LocalContext.current
+    var badge by remember(achievement.badgeUrl) {
+        mutableStateOf<android.graphics.Bitmap?>(null)
+    }
+    LaunchedEffect(achievement.badgeUrl) {
+        badge = withContext(Dispatchers.IO) {
+            BadgeCache.load(context, achievement.badgeUrl)
+        }
+    }
+
+    val image = badge
+    if (image != null) {
+        Image(
+            bitmap = image.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(6.dp)),
+        )
+    } else {
+        Icon(
+            if (achievement.unlocked) Icons.Default.EmojiEvents else Icons.Default.Lock,
+            contentDescription = null,
+            tint = if (achievement.unlocked) {
+                GoldenSaplight
+            } else {
+                PineGlowMist.copy(alpha = 0.35f)
+            },
+            modifier = Modifier.size(40.dp).padding(10.dp),
+        )
+    }
+}
+
+@Composable
+private fun AchievementsDialog(
+    game: RaGame?,
+    signedIn: Boolean,
+    onDismiss: () -> Unit,
+) {
+    // Read once per opening rather than held in state: the list only changes
+    // when something unlocks, and reopening is how a player refreshes it.
+    val items = remember(game, signedIn) { RaEngine.achievements() }
+    val earned = items.count { it.unlocked }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = {
+            Column {
+                Text("Achievements", fontWeight = FontWeight.Bold)
+                if (game != null && items.isNotEmpty()) {
+                    Text(
+                        "$earned of ${items.size} earned - ${game.title}",
+                        color = PineGlowMist,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        },
+        text = {
+            when {
+                !RaEngine.isAvailable() -> Text(
+                    "This build has no achievements support.",
+                    fontSize = 13.sp,
+                )
+                !signedIn -> Text(
+                    "Sign in to your retroachievements.org account in " +
+                        "Settings to track achievements.",
+                    fontSize = 13.sp,
+                )
+                items.isEmpty() -> Text(
+                    "RetroAchievements has no achievement set for this game. " +
+                        "About two thirds of the Game Boy Advance library has " +
+                        "none.",
+                    fontSize = 13.sp,
+                )
+                else -> Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // Leaderboards first and only when there are any: most
+                    // games have none, and a permanent empty heading is noise.
+                    val boards = remember(game) { RaEngine.leaderboards() }
+                    if (boards.isNotEmpty()) {
+                        Text(
+                            "Leaderboards",
+                            color = AmberResin,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        boards.forEach { board ->
+                            Column {
+                                Text(
+                                    board.title +
+                                        if (board.value.isNotBlank()) "  ${board.value}" else "",
+                                    color = if (board.active) GoldenSaplight else PineGlowMist,
+                                    fontSize = 13.sp,
+                                )
+                                Text(
+                                    board.description,
+                                    color = PineGlowMist.copy(alpha = 0.7f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
+                        Text(
+                            "Achievements",
+                            color = AmberResin,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    items.sortedByDescending { it.unlocked }.forEach { achievement ->
+                        Row(verticalAlignment = Alignment.Top) {
+                            AchievementBadge(achievement)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "${achievement.title} (${achievement.points})",
+                                    color = if (achievement.unlocked) {
+                                        GoldenSaplight
+                                    } else {
+                                        PineGlowMist
+                                    },
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    achievement.description,
+                                    color = PineGlowMist.copy(alpha = 0.75f),
+                                    fontSize = 12.sp,
+                                )
+                                if (achievement.progress.isNotBlank()) {
+                                    Text(
+                                        achievement.progress,
+                                        color = AmberResin,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = GoldenSaplight) }
+        },
+    )
+}
+
+@Composable
+private fun StateToast(
+    message: String?,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    durationMs: Long = 2200,
+    icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.CheckCircle,
+) {
+    // Held locally so the pill can finish fading out after the message is
+    // already gone from the ViewModel.
+    var shown by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(message) {
+        if (message != null) {
+            shown = message
+            delay(durationMs)
+            onDismiss()
+        }
+    }
+
+    AnimatedVisibility(
+        visible = message != null,
+        enter = fadeIn(tween(150)) + slideInVertically(tween(180)) { -it / 2 },
+        exit = fadeOut(tween(220)),
+        modifier = modifier.padding(top = 56.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(NightPanel)
+                .border(1.dp, GoldenSaplight.copy(alpha = 0.45f), RoundedCornerShape(50))
+                .padding(horizontal = 16.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = GoldenSaplight,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = shown.orEmpty(),
+                color = PineGlowMist,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
+/**
+ * The slot list behind the menu's "Save States...".
+ *
+ * Slot 0 is the same state the toolbar's save and load buttons use, so a
+ * quick save shows up here and a slot written here can be loaded from the
+ * toolbar. The rest are only reachable from this list.
+ */
+@Composable
+private fun SaveStateDialog(
+    slots: List<StateSlot>,
+    onSave: (Int) -> Unit,
+    onLoad: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val formatter = remember {
+        java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault())
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text("Save states", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                slots.forEach { slot ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (slot.index == 0) "Quick save slot" else "Slot ${slot.index}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PineGlowMist,
+                            )
+                            Text(
+                                text = if (slot.exists) {
+                                    formatter.format(java.util.Date(slot.savedAt))
+                                } else {
+                                    "Empty"
+                                },
+                                fontSize = 11.sp,
+                                color = AmberResin,
+                            )
+                        }
+                        TextButton(onClick = { onSave(slot.index) }) {
+                            Text("Save", color = GoldenSaplight, fontSize = 13.sp)
+                        }
+                        TextButton(
+                            onClick = { onLoad(slot.index) },
+                            enabled = slot.exists,
+                        ) {
+                            Text(
+                                "Load",
+                                color = if (slot.exists) GoldenSaplight else AmberResin,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = GoldenSaplight) }
+        },
+    )
+}
+
+/**
+ * Manages the saved touch-overlay layouts: which one plays this game, and
+ * creating, renaming or deleting any of them. Default can never be deleted -
+ * it is the fallback every game with no layout of its own uses.
+ *
+ * Picking a layout's radio button just switches to it; its edit icon does
+ * the same and also opens the drag editor, since editing only ever makes
+ * sense on the layout that is actually loaded.
+ */
+@Composable
+private fun LayoutsDialog(
+    layouts: List<ControlLayout>,
+    activeLayoutId: String,
+    landscape: Boolean,
+    onSelect: (ControlLayout) -> Unit,
+    onEdit: (ControlLayout) -> Unit,
+    onRename: (String, String, LayoutOrientation) -> Unit,
+    onDelete: (ControlLayout) -> Unit,
+    onCreate: (String, LayoutOrientation) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var renamingLayout by remember { mutableStateOf<ControlLayout?>(null) }
+    var creatingLayout by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = {
+            Column {
+                Text("Control Layouts", fontWeight = FontWeight.Bold)
+                // Says why a layout the player remembers making is not on the
+                // list: it was saved for the other orientation.
+                Text(
+                    text = if (landscape) "Showing landscape layouts" else "Showing portrait layouts",
+                    color = PineGlowMist,
+                    fontSize = 12.sp,
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                layouts.forEach { layout ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = layout.id == activeLayoutId,
+                            onClick = { onSelect(layout) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = GoldenSaplight,
+                                unselectedColor = AmberResin,
+                            ),
+                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onSelect(layout) },
+                        ) {
+                            Text(
+                                text = layout.name,
+                                color = PineGlowMist,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = layout.orientation.label,
+                                color = AmberResin,
+                                fontSize = 11.sp,
+                            )
+                        }
+                        IconButton(onClick = { onEdit(layout) }) {
+                            Icon(Icons.Default.OpenWith, "Edit positions", tint = AmberResin)
+                        }
+                        IconButton(onClick = { renamingLayout = layout }) {
+                            Icon(Icons.Default.Edit, "Rename", tint = AmberResin)
+                        }
+                        IconButton(onClick = { onDelete(layout) }, enabled = !layout.isDefault) {
+                            Icon(
+                                Icons.Default.Delete,
+                                "Delete",
+                                tint = if (layout.isDefault) PineGlowMist.copy(alpha = 0.3f) else AmberResin,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { creatingLayout = true }) {
+                Text("+ New Layout", color = GoldenSaplight)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close", color = PineGlowMist) }
+        },
+    )
+
+    renamingLayout?.let { layout ->
+        LayoutNameDialog(
+            title = "Layout options",
+            initialName = layout.name,
+            initialOrientation = layout.orientation,
+            onConfirm = { name, orientation ->
+                onRename(layout.id, name, orientation)
+                renamingLayout = null
+            },
+            onDismiss = { renamingLayout = null },
+        )
+    }
+
+    if (creatingLayout) {
+        LayoutNameDialog(
+            title = "New layout",
+            initialName = "Layout ${layouts.size + 1}",
+            // A layout made while holding the phone this way is for this way,
+            // unless the player says otherwise.
+            initialOrientation = if (landscape) LayoutOrientation.LANDSCAPE
+                else LayoutOrientation.PORTRAIT,
+            onConfirm = { name, orientation ->
+                onCreate(name, orientation)
+                creatingLayout = false
+            },
+            onDismiss = { creatingLayout = false },
+        )
+    }
+}
+
+/**
+ * Name and orientation, shared by creating a layout and editing an existing
+ * one. The two belong together: which way round a layout applies is as much
+ * part of what it is as its name.
+ */
+@Composable
+private fun LayoutNameDialog(
+    title: String,
+    initialName: String,
+    initialOrientation: LayoutOrientation,
+    onConfirm: (String, LayoutOrientation) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    var orientation by remember { mutableStateOf(initialOrientation) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = NightPanel,
+        titleContentColor = GoldenSaplight,
+        textContentColor = PineGlowMist,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PineGlowMist,
+                        unfocusedTextColor = PineGlowMist,
+                        focusedBorderColor = AmberResin,
+                        unfocusedBorderColor = AmberResin.copy(alpha = 0.5f),
+                        cursorColor = AmberResin,
+                    ),
+                )
+                Text("Shows up in", color = PineGlowMist, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LayoutOrientation.entries.forEach { option ->
+                        FilterChip(
+                            selected = orientation == option,
+                            onClick = { orientation = option },
+                            label = { Text(option.label, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                labelColor = PineGlowMist,
+                                selectedContainerColor = AmberResin,
+                                selectedLabelColor = NightVoid,
+                            ),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(name.trim().ifBlank { initialName }, orientation) },
+            ) { Text("Save", color = GoldenSaplight) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = PineGlowMist) }
+        },
+    )
+}
+
+/**
+ * One step of the layout editor's undo history.
+ *
+ * Positions and sizes travel together because they are edited together: undo
+ * after "move it, then make it bigger" has to put back the size the move was
+ * made at, not just the position.
+ */
+private data class LayoutSnapshot(
+    val offsets: Map<ControlButton, Offset>,
+    val scales: Map<ControlButton, Float>,
+    val customOffsets: Map<String, Offset>,
+    val customScales: Map<String, Float>,
+)
+
+/**
+ * The phone's battery level and the time, along the bottom edge.
+ *
+ * A game covers the system status bar, and the two things a player still
+ * wants from it during a long session are how much battery is left and how
+ * late it is.
+ *
+ * Ticks once a minute. The clock only shows minutes, and a battery percentage
+ * that moved in under a minute would be a bigger problem than the readout.
+ */
+@Composable
+private fun StatusStrip(
+    modifier: Modifier = Modifier,
+    achievements: String? = null,
+) {
+    val context = LocalContext.current
+    var battery by remember { mutableIntStateOf(-1) }
+    var clock by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        val formatter = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        while (true) {
+            battery = context.getSystemService(BatteryManager::class.java)
+                ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                ?: -1
+            clock = formatter.format(java.util.Date())
+            // Wake on the minute rather than every 60 s from whenever this
+            // started, or the clock changes a random number of seconds after
+            // the minute it is showing.
+            kotlinx.coroutines.delay(60_000L - System.currentTimeMillis() % 60_000L)
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = if (battery >= 0) "$battery%" else "",
+            color = PineGlowMist.copy(alpha = 0.45f),
+            fontSize = 11.sp,
+        )
+        if (achievements != null) {
+            // A readout, not a button. The way in is the in-game menu, where
+            // every other action already lives; a second tap target down here
+            // sits a few pixels from Start and Select.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.EmojiEvents,
+                    contentDescription = "Achievements",
+                    tint = GoldenSaplight.copy(alpha = 0.75f),
+                    modifier = Modifier.size(12.dp),
+                )
+                Text(
+                    text = " $achievements",
+                    color = GoldenSaplight.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                )
+            }
+        }
+        Text(
+            text = clock,
+            color = PineGlowMist.copy(alpha = 0.45f),
+            fontSize = 11.sp,
+        )
+    }
+}

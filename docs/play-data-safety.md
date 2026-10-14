@@ -7,7 +7,7 @@ app or by a library, to the developer or a third party. The developer has no
 server and no analytics, so every "yes" below is a third-party transfer.
 
 Paths are relative to `android/app/src/main/`; Kotlin is under
-`java/com/geebeeayy/app/`.
+`java/com/gbee/emulator/`.
 
 Re-verify before each release: this reflects the tree at 2026-10-13 on branch
 `feat/privacy-policy-and-cover-names` (line numbers drift). Nothing here was exercised on a device or with a

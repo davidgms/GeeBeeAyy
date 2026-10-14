@@ -30,7 +30,7 @@ Two test stacks, and they are not interchangeable.
 - **`core/tests/`** also holds `bios.rs`, `dma.rs`, `interrupts.rs`, `ppu.rs`,
   `rewind.rs`, `saves.rs`, `timer.rs`, `jni_exports.rs`. Run with `cargo test`
   from `core/`.
-- **`android/app/src/test/java/com/geebeeayy/app/**`** - plain JVM JUnit, no
+- **`android/app/src/test/java/com/gbee/emulator/**`** - plain JVM JUnit, no
   Robolectric and no instrumentation. It covers the parts of the frontend that
   are arithmetic rather than UI: `Sai2xTest`, `AudioDecimateTest`,
   `FrameDeadlineTest`, `SlotNameTest`, `RomHeaderTest`, `OrientationLockTest`,

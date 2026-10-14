@@ -1,8 +1,8 @@
 //! ARM7TDMI regression tests. Instructions are placed in IWRAM and stepped
 //! directly, so no ROM or BIOS image is needed.
 
-use geebeeayy_core::cpu::Cpu;
-use geebeeayy_core::memory::MemoryBus;
+use gbee_core::cpu::Cpu;
+use gbee_core::memory::MemoryBus;
 
 const BASE: u32 = 0x0300_0000;
 
@@ -441,7 +441,7 @@ fn arm_test_opcode_with_rd_r15_restores_cpsr_from_spsr() {
     // gba-suite arm test 234. `cmp pc, pc, r0` (0xE15FF000) has S set and
     // Rd = R15. CMP writes no result, so the ARM7TDMI copies SPSR into CPSR
     // instead - the way exception handlers return.
-    use geebeeayy_core::cpu::Mode;
+    use gbee_core::cpu::Mode;
     let (mut cpu, mut bus) = setup_arm(&[0xE15F_F000]);
     cpu.set_cpsr((cpu.cpsr & !0x1F) | Mode::Fiq as u32);
     cpu.spsr_fiq = (cpu.cpsr & !0x1F) | Mode::System as u32;

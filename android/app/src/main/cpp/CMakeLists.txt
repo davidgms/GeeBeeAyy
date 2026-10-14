@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(geebeeayy_ra C)
+project(gbee_ra C)
 
 set(CMAKE_C_STANDARD 99)
 
@@ -36,12 +36,12 @@ list(FILTER RCHEEVOS_SOURCES EXCLUDE REGEX "rc_libretro\\.c$")
 # at best and pull in missing headers at worst.
 list(FILTER RCHEEVOS_SOURCES EXCLUDE REGEX "(hash_disc|hash_encrypted|hash_zip|cdreader|aes)\\.c$")
 
-add_library(geebeeayy_ra SHARED
+add_library(gbee_ra SHARED
     ra_bridge.c
     ${RCHEEVOS_SOURCES}
 )
 
-target_include_directories(geebeeayy_ra PRIVATE
+target_include_directories(gbee_ra PRIVATE
     ${RCHEEVOS}/include
     ${RCHEEVOS}/src
     ${RCHEEVOS}/src/util
@@ -50,10 +50,10 @@ target_include_directories(geebeeayy_ra PRIVATE
 # 16 KB page alignment, which Play requires. NDK r27 and older link at 4 KB
 # and ignore ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES (r28+), so the flags go in
 # explicitly; they are harmless on r28.
-target_link_options(geebeeayy_ra PRIVATE
+target_link_options(gbee_ra PRIVATE
     -Wl,-z,max-page-size=16384
     -Wl,-z,common-page-size=16384
 )
 
 find_library(log-lib log)
-target_link_libraries(geebeeayy_ra ${log-lib})
+target_link_libraries(gbee_ra ${log-lib})

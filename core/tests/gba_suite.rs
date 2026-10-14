@@ -16,7 +16,7 @@
 //! Without them each test prints a skip notice and passes, so the suite stays
 //! green for a contributor who has not fetched them.
 
-use geebeeayy_core::Gba;
+use gbee_core::Gba;
 
 /// Enough to reach the self-branch on every suite; a real hang trips it.
 const MAX_STEPS: u64 = 30_000_000;

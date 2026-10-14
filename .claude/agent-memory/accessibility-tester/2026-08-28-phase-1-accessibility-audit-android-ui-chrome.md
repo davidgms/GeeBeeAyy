@@ -14,7 +14,7 @@
   - PASS: Error messages combine color + text; no icon-only errors.
   - PASS: Excellent contrast for primary colors: GoldenSaplight 12.33:1 (AAA), PineGlowMist 15-17.6:1 (AAA).
 - **Application**: 
-  - iOS uses identical color palette (hex values match GeeBeeAyyTheme.swift) so FF button contrast issue exists on iOS too - report to swift-expert.
+  - iOS uses identical color palette (hex values match GBeeTheme.swift) so FF button contrast issue exists on iOS too - report to swift-expert.
   - kotlin-specialist must fix FF button before Phase 1 exit: options are lighten HoneyMid from 0x6B4A00 to ~0x8B6F00, change icon to PineGlowMist, or use GoldenSaplight for pressed state (like Pause button).
   - contentDescription fixes are straightforward attribute adds; no logic changes.
   - Reduced-motion: wrap Compose animations in androidx.compose.material3 motion preference API or check AccessibilityManager.isEnabled(FLAGGED_FOR_ACCESSIBILITY).

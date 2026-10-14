@@ -1,6 +1,6 @@
 ---
 name: accessibility-tester
-description: "Use PROACTIVELY whenever the touch overlay, ROM browser, settings screen or the pixel bee theme changes: touch target sizes for on-screen GBA controls, colour contrast in `ui/theme/Color.kt` and `GeeBeeAyyTheme.swift`, TalkBack and VoiceOver labels, font scaling and reduced motion. Triggers: contrast ratio, WCAG, TalkBack, VoiceOver, content description, accessibility label, hit target, touch target size, font scaling, colorblind, screen reader, haptics."
+description: "Use PROACTIVELY whenever the touch overlay, ROM browser, settings screen or the pixel bee theme changes: touch target sizes for on-screen GBA controls, colour contrast in `ui/theme/Color.kt` and `GBeeTheme.swift`, TalkBack and VoiceOver labels, font scaling and reduced motion. Triggers: contrast ratio, WCAG, TalkBack, VoiceOver, content description, accessibility label, hit target, touch target size, font scaling, colorblind, screen reader, haptics."
 tools: Read, Edit, Grep, Glob, Bash
 model: haiku
 memory: project
@@ -42,7 +42,7 @@ The usual web checklist only half applies. What actually matters here:
   settings must not be able to shrink them below it.
 - **Contrast in the pixel bee theme.** Amber-on-dark is the identity of this
   app; check it rather than assume it. The palettes are
-  `android/.../ui/theme/Color.kt` and `ios/.../Theme/GeeBeeAyyTheme.swift`.
+  `android/.../ui/theme/Color.kt` and `ios/.../Theme/GBeeTheme.swift`.
 - **The emulated screen itself is exempt.** A game's own contrast is the
   game's; do not report GBA content as a defect. Everything framing it - the
   browser, the pause menu, the settings, the overlay - is in scope.
