@@ -42,8 +42,8 @@ RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
     sdkmanager --update && \
     sdkmanager \
     "platform-tools" \
-    "platforms;android-34" \
-    "build-tools;34.0.0" \
+    "platforms;android-36" \
+    "build-tools;35.0.0" \
     "ndk;27.0.12077973" \
     "cmake;3.22.1"
 

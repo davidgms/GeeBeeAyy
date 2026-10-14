@@ -102,7 +102,7 @@ jobs:
       - name: Set up Android SDK (sdkmanager, licenses, ANDROID_HOME)
         uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
+          packages: platform-tools platforms;android-36
 
       - name: Install Android NDK ${{ env.ANDROID_NDK_VERSION }}
         run: |
@@ -147,12 +147,12 @@ jobs:
       # gradle/wrapper/gradle-wrapper.jar) - the Kotlin side has never been
       # built by anyone, on this machine or in CI. gradle/actions/setup-gradle
       # provisions a pinned Gradle distribution directly, so the build works
-      # without adding wrapper files to the repo. AGP 8.5.1 (see
-      # android/build.gradle.kts) requires Gradle 8.7 or newer.
-      - name: Set up Gradle 8.7 (no wrapper is committed - see comment above)
+      # without adding wrapper files to the repo. AGP 8.9.1 (see
+      # android/build.gradle.kts) requires Gradle 8.11.1 or newer.
+      - name: Set up Gradle 8.11.1 (no wrapper is committed - see comment above)
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: "8.7"
+          gradle-version: "8.11.1"
 
       # The unit tests under android/app/src/test were never run by anything:
       # this job only ever called assembleDebug, so FrameDeadlineTest and
@@ -267,7 +267,9 @@ jobs:
       - name: Install app and confirm it launches without crashing
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          # Android 16, the API the app now targets (B3). google_apis because
+          # the plain "default" image is not published for every level.
+          api-level: 36
           target: google_apis
           arch: x86_64
           profile: pixel_5
