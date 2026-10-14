@@ -726,8 +726,9 @@ on one developer's phone and an app a stranger can install.
       build, never in debug.
 - [ ] **Play Console listing** - description, screenshots, content rating and
       the data-safety form. The honest answer to the data-safety questions is
-      that the app collects nothing and sends nothing anywhere; keep it that
-      way, because it is also the easiest form to fill in.
+      that the app collects nothing. It reaches the network in three cases only:
+      RetroAchievements, after the player signs in; cover art, only when the
+      player enables it; and homebrew downloads, only on request.
 - [ ] **No ROMs, ever.** The homebrew catalogue is freely distributable
       homebrew only and is not, and will not become, an index of commercial
       games. Play removes emulators over exactly this.

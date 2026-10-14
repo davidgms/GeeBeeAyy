@@ -3,6 +3,7 @@ package com.geebeeayy.app.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -20,6 +21,8 @@ import java.net.URL
  * would never reach.
  */
 object BadgeCache {
+
+    private const val TAG = "GeeBeeAyy/BadgeCache"
 
     // A badge is a 64x64 PNG; the cap stops a hostile or broken server from
     // filling the disk.
@@ -57,6 +60,10 @@ object BadgeCache {
     }
 
     private fun download(url: String, into: File): Boolean = runCatching {
+        if (!url.startsWith("https://", ignoreCase = true)) {
+            Log.w(TAG, "refusing non-https badge URL")
+            return@runCatching false
+        }
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 20_000

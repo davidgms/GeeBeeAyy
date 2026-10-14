@@ -98,7 +98,7 @@ not run yet are in [`security-audit-phase5-pending-tests.md`](security-audit-pha
 | M4 | rcheevos pin misses #554 (progress deserialization over-read and endless loop); `ra_bridge.c:603` feeds it the state sidecar. Reproduced: a 64-byte sidecar hangs our vendored rcheevos forever while it holds the rc_client mutex, so the app likely stops responding (EMU-CORE-40, JNI-K-8) | submodule at `e3f7b7d` | bump to `e9a6d58` or later, fix CMake globs for #552; check sidecar result |
 | M5 | Battery `.sav` lives beside the ROM on shared storage; a planted newer file wins (STORE-3) | `EmulationViewModel.kt:508-513`, `BatterySaveStore.kt` | authoritative copy in app-private storage (part of B1) |
 | M6 | Unbounded HTTP bodies: RA response into memory, covers, badges and homebrew to disk (NET-2) | `RaEngine.kt:314-316`, `CoverArt.kt:172`, `BadgeCache.kt:69`, `HomebrewDownloader.kt:77-84` | per-client byte ceiling |
-| M7 | Cover lookup sends the raw ROM file name to libretro when the game code is unknown (NET-3) | `CoverArt.kt:68-74` | send only names from the bundled No-Intro index |
+| M7 | Cover lookup sends the raw ROM file name to libretro when the game code is unknown (NET-3) | `CoverArt.kt:68-74` | fixed: the file name is sent only when it is exactly a No-Intro name (`assets/gba-game-names.txt`) |
 | M8 | `RaEngine.start` check-then-set: double `nativeInit`, `store` seen as null (JNI-K-5) | `RaEngine.kt:55-56, 123-135` | synchronise `start()` |
 | M9 | Zip inflated on the UI thread for the delete-saves dialog: ANR or OOM (INPUT-2) | `RomBrowserScreen.kt:331` | off main thread, H2 caps |
 | M10 | Header read inflates the whole zipped cart per visible row (INPUT-3) | `RomHeader.kt:65-69` | read 0xB0 bytes of the stream |
@@ -138,7 +138,7 @@ JNI-K-13, NET-8, STORE-6, PERM-3, EXPORT-2, INPUT-4, INPUT-5, INPUT-7.
 | B2 | No release signing and no AAB in CI (LOG-4), `versionCode = 1` | fixed: env-driven `signingConfig`, `versionCode` from `GITHUB_RUN_NUMBER`, CI `bundleRelease` when `GBA_KEYSTORE_B64` exists |
 | B3 | targetSdk was 35; new apps must target 36 since 2026-08-31 | fixed: compileSdk and targetSdk 36, AGP 8.9.1, Gradle 8.11.1; `appCategory="game"` is set in the manifest |
 | B4 | 16 KB page size: `libgeebeeayy_core.so` (arm64, built 2026-10-08) and `libgeebeeayy_ra.so` have LOAD alignment 0x1000, not 0x4000 (`readelf -lW`). NDK r26/r27, no `max-page-size` flag anywhere | fixed: `max-page-size` and `common-page-size` 16384 through RUSTFLAGS for Rust and `target_link_options` in `CMakeLists.txt` for rcheevos; verify with `readelf -lW` and `zipalign -c -P 16` |
-| B5 | No privacy policy; data-safety form must declare the RA username, activity and (unless M7 is fixed) file names | confirmed |
+| B5 | No privacy policy; data-safety form must declare the RA username, activity and (unless M7 is fixed) file names | fixed in the repo: `docs/privacy-policy.md` and the form answers in `docs/play-data-safety.md`; publishing the policy URL and filling the form stay manual |
 
 Also: `ROADMAP.md` Phase 6 says the app "sends nothing anywhere". That is false
 since RetroAchievements and cover art.
@@ -174,7 +174,7 @@ since RetroAchievements and cover art.
 | 3 | M1, M4 | #76 |
 | 4 | H2, M6, M9, M10, L6 | #77 |
 | 5 | B1, M5, L9, L12 | #78 (private battery saves), #79 (ROM ids), #80 (SAF folders), #81 (permission removed) |
-| 6 | B2, B3, B4 (B5 open) | #86 (B2, B4), B3 pending |
+| 6 | B2, B3, B4, B5, M7 | #86 (B2, B4), #87 (B3), B5 and M7 pending |
 
 Step 5 notes, for whoever picks this up:
 - Battery saves live only in `files/saves/<state key>.sav`. The `.sav` beside

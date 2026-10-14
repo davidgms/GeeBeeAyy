@@ -60,4 +60,42 @@ class CoverArtTest {
         assertTrue("got $url", url.contains("We%27ll"))
         assertTrue("got $url", url.contains("%28USA%29"))
     }
+
+    private val index = mapOf("BTME" to "Mario Tennis Advance - Power Tour (USA)")
+    private val names = setOf("Mario Tennis Advance - Power Tour (USA)", "Yggdra Union (USA)")
+
+    @Test
+    fun `a code hit plus a known file name gives both`() {
+        assertEquals(
+            listOf("Mario Tennis Advance - Power Tour (USA)", "Yggdra Union (USA)"),
+            CoverArt.candidateNames("BTME", "Yggdra Union (USA)", index, names),
+        )
+    }
+
+    @Test
+    fun `a code hit whose name equals the file name is listed once`() {
+        assertEquals(
+            listOf("Mario Tennis Advance - Power Tour (USA)"),
+            CoverArt.candidateNames("BTME", "Mario Tennis Advance - Power Tour (USA)", index, names),
+        )
+    }
+
+    @Test
+    fun `a private file name is never a candidate`() {
+        assertEquals(
+            listOf("Mario Tennis Advance - Power Tour (USA)"),
+            CoverArt.candidateNames("BTME", "my secret copy", index, names),
+        )
+    }
+
+    @Test
+    fun `no code and a known file name gives the file name`() {
+        assertEquals(listOf("Yggdra Union (USA)"), CoverArt.candidateNames(null, "Yggdra Union (USA)", index, names))
+    }
+
+    @Test
+    fun `nothing known gives nothing`() {
+        assertEquals(emptyList<String>(), CoverArt.candidateNames(null, "my secret copy", index, names))
+        assertEquals(emptyList<String>(), CoverArt.candidateNames("ZZZZ", "my secret copy", index, names))
+    }
 }

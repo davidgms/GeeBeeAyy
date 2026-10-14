@@ -81,14 +81,27 @@ object CoverArt {
      * the DAT's 3692 entries carry no code at all, and 289 of those are
      * ordinary retail games. *Yggdra Union* is one: the cart reads `BYUE` and
      * the DAT does not list it. The filename path catches exactly those, when
-     * the file still carries its No-Intro name.
+     * the file still carries its exact No-Intro name; any other file name is
+     * private text and is never sent.
      */
-    internal fun candidateNames(context: Context, romPath: String): List<String> {
-        val names = mutableListOf<String>()
-        gameCode(context, romPath)?.let { code -> codeIndex(context)[code]?.let(names::add) }
-        val fileName = baseName(context, romPath)
-        if (fileName !in names) names += fileName
-        return names
+    internal fun candidateNames(context: Context, romPath: String): List<String> =
+        candidateNames(gameCode(context, romPath), baseName(context, romPath), codeIndex(context), knownNames(context))
+
+    /**
+     * The pure part of [candidateNames]. A file name is sent to the server
+     * **only when it is exactly a name in the DAT** ([names]): a renamed or
+     * private file name is the player's text and never leaves the device.
+     */
+    internal fun candidateNames(
+        code: String?,
+        fileName: String,
+        index: Map<String, String>,
+        names: Set<String>,
+    ): List<String> {
+        val out = mutableListOf<String>()
+        code?.let { index[it] }?.let(out::add)
+        if (fileName in names && fileName !in out) out += fileName
+        return out
     }
 
     private fun gameCode(context: Context, rom: String): String? =
@@ -96,6 +109,19 @@ object CoverArt {
 
     @Volatile
     private var index: Map<String, String>? = null
+
+    @Volatile
+    private var known: Set<String>? = null
+
+    /** Every No-Intro name in the DAT, one per line, read once from the APK's assets. */
+    private fun knownNames(context: Context): Set<String> {
+        known?.let { return it }
+        val loaded = runCatching {
+            context.assets.open(NAMES_ASSET).bufferedReader().use { r -> r.lineSequence().filter { it.isNotEmpty() }.toHashSet() }
+        }.getOrDefault(emptySet())
+        known = loaded
+        return loaded
+    }
 
     /**
      * Game code to No-Intro name, read once from the APK's assets.
@@ -207,6 +233,7 @@ object CoverArt {
         cacheDir(context).listFiles()?.sumOf { it.length() } ?: 0L
 
     private const val ASSET = "gba-game-codes.json"
+    private const val NAMES_ASSET = "gba-game-names.txt"
     private const val BASE =
         "https://thumbnails.libretro.com/Nintendo%20-%20Game%20Boy%20Advance/Named_Boxarts"
 }
