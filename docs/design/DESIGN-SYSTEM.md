@@ -28,8 +28,6 @@ His vibe, in the order it has to read:
 - **He never wears a shirt.** Stripes are the outfit.
 - **He never speaks in the UI chrome.** He can appear next to a message; he
   does not become the message. No speech bubbles in menus.
-- **He is never the loading spinner.** A mascot that only shows up when the
-  app is slow becomes the face of waiting.
 
 ### Where he appears
 
@@ -37,7 +35,8 @@ His vibe, in the order it has to read:
 |---|---|---|
 | Launcher icon | Face only | Adaptive foreground, `drawable-nodpi/ic_launcher_foreground.png` |
 | Splash | Face only | 160dp |
-| Empty ROM list, first run | Face only | 120dp |
+| Splash loading bar | Flying bee, `drawable-nodpi/loading_bee.png` | 48dp, rides the fill |
+| Top bar of the ROM list | Face only | 40dp |
 | Store graphic, README, key art | Full key art | As supplied |
 | Anywhere else | He does not | - |
 
@@ -151,7 +150,12 @@ Two faces, and **28sp is the line between them**.
 
 - **Pixelify Sans** (bundled, `res/font/pixelify_sans_*.ttf`, SIL OFL - see
   [`fonts-LICENSE.txt`](fonts-LICENSE.txt)) carries
-  the app's identity: the wordmark and screen titles.
+  the app's identity: screen titles.
+- **Press Start 2P** (bundled, `res/font/press_start_2p_regular.ttf`, SIL OFL)
+  is the splash wordmark only: "GBee Emulator" on one line at 22sp. It is
+  the one pixel-face exception to the 28sp floor below, because its glyphs sit
+  on a clean 8x8 grid and stay readable at that size. Pixelify Bold at 48sp
+  was hard to read on the splash (2026-10-14).
 - **The platform default** carries everything that has to be read.
 
 The threshold is a number, not a judgement call, so it stays consistent as
@@ -159,7 +163,7 @@ screens get added.
 
 | Style | Size / line | Face | Use |
 |---|---|---|---|
-| `displayLarge` | 36 / 48 | **Pixelify Sans** Bold | Splash wordmark |
+| `displayLarge` | 36 / 48 | **Pixelify Sans** Bold | Large display text (the splash wordmark uses Press Start 2P, above) |
 | `headlineLarge` | 28 / 38 | **Pixelify Sans** Bold | Screen title |
 | `headlineMedium` | 24 / 32 | Platform default SemiBold | Section heading |
 | `titleLarge` | 20 / 28 | Platform default SemiBold | Card title, ROM name |

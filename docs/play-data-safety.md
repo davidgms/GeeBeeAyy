@@ -24,7 +24,6 @@ HTTP library. The core (`core/src`) makes no network call.
 | RetroAchievements API | `engine/RaEngine.kt:316-322` (`fetch`), called from `:298-300` | rcheevos asks for a URL; only after sign-in (see below) |
 | RA badge images | `data/BadgeCache.kt:65-70` | achievements list open; needs a signed-in session to have a URL |
 | Cover art | `data/CoverArt.kt:205-206`, `BASE` at `:237-238` | setting `getDownloadCoverArt()` , default `false` (`data/DisplaySettings.kt:260`), toggle at `ui/screens/SettingsScreen.kt:565-569` |
-| Homebrew | `data/HomebrewDownloader.kt:135`, URLs in `data/HomebrewCatalog.kt:42-106` | player taps download |
 
 `AndroidManifest.xml:10` declares `INTERNET`; there is no other network
 permission. No `networkSecurityConfig` and no `usesCleartextTraffic`, so the
@@ -79,19 +78,13 @@ Everything is HTTPS in practice. No finding of plain HTTP, with notes:
   calls it, so they are dead code here.
 - Cover art: hardcoded `https://thumbnails.libretro.com/...` constant
   (`CoverArt.kt:237-238`); no runtime URL is involved, so no guard is needed.
-- Homebrew: all eight URLs are `https://github.com` or
-  `https://raw.githubusercontent.com` (`HomebrewCatalog.kt:42-106`), hardcoded.
-  GitHub release URLs redirect to GitHub's file-storage hosts. The download is
-  verified by size and SHA-256 (`HomebrewDownloader.kt:155-160`), so transit
-  tampering is also caught.
 - **Finding F1 (fixed):** the two paths that take a URL from outside the
   code, RetroAchievements requests (URLs built by rcheevos) and badge images
   (URL from a server response, `RaEngine.kt:260`), used to open whatever they
   were handed. Both now refuse anything that is not `https://`
   (`isHttps` at `BadgeCache.kt:23-24`, checked at `BadgeCache.kt:66` and
-  `RaEngine.kt:318`). Cover art and homebrew do not need a guard: their URLs
-  are hardcoded `https://` constants (`CoverArt.kt:237-238`,
-  `HomebrewCatalog.kt:42-106`).
+  `RaEngine.kt:318`). Cover art does not need a guard: its URL
+  is a hardcoded `https://` constant (`CoverArt.kt:237-238`).
 - **Redirects:** Android's `HttpURLConnection` follows up to five redirects,
   across origins, but "doesn't follow redirects from HTTPS to HTTP or vice
   versa" (developer.android.com/reference/java/net/HttpURLConnection, checked
@@ -168,7 +161,7 @@ The password is never stored (`RaCredentials.kt:7-12`).
 user starts it for a feature they asked for and the recipient is the service
 they chose. The player types their own RetroAchievements credentials, so the
 transfer is the user's, to the user's own service. The same reading is
-why cover art and homebrew do not count. If review pushes back, the safe
+why cover art does not count. If review pushes back, the safe
 fallback is to tick Shared for User IDs and App activity with purpose "App
 functionality". Not verified with Play.
 
@@ -184,10 +177,6 @@ used to identify a device as "Device or other IDs"; none of these services is
 sent anything from the app to key on it. Not verified with Play or with a
 traffic capture; confirm in review. The privacy policy states that the servers
 see it.
-
-**Homebrew downloads.** Request to GitHub and its file-storage hosts (release
-URLs redirect there) only; no user data is in it. Not
-declared.
 
 **Badge images.** A GET to `media.retroachievements.org` for a public image
 (`BadgeCache.kt:70`). Only possible in a signed-in session. Covered by the RA

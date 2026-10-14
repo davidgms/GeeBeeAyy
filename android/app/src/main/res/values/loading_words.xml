@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- One is picked at random each time the splash shows, above the
+         loading bar. Add or remove lines freely. -->
+    <string-array name="loading_words">
+        <item>Loading...</item>
+        <item>Buzzing...</item>
+        <item>Gaming...</item>
+        <item>Advancing...</item>
+        <item>Honeying...</item>
+        <item>Pollinating...</item>
+        <item>Hiving...</item>
+        <item>Flapping...</item>
+        <item>Booting...</item>
+        <item>Blinking...</item>
+        <item>Pixelating...</item>
+        <item>Swarming...</item>
+    </string-array>
+</resources>

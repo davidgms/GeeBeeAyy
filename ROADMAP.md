@@ -396,9 +396,8 @@ Details in [`.claude/memory.md`](.claude/memory.md).
 - [x] ROM library with cover art (`data/RomArtwork.kt`: `<name>.png|jpg|jpeg|webp`
       beside the ROM, or in a `covers/` subfolder). Metadata beyond what the
       folder scan already reads is still open.
-- [x] Homebrew downloader (`data/HomebrewCatalog.kt`, `HomebrewDownloader.kt`,
-      `ui/screens/HomebrewScreen.kt`). Freely distributable ROMs only - the
-      catalogue is not, and will not become, an index of commercial games.
+- [x] ~~Homebrew downloader~~ - removed 2026-10-14 with its screen and
+      top-bar button. The app ships no way to fetch a ROM.
 - [x] **Landscape/portrait handling** - `kotlin-specialist`. The manifest no
       longer hard-locks `screenOrientation="portrait"`;  `MainActivity`
       applies the lock at runtime instead. The two-state `forcePortrait` flag

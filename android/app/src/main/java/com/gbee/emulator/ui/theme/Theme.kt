@@ -52,6 +52,11 @@ val Pixelify = FontFamily(
     Font(R.font.pixelify_sans_bold, FontWeight.Bold),
 )
 
+// The splash wordmark only. Pixelify's bold pixels smeared together at
+// splash size and the name was hard to read; Press Start 2P keeps every glyph
+// on a clean 8x8 grid. Same 28sp floor as Pixelify.
+val PressStart2P = FontFamily(Font(R.font.press_start_2p_regular, FontWeight.Normal))
+
 private val GBeeTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = Pixelify,

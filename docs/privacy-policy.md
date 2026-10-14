@@ -24,7 +24,7 @@ Your game files and saves are never uploaded by the app.
 
 ## What is sent, and to whom
 
-The app can reach the internet in three cases, and only these three.
+The app can reach the internet in two cases, and only these two.
 
 **1. RetroAchievements - only if you sign in.** If you sign in to your
 retroachievements.org account in Settings, the app talks to
@@ -43,11 +43,6 @@ public No-Intro catalogue. The app finds that title from the code inside the
 game, or uses the file name only when it is exactly one of those catalogue
 titles. Any other file name never leaves your device. Pictures are saved on
 your device.
-
-**3. Homebrew downloads - only when you tap download.** The Homebrew catalog
-fetches the free test and demo games you choose from GitHub and its
-file-storage hosts (github.com, raw.githubusercontent.com and the hosts GitHub
-redirects release downloads to). Only the download request is made.
 
 Like any internet request, these servers can see your IP address and the
 standard request details. We do not receive or see any of it; the servers named
@@ -70,7 +65,6 @@ policies:
 - RetroAchievements: https://retroachievements.org/ (see its privacy policy
   there)
 - libretro: https://www.libretro.com/ (thumbnails.libretro.com)
-- GitHub: https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement
 
 To have your RetroAchievements account or its data deleted, contact
 RetroAchievements; we have no copy.
