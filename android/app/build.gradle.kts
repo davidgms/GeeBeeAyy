@@ -16,8 +16,11 @@ android {
         applicationId = "com.geebeeayy.app"
         minSdk = 26
         targetSdk = 35
-        // CI run number keeps it monotonic for Play; local builds get 1.
-        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        // CI run number keeps it monotonic for Play; local builds get 1. It
+        // counts per workflow file: renaming ci.yml restarts it, and a re-run
+        // reuses it, so re-upload a commit from a fresh run.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+            ?: if (System.getenv("GBA_KEYSTORE") != null) error("A signed release needs GITHUB_RUN_NUMBER for its versionCode") else 1
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -38,8 +41,6 @@ android {
                 // Matches the C99 the library is written in, and keeps the
                 // Windows-only RAIntegration path out.
                 arguments += "-DANDROID_STL=none"
-                // 16 KB page alignment for Play.
-                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
             }
         }
     }
@@ -69,11 +70,13 @@ android {
     // Debug is untouched: it keeps the default debug key.
     val releaseKeystore = System.getenv("GBA_KEYSTORE")
     if (releaseKeystore != null) {
+        // A missing value would make AGP skip signing with only a warning.
+        fun need(name: String) = System.getenv(name)?.takeIf { it.isNotEmpty() } ?: error("$name is not set")
         signingConfigs.create("release") {
             storeFile = file(releaseKeystore)
-            storePassword = System.getenv("GBA_KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("GBA_KEY_ALIAS")
-            keyPassword = System.getenv("GBA_KEY_PASSWORD")
+            storePassword = need("GBA_KEYSTORE_PASSWORD")
+            keyAlias = need("GBA_KEY_ALIAS")
+            keyPassword = need("GBA_KEY_PASSWORD")
         }
     }
 

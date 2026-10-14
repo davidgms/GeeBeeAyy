@@ -69,10 +69,6 @@ jobs:
   android:
     name: Android - build native library and debug APK
     runs-on: ubuntu-latest
-    # Job level so the release steps' `if` can see it; `secrets` is not
-    # available in a step `if`. Empty on fork PRs.
-    env:
-      GBA_KEYSTORE_B64: ${{ secrets.GBA_KEYSTORE_B64 }}
     steps:
       # With submodules: rcheevos lives in one, and CMake needs it. A plain
       # checkout leaves the directory empty and the C build fails a thousand
@@ -176,24 +172,33 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # Release bundle for Play. Runs only when the signing secrets exist
-      # (master pushes in this repo; never on fork PRs). The keystore is
-      # decoded into RUNNER_TEMP and its path handed to Gradle through the
-      # environment; nothing is echoed.
+      # Release bundle for Play: master pushes only, never a PR (same-repo PRs
+      # get secrets too). `secrets` cannot be read in a step `if`, so this
+      # step turns "the key exists" into an output, and the key itself is
+      # handed only to the step that signs.
+      - name: Check for the release key
+        id: release_key
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        env:
+          HAS_KEY: ${{ secrets.GBA_KEYSTORE_B64 != '' }}
+        run: echo "present=$HAS_KEY" >> "$GITHUB_OUTPUT"
+
       - name: Build signed release AAB
-        if: ${{ env.GBA_KEYSTORE_B64 != '' }}
+        if: ${{ steps.release_key.outputs.present == 'true' }}
         working-directory: android
         env:
+          GBA_KEYSTORE_B64: ${{ secrets.GBA_KEYSTORE_B64 }}
           GBA_KEYSTORE_PASSWORD: ${{ secrets.GBA_KEYSTORE_PASSWORD }}
           GBA_KEY_ALIAS: ${{ secrets.GBA_KEY_ALIAS }}
           GBA_KEY_PASSWORD: ${{ secrets.GBA_KEY_PASSWORD }}
         run: |
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/release.jks"' EXIT
           echo "$GBA_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           GBA_KEYSTORE="$RUNNER_TEMP/release.jks" gradle bundleRelease
-          rm -f "$RUNNER_TEMP/release.jks"
 
       - name: Upload release AAB
-        if: ${{ env.GBA_KEYSTORE_B64 != '' }}
+        if: ${{ steps.release_key.outputs.present == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: geebeeayy-release-aab
