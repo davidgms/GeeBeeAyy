@@ -10,12 +10,12 @@ android {
     // android.util.Log returns defaults instead of throwing in JVM tests, so
     // RaEngine can run off-device.
     testOptions { unitTests.isReturnDefaultValues = true }
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.geebeeayy.app"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // CI run number keeps it monotonic for Play; local builds get 1. It
         // counts per workflow file: renaming ci.yml restarts it, and a re-run
         // reuses it, so re-upload a commit from a fresh run.
