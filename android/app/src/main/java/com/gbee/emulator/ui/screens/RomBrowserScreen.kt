@@ -119,7 +119,7 @@ fun RomBrowserScreen(
         topBar = {
             TopAppBar(
                 // The wordmark alone. A fifth action button went in beside
-                // it and the old "GBee Emulator ROMs" pair had nowhere left to
+                // it and the old wordmark-plus-"ROMs" pair had nowhere left to
                 // go, so it wrapped mid-word to "RO / Ms". The list under it
                 // says what the screen is.
                 title = {
