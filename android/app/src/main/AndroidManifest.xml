@@ -3,10 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.gbee.emulator">
 
-    <!-- Two things, and only two. Downloading freely distributable homebrew
-         from the built-in catalogue, and - only once the player switches it
-         on - fetching box art for the ROM list. Neither happens on its own,
-         and no game or artwork is ever shipped inside this APK. -->
+    <!-- RetroAchievements, only after the player signs in, and box art for
+         the ROM list, only once the player switches it on. Neither happens on
+         its own, and no game or artwork is ever shipped inside this APK. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Feedback under a finger on the on-screen buttons. A normal

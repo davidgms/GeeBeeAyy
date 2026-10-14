@@ -10,7 +10,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -19,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.gbee.emulator.R
 import com.gbee.emulator.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
@@ -50,8 +56,18 @@ fun SplashScreen(onTimeout: () -> Unit) {
         label = "alpha"
     )
 
+    // Fills over the same 2 s the splash waits. With animations removed in
+    // system settings it is drawn full rather than moving.
+    val progress = remember { Animatable(0f) }
+
+    // A new word from res/values/loading_words.xml on every splash.
+    val loadingWord = remember { context.resources.getStringArray(R.array.loading_words).random() }
+
     LaunchedEffect(Unit) {
         startAnimation = true
+        launch {
+            progress.animateTo(1f, tween(durationMillis = if (reduceMotion) 0 else 2000, easing = LinearEasing))
+        }
         delay(2000)
         onTimeout()
     }
@@ -77,19 +93,21 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 modifier = Modifier.size(160.dp)
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(40.dp))
 
             // The wordmark is the one place the pixel face has to appear: it is
-            // the app's identity, not running text.
+            // the app's identity, not running text. Press Start 2P is 1em per
+            // glyph, so 22sp keeps "GBee Emulator" at 286dp, inside a 360dp
+            // phone on one line.
             Text(
                 text = "GBee Emulator",
-                fontFamily = Pixelify,
-                fontSize = 48.sp,
-                fontWeight = FontWeight.Bold,
+                fontFamily = PressStart2P,
+                fontSize = 22.sp,
+                maxLines = 1,
                 color = GoldenSaplight
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
                 text = "GBA Emulator",
@@ -99,15 +117,50 @@ fun SplashScreen(onTimeout: () -> Unit) {
             )
         }
 
-        // Bottom tagline
-        Text(
-            text = "Bzzt! Let's play!",
-            fontSize = 14.sp,
-            color = AmberResin,
+        // Loading bar. The splash is timed, so the bar tracks that same
+        // timer; the bee flies on the leading edge of the fill.
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 48.dp)
+                .padding(start = 48.dp, end = 48.dp, bottom = 48.dp)
+                .fillMaxWidth()
                 .alpha(alpha.value)
-        )
+        ) {
+            Text(
+                text = loadingWord,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = GoldenSaplight,
+            )
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                val markerWidth = 48.dp
+                val track = Modifier
+                    .align(Alignment.CenterStart)
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                Box(track.fillMaxWidth().background(NightRaised))
+                Box(track.fillMaxWidth(progress.value).background(GoldenSaplight))
+                Image(
+                    bitmap = ImageBitmap.imageResource(R.drawable.loading_bee),
+                    contentDescription = null,
+                    filterQuality = FilterQuality.None,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .offset(x = (maxWidth - markerWidth) * progress.value)
+                        .width(markerWidth)
+                )
+            }
+            Text(
+                text = "${(progress.value * 100).toInt()}%",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = GoldenSaplight,
+            )
+        }
     }
 }

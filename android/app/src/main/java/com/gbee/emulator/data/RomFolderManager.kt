@@ -88,8 +88,8 @@ class RomFolderManager(private val context: Context) {
      * The configured folders (tree Uris and legacy paths), sorted.
      *
      * The backing store is a `Set`, whose iteration order is arbitrary, so
-     * anything that means "the first folder" - the homebrew downloader's
-     * default destination, for one - got a different answer between runs.
+     * anything that means "the first folder" got a different answer
+     * between runs.
      */
     fun getFolderPaths(): List<String> {
         return prefs.getStringSet("folders", emptySet())?.sorted() ?: emptyList()

@@ -7,3 +7,8 @@ The full licence text is at https://openfontlicense.org and ships with the
 upstream project. Under the OFL the font files may be bundled and redistributed
 inside this application; they may not be sold on their own, and the reserved
 font name must not be used for a modified version.
+
+Press Start 2P is licensed under the SIL Open Font License, Version 1.1.
+
+Copyright 2012 The Press Start 2P Project Authors (cody@zone38.net),
+with Reserved Font Name "Press Start 2P".

@@ -87,22 +87,7 @@ fun GBeeNavHost() {
                 onSettingsClick = {
                     navController.navigate("settings")
                 },
-                onDownloadClick = {
-                    navController.navigate("homebrew")
-                },
                 onRefresh = { rescanRoms() },
-            )
-        }
-
-        composable("homebrew") {
-            // The scan that follows a download is the same one the browser
-            // uses, so a finished download shows up without leaving the app.
-            HomebrewScreen(
-                // Only picked folders: a path left from before SAF cannot be
-                // written any more, and a download aimed there would fail.
-                folders = folderManager.getFolderPaths().filterNot(RomBytes::isPath),
-                onBack = { navController.popBackStack() },
-                onDownloaded = { rescanRoms() },
             )
         }
 

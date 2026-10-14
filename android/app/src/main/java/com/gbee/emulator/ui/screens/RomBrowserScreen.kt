@@ -31,6 +31,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.res.painterResource
+import com.gbee.emulator.R
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
 import com.gbee.emulator.data.RomArtwork
@@ -83,7 +88,6 @@ fun RomBrowserScreen(
     roms: List<RomEntry>,
     onRomClick: (RomEntry) -> Unit,
     onSettingsClick: () -> Unit,
-    onDownloadClick: () -> Unit,
     onRefresh: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -118,16 +122,15 @@ fun RomBrowserScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                // The wordmark alone. A fifth action button went in beside
-                // it and the old wordmark-plus-"ROMs" pair had nowhere left to
-                // go, so it wrapped mid-word to "RO / Ms". The list under it
-                // says what the screen is.
+                // GB's face instead of a text title. Five action buttons share
+                // this bar, and any title text had to fight them for width -
+                // the old wordmark-plus-"ROMs" pair wrapped mid-word to
+                // "RO / Ms". The list under it says what the screen is.
                 title = {
-                    Text(
-                        text = "GBee Emulator",
-                        fontWeight = FontWeight.Bold,
-                        color = GoldenSaplight,
-                        maxLines = 1,
+                    Image(
+                        painter = painterResource(id = R.drawable.gb_face),
+                        contentDescription = "GBee Emulator",
+                        modifier = Modifier.size(40.dp),
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -172,13 +175,6 @@ fun RomBrowserScreen(
                         Icon(
                             Icons.Default.Refresh,
                             contentDescription = "Rescan ROM folders",
-                            tint = AmberResin
-                        )
-                    }
-                    IconButton(onClick = onDownloadClick) {
-                        Icon(
-                            Icons.Default.Download,
-                            contentDescription = "Homebrew downloads",
                             tint = AmberResin
                         )
                     }
@@ -667,16 +663,21 @@ private fun UnavailableFoldersBanner() {
 
 @Composable
 fun EmptyState(modifier: Modifier = Modifier) {
+    // The icon is centred; the title and text under it are left-aligned and
+    // use the screen width, so the text does not sit in a narrow centred box.
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 32.dp),
         verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            Icons.Default.VideogameAsset,
+        Image(
+            bitmap = ImageBitmap.imageResource(R.drawable.empty_console),
             contentDescription = null,
-            tint = AmberResin.copy(alpha = 0.5f),
-            modifier = Modifier.size(80.dp)
+            filterQuality = FilterQuality.None,
+            modifier = Modifier
+                .width(200.dp)
+                .align(Alignment.CenterHorizontally)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -691,7 +692,7 @@ fun EmptyState(modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Go to Settings → ROM Folders\nto add your game folders,\nor tap ⬇ for free homebrew.\n\nBzzt! Your games await!",
+            text = "Go to Settings → ROM Folders to add your game folders.\n\nBzzt! Your games await!",
             fontSize = 14.sp,
             color = PineGlowMist.copy(alpha = 0.7f),
             lineHeight = 20.sp,
