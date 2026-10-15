@@ -23,11 +23,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gbee.emulator.R
 import com.gbee.emulator.ui.theme.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
+/**
+ * The splash, up for exactly as long as the startup load takes. [progress] is
+ * the real fraction done (0 to 1) and [loaded] says the load has finished; the
+ * bar eases toward [progress] and the splash calls [onFinished] once the bar
+ * has reached the end of a finished load. No fixed timer.
+ */
 @Composable
-fun SplashScreen(onTimeout: () -> Unit) {
+fun SplashScreen(progress: Float, loaded: Boolean, onFinished: () -> Unit) {
     var startAnimation by remember { mutableStateOf(false) }
 
     // Honour "Remove animations" in system accessibility settings. A scale-up
@@ -56,20 +60,19 @@ fun SplashScreen(onTimeout: () -> Unit) {
         label = "alpha"
     )
 
-    // Fills over the same 2 s the splash waits. With animations removed in
-    // system settings it is drawn full rather than moving.
-    val progress = remember { Animatable(0f) }
+    // The bar eases toward the real progress so a jump reads as motion; with
+    // animations removed in system settings it jumps straight there.
+    val shown = remember { Animatable(0f) }
 
     // A new word from res/values/loading_words.xml on every splash.
     val loadingWord = remember { context.resources.getStringArray(R.array.loading_words).random() }
 
-    LaunchedEffect(Unit) {
-        startAnimation = true
-        launch {
-            progress.animateTo(1f, tween(durationMillis = if (reduceMotion) 0 else 2000, easing = LinearEasing))
-        }
-        delay(2000)
-        onTimeout()
+    LaunchedEffect(Unit) { startAnimation = true }
+
+    LaunchedEffect(progress, loaded) {
+        val target = if (loaded) 1f else progress.coerceIn(0f, 1f)
+        shown.animateTo(target, tween(durationMillis = if (reduceMotion) 0 else 250, easing = LinearEasing))
+        if (loaded) onFinished()
     }
 
     Box(
@@ -117,8 +120,8 @@ fun SplashScreen(onTimeout: () -> Unit) {
             )
         }
 
-        // Loading bar. The splash is timed, so the bar tracks that same
-        // timer; the bee flies on the leading edge of the fill.
+        // Loading bar, driven by the real startup load; the bee flies on the
+        // leading edge of the fill.
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
@@ -144,19 +147,19 @@ fun SplashScreen(onTimeout: () -> Unit) {
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp))
                 Box(track.fillMaxWidth().background(NightRaised))
-                Box(track.fillMaxWidth(progress.value).background(GoldenSaplight))
+                Box(track.fillMaxWidth(shown.value).background(GoldenSaplight))
                 Image(
                     bitmap = ImageBitmap.imageResource(R.drawable.loading_bee),
                     contentDescription = null,
                     filterQuality = FilterQuality.None,
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .offset(x = (maxWidth - markerWidth) * progress.value)
+                        .offset(x = (maxWidth - markerWidth) * shown.value)
                         .width(markerWidth)
                 )
             }
             Text(
-                text = "${(progress.value * 100).toInt()}%",
+                text = "${(shown.value * 100).toInt()}%",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = GoldenSaplight,

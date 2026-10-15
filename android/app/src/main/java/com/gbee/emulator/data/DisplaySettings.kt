@@ -251,9 +251,10 @@ class DisplaySettings(context: Context) {
     /**
      * Whether the app may fetch box art for carts with no picture beside them.
      *
-     * **Off by default, and it stays that way.** This is the only thing in the
-     * app that reaches the network without being asked to, so it has to be
-     * asked. It is also the licensing posture: the art belongs to each game's
+     * **Off by default, and it stays that way until the player says yes.** This
+     * is the only thing in the app that reaches the network without being asked
+     * to, so it has to be asked: once, by the ROM list the first time it has
+     * games ([getCoverArtAsked]), and after that only through Settings. It is also the licensing posture: the art belongs to each game's
      * publisher, and a fetch the player switched on is a fetch the player
      * made. See `docs/cover-art.md`.
      */
@@ -261,6 +262,17 @@ class DisplaySettings(context: Context) {
 
     fun setDownloadCoverArt(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_COVER_ART, enabled).apply()
+    }
+
+    /**
+     * Whether the player has answered the one-time "download cover art?"
+     * question the ROM list asks when it first has games. Either answer counts;
+     * after that only the Settings switch changes [getDownloadCoverArt].
+     */
+    fun getCoverArtAsked(): Boolean = prefs.getBoolean(KEY_COVER_ART_ASKED, false)
+
+    fun setCoverArtAsked() {
+        prefs.edit().putBoolean(KEY_COVER_ART_ASKED, true).apply()
     }
 
     /**
@@ -334,6 +346,7 @@ class DisplaySettings(context: Context) {
         private const val KEY_SCREEN_FILTER = "screen_filter"
         private const val KEY_INTERFRAME_BLEND = "interframe_blend"
         private const val KEY_COVER_ART = "download_cover_art"
+        private const val KEY_COVER_ART_ASKED = "download_cover_art_asked"
         private const val KEY_AUTO_LOAD = "auto_load_quick_save"
         private const val KEY_PERFORMANCE = "show_performance"
         private const val KEY_RATE_TIP = "rate_tip"

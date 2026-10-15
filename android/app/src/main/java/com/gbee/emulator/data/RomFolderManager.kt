@@ -153,18 +153,21 @@ class RomFolderManager(private val context: Context) {
      * import reads the siblings of the scan that produced [publish]'s list.
      * Blocking: call it off the main thread.
      */
-    fun scanAndImport(publish: (List<RomEntry>) -> Unit) = synchronized(SCAN_LOCK) {
-        val scan = scanAllFolders()
+    fun scanAndImport(publish: (List<RomEntry>) -> Unit, onProgress: (Float) -> Unit = {}) = synchronized(SCAN_LOCK) {
+        // Progress for the splash: the folders are 90% of the work, the save
+        // import the last 10%.
+        val scan = scanAllFolders { done, total -> onProgress(0.9f * done / total) }
         // The three results go out together, from the one scan.
         RomSiblings.replace(scan.siblings)
         unavailableFlow.value = scan.unavailable
         publish(scan.roms)
         RomFiles.importLegacySaves(context, scan.roms, GbaEngine::saveFit)
+        onProgress(1f)
     }
 
     private class Scan(val roms: List<RomEntry>, val siblings: Map<String, Siblings>, val unavailable: Set<String>)
 
-    private fun scanAllFolders(): Scan {
+    private fun scanAllFolders(onFolder: (done: Int, total: Int) -> Unit = { _, _ -> }): Scan {
         val folders = getFolderPaths()
         val roms = mutableListOf<RomEntry>()
         val siblings = HashMap<String, Siblings>()
@@ -184,6 +187,7 @@ class RomFolderManager(private val context: Context) {
             } else {
                 down += folderPath
             }
+            onFolder(folders.indexOf(folderPath) + 1, folders.size)
         }
         // A tree picked inside a path folder lists the same games again; the
         // tree's copy wins, so nothing shows twice.

@@ -20,6 +20,9 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,6 +38,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import com.gbee.emulator.R
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
@@ -93,9 +97,37 @@ fun RomBrowserScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val favorites = remember { Favorites(context) }
-    // Read once for the whole list. Built per row it was a SharedPreferences
-    // object allocated for every card that scrolled into view.
-    val downloadCovers = remember { DisplaySettings(context).getDownloadCoverArt() }
+    // Read for the whole list, and again on every resume: this screen stays
+    // composed under Settings, so a switch flipped there was not seen until
+    // the app restarted.
+    val displaySettings = remember { DisplaySettings(context) }
+    var downloadCovers by remember { mutableStateOf(displaySettings.getDownloadCoverArt()) }
+    var askCovers by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) downloadCovers = displaySettings.getDownloadCoverArt()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // Ask once, the first time the list has games. The switch stays off until
+    // the player says yes: cover art is the app's only unprompted request.
+    LaunchedEffect(roms.isNotEmpty()) {
+        askCovers = roms.isNotEmpty() && !downloadCovers && !displaySettings.getCoverArtAsked()
+    }
+    // Every cover as soon as the scan knows the games, not only the rows on
+    // screen. Bumped after each new cover so the rows reload their art.
+    var coverRound by remember { mutableIntStateOf(0) }
+    LaunchedEffect(roms, downloadCovers) {
+        if (!downloadCovers) return@LaunchedEffect
+        for (rom in roms.filter { it.exists }) {
+            val fresh = withContext(Dispatchers.IO) {
+                !CoverArt.cachedFile(context, rom.filePath).isFile && CoverArt.fetch(context, rom.filePath) != null
+            }
+            if (fresh) coverRound++
+        }
+    }
     var query by remember { mutableStateOf("") }
     var infoRom by remember { mutableStateOf<RomEntry?>(null) }
     var menuRom by remember { mutableStateOf<RomEntry?>(null) }
@@ -119,19 +151,61 @@ fun RomBrowserScreen(
         if (favoritesOnly) filtered = filtered.filter { it.isFavorite }
         sortOrder.sort(filtered)
     }
+    if (askCovers) {
+        val answer = { yes: Boolean ->
+            displaySettings.setCoverArtAsked()
+            if (yes) {
+                displaySettings.setDownloadCoverArt(true)
+                downloadCovers = true
+            }
+            askCovers = false
+        }
+        AlertDialog(
+            onDismissRequest = {},
+            containerColor = NightPanel,
+            titleContentColor = GoldenSaplight,
+            textContentColor = PineGlowMist,
+            title = { Text(stringResource(R.string.cover_art_ask_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.cover_art_ask_body), fontSize = 14.sp, lineHeight = 20.sp) },
+            confirmButton = {
+                TextButton(onClick = { answer(true) }) {
+                    Text(stringResource(R.string.cover_art_ask_yes), color = GoldenSaplight)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { answer(false) }) {
+                    Text(stringResource(R.string.cover_art_ask_no), color = PineGlowMist)
+                }
+            },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
-                // GB's face instead of a text title. Five action buttons share
-                // this bar, and any title text had to fight them for width -
-                // the old wordmark-plus-"ROMs" pair wrapped mid-word to
-                // "RO / Ms". The list under it says what the screen is.
+                // GB's face and a small wordmark. The old wordmark-plus-"ROMs"
+                // pair in the default face wrapped mid-word to "RO / Ms"; the
+                // list under it says what the screen is.
                 title = {
-                    Image(
-                        painter = painterResource(id = R.drawable.gb_face),
-                        contentDescription = "GBee Emulator",
-                        modifier = Modifier.size(40.dp),
-                    )
+                    // The face at the 24dp of the action icons beside it, then
+                    // the wordmark in the splash's face at a size that leaves
+                    // the four buttons their room: 13 glyphs of 1em at 11sp is
+                    // 143dp.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(id = R.drawable.gb_face),
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "GBee Emulator",
+                            fontFamily = PressStart2P,
+                            fontSize = 11.sp,
+                            color = GoldenSaplight,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = NightVoid,
@@ -261,7 +335,7 @@ fun RomBrowserScreen(
                             items(favorites) { rom ->
                                 RomCard(
                                     rom = rom,
-                                    downloadCovers = downloadCovers,
+                                    coverRound = coverRound,
                                     onClick = { onRomClick(rom) },
                                     onLongClick = { menuRom = rom },
                                 )
@@ -289,7 +363,7 @@ fun RomBrowserScreen(
                         items(rest) { rom ->
                             RomCard(
                                 rom = rom,
-                                downloadCovers = downloadCovers,
+                                coverRound = coverRound,
                                 onClick = { onRomClick(rom) },
                                 onLongClick = { menuRom = rom },
                             )
@@ -506,7 +580,7 @@ private fun formatLastPlayed(millis: Long): String =
 @Composable
 fun RomCard(
     rom: RomEntry,
-    downloadCovers: Boolean = false,
+    coverRound: Int = 0,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
 ) {
@@ -540,18 +614,10 @@ fun RomCard(
             // until it arrives.
             val context = LocalContext.current
             var artwork by remember(rom.filePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
-            LaunchedEffect(rom.filePath) {
-                artwork = withContext(Dispatchers.IO) {
-                    // What is already on disk first, so a row draws without
-                    // waiting for the network even when the fetch is on.
-                    RomArtwork.load(context, rom.filePath)
-                        ?: if (rom.exists && downloadCovers) {
-                            CoverArt.fetch(context, rom.filePath)
-                            RomArtwork.load(context, rom.filePath)
-                        } else {
-                            null
-                        }
-                }
+            // The downloads run for the whole list in RomBrowserScreen; a row
+            // only reads what is on disk, again each time a new cover lands.
+            LaunchedEffect(rom.filePath, coverRound) {
+                artwork = withContext(Dispatchers.IO) { RomArtwork.load(context, rom.filePath) } ?: artwork
             }
             val art = artwork
             Box(

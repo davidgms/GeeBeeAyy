@@ -23,7 +23,7 @@ HTTP library. The core (`core/src`) makes no network call.
 |---|---|---|
 | RetroAchievements API | `engine/RaEngine.kt:316-322` (`fetch`), called from `:298-300` | rcheevos asks for a URL; only after sign-in (see below) |
 | RA badge images | `data/BadgeCache.kt:65-70` | achievements list open; needs a signed-in session to have a URL |
-| Cover art | `data/CoverArt.kt:205-206`, `BASE` at `:237-238` | setting `getDownloadCoverArt()` , default `false` (`data/DisplaySettings.kt:260`), toggle at `ui/screens/SettingsScreen.kt:565-569` |
+| Cover art | `data/CoverArt.kt:205-206`, `BASE` at `:237-238` | setting `getDownloadCoverArt()` , default `false` (`data/DisplaySettings.kt`), switched on by the one-time question in `ui/screens/RomBrowserScreen.kt` or the Settings toggle |
 
 `AndroidManifest.xml:10` declares `INTERNET`; there is no other network
 permission. No `networkSecurityConfig` and no `usesCleartextTraffic`, so the
