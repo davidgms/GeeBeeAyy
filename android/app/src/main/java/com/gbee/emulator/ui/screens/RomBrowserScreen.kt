@@ -31,6 +31,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
@@ -197,13 +200,27 @@ fun RomBrowserScreen(
                             modifier = Modifier.size(24.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
+                        // Font padding and the font's tall line box pushed the
+                        // glyphs off the face's centre; trimmed so the text box
+                        // is the glyphs and the Row centres them on the face. The
+                        // 2dp drop lines them up with the head itself: the
+                        // antennae sit in the top of the face's 24dp box.
                         Text(
                             text = "GBee Emulator",
-                            fontFamily = PressStart2P,
-                            fontSize = 11.sp,
+                            modifier = Modifier.offset(y = 2.dp),
                             color = GoldenSaplight,
                             maxLines = 1,
                             softWrap = false,
+                            style = TextStyle(
+                                fontFamily = PressStart2P,
+                                fontSize = 11.sp,
+                                lineHeight = 11.sp,
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both,
+                                ),
+                            ),
                         )
                     }
                 },
