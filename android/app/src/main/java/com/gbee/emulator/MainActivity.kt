@@ -26,6 +26,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.gbee.emulator.viewmodel.EmulationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.gbee.emulator.ui.orientationFor
 
 class MainActivity : ComponentActivity() {
@@ -59,18 +60,29 @@ fun GBeeNavHost() {
             // Scans are serialised in the manager, and the save import runs
             // there too, on the list it just published: battery saves are
             // moving into app storage while the app can still read the folders.
-            folderManager.scanAndImport { romList = it }
+            folderManager.scanAndImport(publish = { romList = it })
         }
     }
 
+    // The startup load the splash shows: the folder scan and the save import.
+    // The splash stays up until it ends, however long that is.
+    var loadProgress by remember { mutableFloatStateOf(0f) }
+    var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (folderManager.hasFolders()) rescanRoms()
+        if (folderManager.hasFolders()) {
+            withContext(Dispatchers.IO) {
+                folderManager.scanAndImport({ romList = it }, { loadProgress = it })
+            }
+        }
+        loaded = true
     }
 
     NavHost(navController = navController, startDestination = "splash") {
         composable("splash") {
             SplashScreen(
-                onTimeout = {
+                progress = loadProgress,
+                loaded = loaded,
+                onFinished = {
                     navController.navigate("rom_browser") {
                         popUpTo("splash") { inclusive = true }
                     }

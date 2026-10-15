@@ -186,14 +186,15 @@ fun RomBrowserScreen(
                 // pair in the default face wrapped mid-word to "RO / Ms"; the
                 // list under it says what the screen is.
                 title = {
-                    // The face, then the wordmark in the splash's face at a
-                    // size that leaves the four action buttons their room:
-                    // 13 glyphs of 1em at 11sp is 143dp.
+                    // The face at the 24dp of the action icons beside it, then
+                    // the wordmark in the splash's face at a size that leaves
+                    // the four buttons their room: 13 glyphs of 1em at 11sp is
+                    // 143dp.
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Image(
                             painter = painterResource(id = R.drawable.gb_face),
                             contentDescription = null,
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(24.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
