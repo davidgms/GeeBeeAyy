@@ -20,7 +20,24 @@ const SAVE_MAGIC: &[u8; 4] = b"GBAS";
 /// no transfer running.
 /// v10 appended the CRC-32 of the ROM the state was taken on, and a state
 /// for another ROM is refused. Older states carry none and load as before.
-const SAVE_VERSION: u32 = 10;
+/// v11 appended the live state a running machine carries between two steps:
+/// the PPU's dot within the scanline and whether it has drawn the line, the
+/// affine reference accumulators, the HLE BIOS wait flags, the BIOS read
+/// latch, and the cycles owed to the next step (exception entry, a DMA stall,
+/// the IRQ delay). Before it a restored machine kept its own values for
+/// these. Older states load with them derived from the registers or reset as
+/// at power-on.
+const SAVE_VERSION: u32 = 11;
+
+/// More cycles than any legitimate value of a counter owed to the next step
+/// or of the PPU's dot counter can reach (the longest DMA is ~2^21 cycles).
+/// A state past it is hostile: added to on every step, it would overflow.
+const MAX_LIVE_CYCLES: u32 = 1 << 24;
+
+/// The affine accumulators start from a 28-bit register and gain at most 160
+/// lines of a 16-bit PB/PD before the next reload, so they stay well inside
+/// +-2^28; `affine_bg_rgb` adds PA/PC times 240 to them without wrapping.
+const MAX_AFFINE: i32 = 1 << 28;
 
 /// Bytes the v8 DMA latch block takes at the end of a state.
 #[cfg(test)]
@@ -33,6 +50,10 @@ const SIO_LEN: usize = 4;
 /// Bytes the v10 ROM identity takes at the end of a state.
 #[cfg(test)]
 const ROM_ID_LEN: usize = 4;
+
+/// Bytes the v11 live state takes at the end of a state.
+#[cfg(test)]
+const LIVE_LEN: usize = 4 + 1 + 16 + 2 + 4 + 4 + 4 + 8;
 
 /// Save state snapshot of the entire GBA emulator.
 pub struct SaveState {
@@ -168,6 +189,25 @@ impl SaveState {
         write_u32(&mut buf, gba.bus.sio_cycles);
 
         write_u32(&mut buf, gba.bus.cart.rom_crc());
+
+        // v11: live state between two steps.
+        let ppu = &gba.ppu;
+        write_u32(&mut buf, ppu.cycle_counter);
+        write_bool(&mut buf, ppu.line_rendered);
+        for v in [
+            ppu.bg2x_internal,
+            ppu.bg2y_internal,
+            ppu.bg3x_internal,
+            ppu.bg3y_internal,
+        ] {
+            write_i32(&mut buf, v);
+        }
+        write_bool(&mut buf, gba.bus.io.intr_wait_active);
+        write_bool(&mut buf, gba.bus.io.halt_swi);
+        write_u32(&mut buf, gba.bus.bios_latch);
+        write_u32(&mut buf, gba.cpu.entry_cycles);
+        write_u32(&mut buf, gba.dma_stall);
+        write_u64(&mut buf, gba.irq_since.unwrap_or(u64::MAX));
 
         SaveState { data: buf }
     }
@@ -369,15 +409,21 @@ impl SaveState {
             0
         };
 
-        // Last in the file, so checked last; the rollback undoes everything
-        // applied above. Without it a ROM hack's state - same header as the
-        // original, so the frontend offers the same slots - loaded and
-        // replaced this cart's battery save with the other game's.
+        // The rollback undoes everything applied above. Without it a ROM
+        // hack's state - same header as the original, so the frontend offers
+        // the same slots - loaded and replaced this cart's battery save with
+        // the other game's.
         if version >= 10 && read_u32(&mut cursor)? != gba.bus.cart.rom_crc() {
             return Err(SaveStateError::DifferentRom);
         }
 
-        Ok(())
+        sync_dispstat_cache(gba);
+        if version >= 11 {
+            restore_live(&mut cursor, gba)
+        } else {
+            derive_live(gba);
+            Ok(())
+        }
     }
 
     /// Save state to a file.
@@ -483,6 +529,75 @@ fn read_u32_array(r: &mut Cursor<&Vec<u8>>, arr: &mut [u32]) -> io::Result<()> {
     }
     Ok(())
 }
+/// The v11 live state. Left out before it, so a restored machine kept the
+/// target's own: the line boundary moved, a rotated background drew the
+/// wrong rows until VBlank, and a state saved in VBlankIntrWait woke a frame
+/// late.
+fn restore_live(r: &mut Cursor<&Vec<u8>>, gba: &mut Gba) -> Result<(), SaveStateError> {
+    let ppu = &mut gba.ppu;
+    ppu.cycle_counter = read_u32(r)?;
+    if ppu.cycle_counter > MAX_LIVE_CYCLES {
+        return Err(SaveStateError::Corrupt("PPU dot counter"));
+    }
+    ppu.line_rendered = read_bool(r)?;
+    for v in [
+        &mut ppu.bg2x_internal,
+        &mut ppu.bg2y_internal,
+        &mut ppu.bg3x_internal,
+        &mut ppu.bg3y_internal,
+    ] {
+        *v = read_i32(r)?;
+        if !(-MAX_AFFINE..MAX_AFFINE).contains(v) {
+            return Err(SaveStateError::Corrupt("affine reference accumulator"));
+        }
+    }
+    gba.bus.io.intr_wait_active = read_bool(r)?;
+    gba.bus.io.halt_swi = read_bool(r)?;
+    gba.bus.bios_latch = read_u32(r)?;
+    gba.cpu.entry_cycles = read_u32(r)?;
+    gba.dma_stall = read_u32(r)?;
+    if gba.cpu.entry_cycles > MAX_LIVE_CYCLES || gba.dma_stall > MAX_LIVE_CYCLES {
+        return Err(SaveStateError::Corrupt("cycles owed to the next step"));
+    }
+    gba.irq_since = match read_u64(r)? {
+        u64::MAX => None,
+        // A line raised in the future would hold the IRQ off until then.
+        at if at <= gba.cycles => Some(at),
+        _ => return Err(SaveStateError::Corrupt("IRQ line raised after now")),
+    };
+    Ok(())
+}
+
+/// The PPU's copies of DISPSTAT: the VCount match it edge-detects the IRQ
+/// on, and the three IRQ enables. Every PPU tick writes them back into
+/// DISPSTAT, so at a step boundary they are the restored register. Left as
+/// the target's, a state taken on the LYC line raised the VCount IRQ again.
+fn sync_dispstat_cache(gba: &mut Gba) {
+    let dispstat = gba.bus.io_read16(0x0400_0004);
+    let ppu = &mut gba.ppu;
+    ppu.vcount_match = dispstat & 0x0004 != 0;
+    ppu.dispstat_vblank_ie = dispstat & 0x0008 != 0;
+    ppu.dispstat_hblank_ie = dispstat & 0x0010 != 0;
+    ppu.dispstat_vcount_ie = dispstat & 0x0020 != 0;
+}
+
+/// A pre-v11 state carries no live state. Derive what the registers give and
+/// reset the rest as at power-on, so the result does not depend on what the
+/// target machine was running.
+fn derive_live(gba: &mut Gba) {
+    let ppu = &mut gba.ppu;
+    // Start of the line, or of its HBlank if the state was in one.
+    ppu.cycle_counter = if ppu.hblank { 960 } else { 0 };
+    ppu.line_rendered = ppu.hblank;
+    ppu.reload_affine_reference();
+    gba.bus.io.intr_wait_active = false;
+    gba.bus.io.halt_swi = false;
+    gba.bus.bios_latch = crate::memory::BIOS_AFTER_BOOT;
+    gba.cpu.entry_cycles = 0;
+    gba.dma_stall = 0;
+    gba.irq_since = None;
+}
+
 fn read_exact_vec(r: &mut Cursor<&Vec<u8>>, buf: &mut [u8]) -> io::Result<()> {
     r.read_exact(buf)
 }
@@ -617,7 +732,8 @@ mod tests {
     fn a_hostile_chip_state_is_rejected() {
         let mut state = SaveState::create(&machine_with(b"EEPROM_V124"));
         let len = state.data.len();
-        let chip_at = len - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
+        let chip_at =
+            len - LIVE_LEN - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN;
         let chip = &mut state.data[chip_at..];
         chip[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes()); // EEPROM block
         let mut target = machine_with(b"EEPROM_V124");
@@ -653,7 +769,7 @@ mod tests {
         let mut state = SaveState::create(&Gba::new());
         state
             .data
-            .truncate(state.data.len() - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN);
+            .truncate(state.data.len() - LIVE_LEN - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN);
         state.data[4..8].copy_from_slice(&7u32.to_le_bytes());
         let mut target = Gba::new();
         target.dma.channels[1].latch = 0xDEAD_BEEF;
@@ -666,7 +782,12 @@ mod tests {
     fn a_version_6_state_still_loads() {
         let mut state = SaveState::create(&machine_with(b"FLASH1M_V103"));
         state.data.truncate(
-            state.data.len() - ROM_ID_LEN - SIO_LEN - DMA_LATCHES_LEN - crate::cart::CHIP_STATE_LEN,
+            state.data.len()
+                - LIVE_LEN
+                - ROM_ID_LEN
+                - SIO_LEN
+                - DMA_LATCHES_LEN
+                - crate::cart::CHIP_STATE_LEN,
         );
         state.data[4..8].copy_from_slice(&6u32.to_le_bytes());
         assert!(state.restore(&mut machine_with(b"FLASH1M_V103")).is_ok());
@@ -686,11 +807,108 @@ mod tests {
     #[test]
     fn a_version_8_state_still_loads_with_no_serial_transfer() {
         let mut state = SaveState::create(&Gba::new());
-        state.data.truncate(state.data.len() - ROM_ID_LEN - SIO_LEN);
+        state
+            .data
+            .truncate(state.data.len() - LIVE_LEN - ROM_ID_LEN - SIO_LEN);
         state.data[4..8].copy_from_slice(&8u32.to_le_bytes());
         let mut target = Gba::new();
         target.bus.sio_cycles = 99;
         state.restore(&mut target).expect("v8 state should load");
         assert_eq!(target.bus.sio_cycles, 0);
+    }
+
+    /// The v11 block has exactly the length the offset tests assume.
+    #[test]
+    fn the_live_block_is_appended_last() {
+        let gba = Gba::new();
+        let mut v10 = SaveState::create(&gba);
+        v10.data.truncate(v10.data.len() - LIVE_LEN);
+        v10.data[4..8].copy_from_slice(&10u32.to_le_bytes());
+        let rom_crc = gba.bus.cart.rom_crc().to_le_bytes();
+        assert_eq!(v10.data[v10.data.len() - ROM_ID_LEN..], rom_crc);
+    }
+
+    /// v10 had no live state. It still loads, and the result is derived from
+    /// the state, not kept from the machine it was loaded into.
+    #[test]
+    fn a_version_10_state_still_loads_with_derived_live_state() {
+        let mut state = SaveState::create(&state_with_parts());
+        state.data.truncate(state.data.len() - LIVE_LEN);
+        state.data[4..8].copy_from_slice(&10u32.to_le_bytes());
+
+        let mut target = Gba::new();
+        target.ppu.cycle_counter = 700;
+        target.ppu.line_rendered = true;
+        target.ppu.bg2y_internal = 0x1234;
+        target.bus.io.intr_wait_active = true;
+        target.bus.io.halt_swi = true;
+        target.bus.bios_latch = 0xDEAD_BEEF;
+        target.cpu.entry_cycles = 45;
+        target.dma_stall = 99;
+        target.irq_since = Some(0);
+        state.restore(&mut target).expect("v10 state should load");
+
+        assert_eq!(
+            (target.ppu.cycle_counter, target.ppu.line_rendered),
+            (960, true),
+            "in HBlank: the dot is HBlank's start"
+        );
+        assert_eq!(target.ppu.bg2y_internal, 0x500, "reloaded from BG2Y");
+        assert!(target.ppu.vcount_match, "from DISPSTAT bit 2");
+        assert!(!target.bus.io.intr_wait_active && !target.bus.io.halt_swi);
+        assert_eq!(target.bus.bios_latch, crate::memory::BIOS_AFTER_BOOT);
+        assert_eq!(
+            (target.cpu.entry_cycles, target.dma_stall, target.irq_since),
+            (0, 0, None)
+        );
+    }
+
+    /// A machine in HBlank with BG2Y = 0x500 and DISPSTAT's VCount bit set.
+    fn state_with_parts() -> Gba {
+        let mut gba = Gba::new();
+        gba.ppu.hblank = true;
+        gba.ppu.bg2y = 0x500;
+        gba.bus.write16(0x0400_0004, 0x0004);
+        gba
+    }
+
+    /// Live values the machine cannot hold, each of which would overflow or
+    /// stall it, are refused.
+    #[test]
+    fn hostile_live_state_is_rejected() {
+        type Edit = fn(&mut Gba);
+        let cases: [(&str, Edit); 5] = [
+            ("dot counter", |g| g.ppu.cycle_counter = u32::MAX),
+            ("affine", |g| g.ppu.bg3x_internal = i32::MAX),
+            ("entry cycles", |g| g.cpu.entry_cycles = u32::MAX),
+            ("DMA stall", |g| g.dma_stall = 1 << 30),
+            ("IRQ in the future", |g| g.irq_since = Some(1_000)),
+        ];
+        for (what, edit) in cases {
+            let state = state_with(edit);
+            let mut target = Gba::new();
+            let before = SaveState::create(&target).data;
+            assert!(
+                matches!(state.restore(&mut target), Err(SaveStateError::Corrupt(_))),
+                "{what} was accepted"
+            );
+            assert_eq!(SaveState::create(&target).data, before, "{what}");
+        }
+    }
+
+    #[test]
+    fn real_live_state_is_accepted() {
+        let state = state_with(|g| {
+            g.cycles = 5_000;
+            g.ppu.cycle_counter = 1231;
+            g.ppu.bg2x_internal = -(1 << 27) - 160 * 0x8000;
+            g.cpu.entry_cycles = 48;
+            g.dma_stall = 1 << 21;
+            g.irq_since = Some(4_998);
+        });
+        let mut target = Gba::new();
+        state.restore(&mut target).expect("real values load");
+        assert_eq!(target.irq_since, Some(4_998));
+        assert_eq!(target.ppu.bg2x_internal, -(1 << 27) - 160 * 0x8000);
     }
 }

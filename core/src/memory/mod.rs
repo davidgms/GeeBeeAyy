@@ -51,8 +51,7 @@ pub struct MemoryBus {
     /// BIOS read returns while the CPU runs anywhere else (GBATEK, BIOS ROM
     /// read protection). `Cpu::step` refreshes it whenever it executes in
     /// the BIOS, and the HLE SWI path sets the value a real SWI leaves.
-    // ponytail: not in save states; the next SWI or IRQ (every frame in a
-    // game) restores it. Save it if a game is found reading the BIOS.
+    /// In a save state since v11.
     pub(crate) bios_latch: u32,
     /// Cycles left in a normal-mode serial transfer, 0 when none is running.
     pub sio_cycles: u32,

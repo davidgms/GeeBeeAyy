@@ -34,3 +34,5 @@ here pointing at it.
 - **2026-10-08** - [Layout-changing state fix goes first; anchor offset tests on a known value](2026-10-08-state-layout-tests-order-and-anchors.md)
 - **2026-10-08** - [State v10 ROM CRC, restore validation rules, probe tail offsets now 4 off (project memory)](../../memory.md)
 - **2026-10-12** - [load_save 0xFF fill, save_fit rule, jni_exports test misses one-line `@JvmStatic external fun` (project memory)](../../memory.md)
+- **2026-10-14** - [Per-field mutation proof and git-archive pre-fix run](2026-10-14-per-field-mutation-proof.md)
+- **2026-10-14** - [State v11 live-state fields, derived/skipped ones, tail-offset sites (project memory)](../../memory.md)

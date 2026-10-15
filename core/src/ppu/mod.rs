@@ -44,11 +44,11 @@ pub struct Ppu {
     /// Whether the current scanline has already been drawn. The line is
     /// drawn when HBlank starts, so this stops the line-end catch-up from
     /// drawing it a second time.
-    line_rendered: bool,
+    pub(crate) line_rendered: bool,
     vblank_irq_pending: bool,
     hblank_irq_pending: bool,
     vcount_irq_pending: bool,
-    vcount_match: bool,
+    pub(crate) vcount_match: bool,
     /// The sprite pixel on the current scanline, as (colour, priority), and
     /// `None` where no sprite drew. Per-scanline scratch, so it is
     /// deliberately not part of a save state.
@@ -80,7 +80,7 @@ pub struct Ppu {
     /// been written; without it `apply_alpha_blend` had nothing to mix with.
     scanline_second: [(u8, u8, u8); SCREEN_WIDTH],
     scanline_second_layer: [usize; SCREEN_WIDTH],
-    cycle_counter: u32,
+    pub(crate) cycle_counter: u32,
     pub bg_mode: u8,
     // Display control
     pub dispcnt: u16,
@@ -91,9 +91,9 @@ pub struct Ppu {
     bg3_enable: bool,
     obj_enable: bool,
     // DISPSTAT IRQ enable bits (read from game writes to DISPSTAT)
-    dispstat_vblank_ie: bool,
-    dispstat_hblank_ie: bool,
-    dispstat_vcount_ie: bool,
+    pub(crate) dispstat_vblank_ie: bool,
+    pub(crate) dispstat_hblank_ie: bool,
+    pub(crate) dispstat_vcount_ie: bool,
     // BG control registers
     pub bg0cnt: u16,
     pub bg1cnt: u16,
@@ -143,10 +143,10 @@ pub struct Ppu {
     winin: u16,
     winout: u16,
     // Internal affine reference point latches
-    bg2x_internal: i32,
-    bg2y_internal: i32,
-    bg3x_internal: i32,
-    bg3y_internal: i32,
+    pub(crate) bg2x_internal: i32,
+    pub(crate) bg2y_internal: i32,
+    pub(crate) bg3x_internal: i32,
+    pub(crate) bg3y_internal: i32,
 }
 
 impl Default for Ppu {
@@ -937,7 +937,7 @@ impl Ppu {
     /// deliberate at a glance. It also skipped the whole layer unless BGxCNT
     /// bit 7 was set, though affine backgrounds are always 256-colour and that
     /// bit means nothing for them.
-    fn reload_affine_reference(&mut self) {
+    pub(crate) fn reload_affine_reference(&mut self) {
         self.bg2x_internal = self.bg2x;
         self.bg2y_internal = self.bg2y;
         self.bg3x_internal = self.bg3x;
