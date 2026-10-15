@@ -37,7 +37,8 @@ on your device so you stay signed in; the password is never stored. Signing out
 removes them. If you never sign in, nothing is sent to RetroAchievements.
 
 **2. Cover art - only if you turn it on.** Cover art download is off by default.
-If you enable it in Settings, the app asks thumbnails.libretro.com for the box
+The first time the app finds games, it asks you once whether to turn it on;
+it stays off unless you say yes. If you enable it there or in Settings, the app asks thumbnails.libretro.com for the box
 art of a game, and the request contains the game's official title from the
 public No-Intro catalogue. The app finds that title from the code inside the
 game, or uses the file name only when it is exactly one of those catalogue
