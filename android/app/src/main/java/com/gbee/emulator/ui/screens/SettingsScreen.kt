@@ -18,6 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -122,6 +125,8 @@ fun SettingsScreen(
     var rateTip by remember { mutableStateOf(displaySettings.getRateTip()) }
     var volume by remember { mutableFloatStateOf(displaySettings.getVolume()) }
     var showRaLogin by remember { mutableStateOf(false) }
+    // Title and body of the open "How it works" dialog for import or export.
+    var saveInfo by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var coverCacheBytes by remember { mutableLongStateOf(CoverArt.cacheBytes(context)) }
     val layoutStore = remember { ControlLayoutStore(context) }
     var layouts by remember { mutableStateOf(layoutStore.getLayouts()) }
@@ -383,6 +388,7 @@ fun SettingsScreen(
                     title = stringResource(R.string.import_saves_title),
                     subtitle = importStatus ?: stringResource(R.string.import_saves_subtitle),
                     onClick = { if (!importBusy) savePicker.launch(null) },
+                    onInfo = { saveInfo = R.string.import_saves_info_title to R.string.import_saves_info },
                 )
             }
 
@@ -392,6 +398,7 @@ fun SettingsScreen(
                     title = stringResource(R.string.export_saves_title),
                     subtitle = exportStatus ?: stringResource(R.string.export_saves_subtitle),
                     onClick = { if (!exportBusy) exportPicker.launch(null) },
+                    onInfo = { saveInfo = R.string.export_saves_info_title to R.string.export_saves_info },
                 )
             }
 
@@ -851,11 +858,35 @@ fun SettingsScreen(
         RaLoginDialog(onDismiss = { showRaLogin = false })
     }
 
+    saveInfo?.let { (title, body) ->
+        AlertDialog(
+            onDismissRequest = { saveInfo = null },
+            containerColor = NightPanel,
+            titleContentColor = GoldenSaplight,
+            textContentColor = PineGlowMist,
+            title = { Text(stringResource(title), fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    stringResource(body),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { saveInfo = null }) {
+                    Text(stringResource(R.string.saves_info_close), color = GoldenSaplight)
+                }
+            },
+        )
+    }
+
     importRows?.let { rows ->
         SaveImportDialog(
             rows = rows,
             roms = roms,
             onToggle = { i -> importRows = importRows?.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
+            onSelectAll = { on -> importRows = importRows?.map { r -> if (r.importable) r.copy(selected = on) else r } },
             onPick = { i, rom ->
                 scope.launch(Dispatchers.IO) {
                     val updated = SaveImport.pick(context, rows[i], rom, GbaEngine::saveFit, GbaEngine::saveSize)
@@ -888,6 +919,7 @@ fun SettingsScreen(
         SaveExportDialog(
             rows = rows,
             onToggle = { i -> exportRows = exportRows?.mapIndexed { j, r -> if (i == j) r.copy(selected = !r.selected) else r } },
+            onSelectAll = { on -> exportRows = exportRows?.map { r -> r.copy(selected = on) } },
             onDismiss = { exportRows = null },
             onConfirm = {
                 exportRows = null
@@ -921,6 +953,7 @@ private fun SaveImportDialog(
     rows: List<SaveImportRow>,
     roms: List<RomEntry>,
     onToggle: (Int) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
     onPick: (Int, RomEntry) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -942,6 +975,9 @@ private fun SaveImportDialog(
         textContentColor = PineGlowMist,
         title = { Text(stringResource(R.string.import_saves_dialog_title), fontWeight = FontWeight.Bold) },
         text = {
+            Column {
+            val selectable = rows.count { it.importable }
+            SelectAllRow(all = selectable > 0 && chosen == selectable, enabled = selectable > 0, onChange = onSelectAll)
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(rows) { i, row ->
                     Row(verticalAlignment = Alignment.Top) {
@@ -952,7 +988,10 @@ private fun SaveImportDialog(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(row.fileName, fontSize = 14.sp)
-                            Text(row.rom?.name ?: "", fontSize = 12.sp, color = AmberResin)
+                            Text(
+                                listOfNotNull(row.rom?.name, row.slot?.let { stringResource(R.string.import_saves_state_slot, it) }).joinToString(" - "),
+                                fontSize = 12.sp, color = AmberResin,
+                            )
                             val mine = formatBytes(row.size) to formatTime(row.modified)
                             val note = when {
                                 row.rom == null -> stringResource(R.string.import_saves_no_match)
@@ -980,6 +1019,7 @@ private fun SaveImportDialog(
                     }
                 }
             }
+            }
         },
         confirmButton = {
             TextButton(onClick = onConfirm, enabled = chosen > 0) {
@@ -996,6 +1036,7 @@ private fun SaveImportDialog(
 private fun SaveExportDialog(
     rows: List<SaveExportRow>,
     onToggle: (Int) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -1010,12 +1051,16 @@ private fun SaveExportDialog(
             Column {
                 Text(stringResource(R.string.export_saves_warning), fontSize = 12.sp, color = AmberResin)
                 Spacer(modifier = Modifier.height(8.dp))
+                SelectAllRow(all = rows.isNotEmpty() && chosen == rows.size, enabled = rows.isNotEmpty(), onChange = onSelectAll)
                 LazyColumn(modifier = Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(rows) { i, row ->
                         Row(verticalAlignment = Alignment.Top) {
                             Checkbox(checked = row.selected, onCheckedChange = { onToggle(i) })
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(row.rom.name, fontSize = 14.sp)
+                                Text(
+                                    listOfNotNull(row.rom.name, row.slot?.let { stringResource(R.string.import_saves_state_slot, it) }).joinToString(" - "),
+                                    fontSize = 14.sp,
+                                )
                                 Text("-> ${row.targetName}", fontSize = 12.sp, color = AmberResin)
                                 val note = if (row.targetDocId == null) {
                                     stringResource(R.string.export_saves_new, formatBytes(row.saveSize))
@@ -1204,6 +1249,7 @@ fun SettingsItem(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
+    onInfo: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -1231,11 +1277,34 @@ fun SettingsItem(
                 color = PineGlowMist.copy(alpha = 0.6f),
             )
         }
+        if (onInfo != null) {
+            IconButton(onClick = onInfo) {
+                Icon(
+                    Icons.Outlined.Info,
+                    contentDescription = stringResource(R.string.saves_info_button),
+                    tint = GoldenSaplight,
+                )
+            }
+        }
         Icon(
             Icons.Default.ChevronRight,
             contentDescription = null,
             tint = PineGlowMist.copy(alpha = 0.4f),
         )
+    }
+}
+
+/** A "Select all" checkbox row; ticking it selects every row, unticking clears them. */
+@Composable
+private fun SelectAllRow(all: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = all, enabled = enabled, role = Role.Checkbox, onValueChange = onChange),
+    ) {
+        Checkbox(checked = all, onCheckedChange = null, enabled = enabled, modifier = Modifier.padding(12.dp))
+        Text(stringResource(R.string.saves_select_all), fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
 }
 

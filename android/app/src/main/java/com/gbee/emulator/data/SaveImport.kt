@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
+import java.io.File
 
 /**
  * Manual import of battery saves from another emulator's folder: find the
@@ -42,7 +43,10 @@ internal fun matchRom(saveName: String, roms: List<RomEntry>): RomEntry? {
 internal fun findSaves(rootDocId: String, children: (String) -> List<DocChild>?): List<DocChild>? {
     val seen = ArrayList<DocChild>()
     scanTree(rootDocId) { id -> children(id)?.also { seen += it } } ?: return null
-    return seen.filter { !it.isDir && isSaveName(it.name) && (it.size ?: 1L) in 1..MAX_SAVE_BYTES }
+    return seen.filter {
+        !it.isDir && (isSaveName(it.name) && (it.size ?: 1L) in 1..MAX_SAVE_BYTES ||
+            parseStateName(it.name) != null && (it.size ?: 1L) in 1..STATE_MAX_BYTES)
+    }
 }
 
 /** What No$GBA's compressed save format starts with. */
@@ -81,6 +85,10 @@ data class SaveImportRow(
     val existingSize: Long = 0L,
     val existingModified: Long = 0L,
     val selected: Boolean = false,
+    /** Null for a battery save; otherwise the save-state slot this file is for. */
+    val slot: Int? = null,
+    /** Document uri of the state's `.gbra` sidecar, when the folder has one. */
+    val raUri: String? = null,
 ) {
     val importable get() = keep != null
 }
@@ -100,9 +108,17 @@ object SaveImport {
         val found = findSaves(DocumentsContract.getTreeDocumentId(tree)) {
             RomFolderManager.listChildren(context, tree, it)
         } ?: return null
-        return found.map { f ->
-            val uri = DocumentsContract.buildDocumentUriUsingTree(tree, f.docId).toString()
-            row(context, f.name, uri, f.size ?: -1L, f.modified, matchRom(f.name, roms), saveFit, saveSize)
+        fun uriOf(f: DocChild) = DocumentsContract.buildDocumentUriUsingTree(tree, f.docId).toString()
+        val sidecars = found.filter { parseStateName(it.name)?.ra == true }.associateBy { it.name.lowercase() }
+        return found.filter { parseStateName(it.name)?.ra != true }.mapNotNull { f ->
+            val st = parseStateName(f.name)
+            // Only our own format: a state without the core's magic is not listed at all.
+            if (st != null && !runCatching { RomBytes.open(context, uriOf(f)).use { it.readNBytes(STATE_HEADER_BYTES) } }.map(::isGbeeState).getOrDefault(false)) {
+                return@mapNotNull null
+            }
+            val ra = st?.let { sidecars[f.name.lowercase().removeSuffix("gbstate") + "gbra"] }?.let(::uriOf)
+            val rom = matchRom(st?.let { it.base + ".gba" } ?: f.name, roms)
+            row(context, f.name, uriOf(f), f.size ?: -1L, f.modified, rom, saveFit, saveSize, st?.slot, ra)
         }
     }
 
@@ -113,7 +129,7 @@ object SaveImport {
         rom: RomEntry,
         saveFit: (ByteArray, Int) -> Int?,
         saveSize: (ByteArray) -> Int?,
-    ) = row(context, row.fileName, row.uri, row.size, row.modified, rom, saveFit, saveSize)
+    ) = row(context, row.fileName, row.uri, row.size, row.modified, rom, saveFit, saveSize, row.slot, row.raUri)
 
     private fun row(
         context: Context,
@@ -124,13 +140,24 @@ object SaveImport {
         rom: RomEntry?,
         saveFit: (ByteArray, Int) -> Int?,
         saveSize: (ByteArray) -> Int?,
+        slot: Int?,
+        raUri: String?,
     ): SaveImportRow {
-        val bare = SaveImportRow(name, uri, size, modified, rom)
+        val bare = SaveImportRow(name, uri, size, modified, rom, slot = slot, raUri = raUri)
         if (rom == null) return bare
         // One read of the game per row; the key and the fit check both need it.
         val cart = runCatching { RomBytes.read(context, rom.filePath) }.getOrNull() ?: return bare
-        val len = if (size >= 0) size else runCatching { read(context, uri).size.toLong() }.getOrNull() ?: return bare
+        val len = if (size >= 0) size else runCatching { read(context, uri, if (slot != null) STATE_MAX_BYTES else MAX_SAVE_BYTES).size.toLong() }.getOrNull() ?: return bare
         val key = RomHeader.stateKey(cart)
+        if (slot != null) {
+            val existing = stateTarget(context, key, slot).takeIf { it.isFile && it.length() > 0 }
+            // keep is only "fits" for a state: it is written whole.
+            return bare.copy(
+                size = len, key = key, keep = len.toInt(),
+                existingSize = existing?.length() ?: 0L, existingModified = existing?.lastModified() ?: 0L,
+                selected = existing == null,
+            )
+        }
         // A No$GBA container is refused whatever its size: one that happens to match a chip would import as garbage.
         val nocash = runCatching { isNocashSave(read(context, uri)) }.getOrDefault(false)
         val keep = if (nocash) null else saveFit(cart, len.toInt())
@@ -149,8 +176,21 @@ object SaveImport {
         )
     }
 
-    private fun read(context: Context, uri: String): ByteArray =
-        RomBytes.open(context, uri).use { it.readCapped(MAX_SAVE_BYTES) }
+    private fun read(context: Context, uri: String, cap: Long = MAX_SAVE_BYTES): ByteArray =
+        RomBytes.open(context, uri).use { it.readCapped(cap) }
+
+    private fun stateTarget(context: Context, key: String, slot: Int, ra: Boolean = false) =
+        File(File(context.filesDir, "states"), "${key}_slot$slot" + if (ra) ".ra" else ".state")
+
+    /** Write a state and its sidecar; an old sidecar with no new one is moved aside so it never pairs with the new state. */
+    private fun importState(context: Context, r: SaveImportRow, key: String, slot: Int): Boolean {
+        val bytes = read(context, r.uri, STATE_MAX_BYTES)
+        if (!isGbeeState(bytes) || !importStateFile(stateTarget(context, key, slot), bytes)) return false
+        val ra = stateTarget(context, key, slot, ra = true)
+        val new = r.raUri?.let { runCatching { read(context, it, STATE_MAX_BYTES) }.getOrNull() }
+        if (new != null) importStateFile(ra, new) else if (ra.isFile) ra.renameTo(File(ra.path + ".bak1"))
+        return true
+    }
 
     /**
      * Write the selected rows. [openGame] is the library id of the game now
@@ -173,11 +213,15 @@ object SaveImport {
                 // An open game whose key cannot be read could be any row's.
                 refused += r.rom?.name ?: key
                 skipped++
-            } else if (!done.add(key)) {
+            } else if (!done.add("$key#${r.slot}")) {
                 // Two files for one game: the first selected one wins.
                 skipped++
             } else {
-                val ok = runCatching { forceImportSave(RomFiles.privateSave(context, key), read(context, r.uri), keep) }
+                val slot = r.slot
+                val ok = runCatching {
+                    if (slot != null) importState(context, r, key, slot)
+                    else forceImportSave(RomFiles.privateSave(context, key), read(context, r.uri), keep)
+                }
                     .onFailure { Log.w(TAG, "import of ${r.fileName} failed: $it") }
                     .getOrDefault(false)
                 if (ok) imported++ else failed++
