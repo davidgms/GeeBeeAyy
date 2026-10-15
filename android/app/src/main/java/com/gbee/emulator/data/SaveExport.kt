@@ -49,6 +49,11 @@ data class SaveExportRow(
     val targetSize: Long = 0L,
     val targetModified: Long = 0L,
     val selected: Boolean = false,
+    /** Null for the battery save; otherwise the save-state slot this row carries. */
+    val slot: Int? = null,
+    /** The row is a state's `.ra` sidecar; it is only written along with [sidecar]'s owner. */
+    val ra: Boolean = false,
+    val sidecar: SaveExportRow? = null,
 )
 
 class SaveExportResult(val exported: Int, val skipped: Int, val failed: Int, val refused: List<String>)
@@ -63,25 +68,34 @@ object SaveExport {
     fun scan(context: Context, tree: Uri, roms: List<RomEntry>): List<SaveExportRow>? {
         val rootId = DocumentsContract.getTreeDocumentId(tree)
         val kids = RomFolderManager.listChildren(context, tree, rootId)?.filter { !it.isDir } ?: return null
-        val found = roms.filter { it.exists }.mapNotNull { rom ->
-            val key = RomFiles.stateKey(context, rom.filePath) ?: return@mapNotNull null
-            val save = RomFiles.privateSave(context, key).takeIf { it.isFile && it.length() > 0 } ?: return@mapNotNull null
-            Triple(rom, key, save)
-        }
-        val rows = dedupeBy(found) { it.second }.map { (rom, key, save) ->
-            val name = exportTargetName(rom.fileName, kids.map { it.name })
+        val names = kids.map { it.name }
+        fun row(rom: RomEntry, key: String, file: File, name: String, slot: Int?, ra: Boolean, side: SaveExportRow? = null): SaveExportRow {
             val there = kids.firstOrNull { it.name == name }
-            SaveExportRow(
+            return SaveExportRow(
                 rom = rom,
                 key = key,
                 targetName = name,
-                saveSize = save.length(),
+                saveSize = file.length(),
                 targetDocId = there?.docId,
                 targetSize = there?.size ?: 0L,
                 targetModified = there?.modified ?: 0L,
                 // A file already there is "leave it" until asked otherwise.
                 selected = there == null,
+                slot = slot,
+                ra = ra,
+                sidecar = side,
             )
+        }
+        val statesDir = File(context.filesDir, "states")
+        val rows = dedupeBy(roms.filter { it.exists }.mapNotNull { rom ->
+            RomFiles.stateKey(context, rom.filePath)?.let { rom to it }
+        }) { it.second }.flatMap { (rom, key) ->
+            val save = RomFiles.privateSave(context, key).takeIf { it.isFile && it.length() > 0 }
+            listOfNotNull(save?.let { row(rom, key, it, exportTargetName(rom.fileName, names), null, false) }) +
+                stateSlotFiles(statesDir, key).map { (slot, files) ->
+                    val side = files.second?.let { row(rom, key, it, stateExportName(rom.fileName, slot, true, names), slot, true) }
+                    row(rom, key, files.first, stateExportName(rom.fileName, slot, false, names), slot, false, side)
+                }
         }
         return dedupeBy(rows) { it.targetName }
     }
@@ -105,14 +119,8 @@ object SaveExport {
                 refused += r.rom.name
                 skipped++
             } else {
-                val bytes = runCatching { RomFiles.privateSave(context, r.key).readBytes() }.getOrNull()
-                if (bytes == null || bytes.isEmpty()) {
-                    failed++
-                    continue
-                }
-                val ok = runCatching { write(context, tree, r, bytes) }
-                    .onFailure { Log.w(TAG, "export of ${r.targetName} failed: $it") }
-                    .getOrElse { false }
+                val ok = put(context, tree, r)
+                if (ok != false) r.sidecar?.let { put(context, tree, it) }
                 when (ok) {
                     true -> exported++
                     null -> skipped++
@@ -123,6 +131,20 @@ object SaveExport {
         return SaveExportResult(exported, skipped, failed, refused)
     }
 
+    private fun source(context: Context, r: SaveExportRow): File = when {
+        r.slot == null -> RomFiles.privateSave(context, r.key)
+        else -> File(File(context.filesDir, "states"), "${r.key}_slot${r.slot}" + if (r.ra) ".ra" else ".state")
+    }
+
+    /** [write] of [r]'s own file; failures (unreadable, empty) come back as false. */
+    private fun put(context: Context, tree: Uri, r: SaveExportRow): Boolean? {
+        val bytes = runCatching { source(context, r).readBytes() }.getOrNull()
+        if (bytes == null || bytes.isEmpty()) return false
+        return runCatching { write(context, tree, r, bytes) }
+            .onFailure { Log.w(TAG, "export of ${r.targetName} failed: $it") }
+            .getOrElse { false }
+    }
+
     /**
      * True written and read back equal, null identical so left alone, false
      * failed. A failure leaves their folder as it was: a file we created is
@@ -130,7 +152,7 @@ object SaveExport {
      */
     private fun write(context: Context, tree: Uri, r: SaveExportRow, bytes: ByteArray): Boolean? {
         val resolver = context.contentResolver
-        fun readBack(uri: Uri) = RomBytes.open(context, uri.toString()).use { it.readCapped(MAX_SAVE_BYTES) }
+        fun readBack(uri: Uri) = RomBytes.open(context, uri.toString()).use { it.readCapped(STATE_MAX_BYTES) }
         fun put(uri: Uri, data: ByteArray) {
             // "wt": a plain "w" need not truncate, and a shorter save would keep a stale tail.
             (resolver.openOutputStream(uri, "wt") ?: throw FileNotFoundException(uri.toString())).use { it.write(data) }
