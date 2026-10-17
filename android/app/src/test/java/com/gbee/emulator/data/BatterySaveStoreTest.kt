@@ -258,4 +258,14 @@ class BatterySaveStoreTest {
         importLegacySave(document(byteArrayOf(8), 1_000_000L), saveFile())
         assertArrayEquals(byteArrayOf(8), saveFile().readBytes())
     }
+
+    /** Full storage left a 0-byte `.tmp` beside every save that failed. */
+    @Test
+    fun `a failed write leaves no temp file behind`() {
+        val target = File(folder.root, "GAME.sav")
+        // A non-empty directory where the save goes: the rename cannot land.
+        File(target, "child").apply { parentFile!!.mkdirs(); writeText("x") }
+        assertFalse(atomicWrite(target, byteArrayOf(1, 2, 3)))
+        assertFalse(File(folder.root, "GAME.sav.tmp").exists())
+    }
 }

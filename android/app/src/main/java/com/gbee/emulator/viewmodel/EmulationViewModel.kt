@@ -835,6 +835,9 @@ class EmulationViewModel(application: Application) : AndroidViewModel(applicatio
         val ok = store.flush()
         if (!ok) {
             Log.e(TAG, "Battery save write failed")
+            // The bytes stay pending and the next flush retries, but a player
+            // who quits now loses the in-game save, so they have to be told.
+            _stateMessage.value = "Could not write the game save - is storage full?"
         }
         return ok
     }
