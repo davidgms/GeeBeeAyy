@@ -626,18 +626,42 @@ fun EmulationScreen(
                         .weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    DPad(
-                        onKeyChange = onKeyChange,
+                    // L above the D-pad and Select under it, mirrored by R and
+                    // Start on the right. Landscape shipped without all four,
+                    // so a game could not get past its title screen sideways.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier
                             .padding(start = 16.dp)
                             .then(landscapeControlLayer),
-                        editingLayout = editingLayout,
-                        selectedButton = selectedButton,
-                        offsets = offsets,
-                        scales = scales,
-                        onDragStart = handleDragStart,
-                        onDragEnd = handleDragEnd,
-                    )
+                    ) {
+                        Box(
+                            Modifier.movableControl(
+                                ControlButton.SHOULDER_L, editingLayout, selectedButton, pillShape,
+                                offsets, handleDragStart, handleDragEnd, scales,
+                            )
+                        ) {
+                            PillButton("L", GbaEngine.KEY_L, onKeyChange)
+                        }
+                        DPad(
+                            onKeyChange = onKeyChange,
+                            editingLayout = editingLayout,
+                            selectedButton = selectedButton,
+                            offsets = offsets,
+                            scales = scales,
+                            onDragStart = handleDragStart,
+                            onDragEnd = handleDragEnd,
+                        )
+                        Box(
+                            Modifier.movableControl(
+                                ControlButton.SELECT, editingLayout, selectedButton, pillShape,
+                                offsets, handleDragStart, handleDragEnd, scales,
+                            )
+                        ) {
+                            PillButton("SELECT", GbaEngine.KEY_SELECT, onKeyChange)
+                        }
+                    }
                     ScreenContainer(
                         frames = frames,
                         isLoading = isLoading,
@@ -651,7 +675,7 @@ fun EmulationScreen(
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
                     // Landscape has the transport in the top bar too, so the
-                    // right-hand column is just the face buttons.
+                    // right-hand column is R, the face buttons and Start.
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -659,6 +683,14 @@ fun EmulationScreen(
                             .padding(end = 16.dp)
                             .then(landscapeControlLayer),
                     ) {
+                        Box(
+                            Modifier.movableControl(
+                                ControlButton.SHOULDER_R, editingLayout, selectedButton, pillShape,
+                                offsets, handleDragStart, handleDragEnd, scales,
+                            )
+                        ) {
+                            PillButton("R", GbaEngine.KEY_R, onKeyChange)
+                        }
                         ActionButtons(
                             onKeyChange = onKeyChange,
                             editingLayout = editingLayout,
@@ -668,6 +700,14 @@ fun EmulationScreen(
                             onDragStart = handleDragStart,
                             onDragEnd = handleDragEnd,
                         )
+                        Box(
+                            Modifier.movableControl(
+                                ControlButton.START, editingLayout, selectedButton, pillShape,
+                                offsets, handleDragStart, handleDragEnd, scales,
+                            )
+                        ) {
+                            PillButton("START", GbaEngine.KEY_START, onKeyChange)
+                        }
                     }
                 }
                 }

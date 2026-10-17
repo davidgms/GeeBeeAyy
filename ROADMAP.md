@@ -581,8 +581,10 @@ whole-codebase pass, before anything goes near a store.
       to its limits. Looking for states a player can reach and not get out of.
       Partly done, see [`docs/phase4-device-run-2026-10-01.md`](docs/phase4-device-run-2026-10-01.md):
       rapid input, save/load spam, backgrounding, ROM switching, activity
-      rebuilds, a dropped network and the layout editor pass. Not yet: rotation
-      by hand and low storage.
+      rebuilds, a dropped network and the layout editor pass. Rotation by hand
+      done on 2026-10-16: 43 turns mid-game kept the same process and the
+      game's place, but landscape had never shipped L, R, Start or Select
+      (fixed in #95). Not yet: low storage.
 - [ ] **Performance on a phone** - frame pacing and audio underruns over a long
       session, not a single reading; CPU, memory and battery drain; thermal
       throttling after sustained play; cold-start and ROM-load times; the cost
