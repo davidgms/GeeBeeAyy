@@ -206,13 +206,19 @@ private fun markImported(marker: File): Boolean =
  * The fsync matters - without it the rename can land while the bytes are
  * still only in the page cache, and a power loss leaves an empty file.
  */
-internal fun atomicWrite(target: File, bytes: ByteArray): Boolean = runCatching {
-    target.parentFile?.mkdirs()
+internal fun atomicWrite(target: File, bytes: ByteArray): Boolean {
     val tmp = File(target.parentFile, "${target.name}.tmp")
-    FileOutputStream(tmp).use { out ->
-        out.write(bytes)
-        out.flush()
-        out.fd.sync()
-    }
-    tmp.renameTo(target)
-}.getOrDefault(false)
+    val written = runCatching {
+        target.parentFile?.mkdirs()
+        FileOutputStream(tmp).use { out ->
+            out.write(bytes)
+            out.flush()
+            out.fd.sync()
+        }
+        tmp.renameTo(target)
+    }.getOrDefault(false)
+    // On a full disk the write fails part way; do not leave the empty or
+    // half-written tmp behind to hold on to space the player is short of.
+    if (!written) tmp.delete()
+    return written
+}

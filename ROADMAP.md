@@ -584,7 +584,10 @@ whole-codebase pass, before anything goes near a store.
       rebuilds, a dropped network and the layout editor pass. Rotation by hand
       done on 2026-10-16: 43 turns mid-game kept the same process and the
       game's place, but landscape had never shipped L, R, Start or Select
-      (fixed in #95). Not yet: low storage.
+      (fixed in #95). Low storage done on 2026-10-17 on an emulator with a
+      full `/data`: save states, load, exit and restart behave, but a failed
+      in-game (battery) save was only logged and left a 0-byte `.tmp`
+      (fixed in #96).
 - [ ] **Performance on a phone** - frame pacing and audio underruns over a long
       session, not a single reading; CPU, memory and battery drain; thermal
       throttling after sustained play; cold-start and ROM-load times; the cost
