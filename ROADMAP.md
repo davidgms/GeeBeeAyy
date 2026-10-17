@@ -596,6 +596,12 @@ whole-codebase pass, before anything goes near a store.
       keeps the panel at 50 Hz, so one frame in six never reaches the screen.
       The game now draws on its own `SurfaceView` with a 60 Hz vote; MIUI still
       overrides it. CPU fell from about 135% to 115% of a core.
+      2026-10-17, see [`docs/phase4-perf-run-2026-10-17.md`](docs/phase4-perf-run-2026-10-17.md):
+      30 minutes of a scrolling scene with no crash, flat memory, thermal
+      status 0, the game surface at 50 fps for the 50 Hz panel and one 7 ms
+      audio underrun. Start-up, ROM load and the cost of blending, fast
+      forward and 2xSaI measured. Not yet: battery drain (needs the cable
+      out) and achievements (needs a login).
 
 **Exit criterion:** every review finding is fixed or recorded as a decision,
 and the app holds its frame rate and audio over a long session on a phone.
