@@ -1459,3 +1459,20 @@ of Mario Tennis, Yggdra and Celeste identical after 1500 frames.
 - `core/tests/jni_exports.rs` only finds Kotlin externals on lines that START with `external fun` or
   `private external fun`. Put `@JvmStatic` (or any annotation/modifier) on the line above, or the
   export check silently skips that declaration.
+
+## 2026-10-14 - save state v11: live state between steps (rust-engineer)
+
+- A save state is taken **between two `Gba::step` calls**, so anything a step leaves set for the
+  next one is machine state, however "transient" its comment says. v11 appends (43 bytes, after the
+  ROM CRC): PPU `cycle_counter`, `line_rendered`, the four affine `bg*_internal`, `io.intr_wait_active`,
+  `io.halt_swi`, `bus.bios_latch`, `cpu.entry_cycles`, `Gba::dma_stall`, `Gba::irq_since`
+  (`u64::MAX` = None). `load_state` no longer clears `irq_since`.
+- Derived, not saved: the PPU's DISPSTAT copies (`vcount_match`, three IRQ enables) - every tick
+  writes them into DISPSTAT, so `sync_dispstat_cache` re-reads them on every restore. v6-v10 states
+  get `cycle_counter` 960/0 from `hblank`, affine reloaded from BGxX/Y, the rest power-on values.
+- Deliberately still unsaved (ceiling: a few cycles once): `cpu.fetch_n`, the prefetch buffer,
+  `timer.start_delay` (1 cycle). `frame_start` is reset to `cycles` at load (matters only mid-slice).
+- `core/tests/state_resume.rs` has the generic check: save at every step boundary of a timer-IRQ
+  loop, restore into a fresh machine, compare the trace. Use it when adding cross-step state.
+- A layout change moves tail offsets in: `core/tests/state_restore.rs` (`LIVE_LEN`), `core/tests/saves.rs`
+  (absurd-length test, `- 43`), `savestate.rs` unit tests, and `StateTransfer.kt` `STATE_VERSIONS`.

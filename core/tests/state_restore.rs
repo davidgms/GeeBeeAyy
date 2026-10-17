@@ -105,7 +105,7 @@ fn a_version_9_state_without_a_rom_identity_still_loads() {
     let mut gba = running(&rom);
     gba.run_frame();
     let mut v9 = gba.save_state().data;
-    v9.truncate(v9.len() - 4);
+    v9.truncate(v9.len() - 4 - LIVE_LEN);
     v9[4..8].copy_from_slice(&9u32.to_le_bytes());
     let mut other = running(&cart(&[0xE1A0_0000, 0xEAFF_FFFD], b"OLD", b"SRAM_V"));
     assert!(other.load_state(&SaveState { data: v9 }).is_ok());
@@ -120,9 +120,11 @@ const TIMER0_AT: usize = 8 + 152 + 24 + 1 + 68 + 115_200;
 /// The APU blob's length field; the blob opens with `sample_accum: u64`.
 const APU_LEN_AT: usize = 511_886;
 const SAMPLE_ACCUM_AT: usize = APU_LEN_AT + 4;
-/// Tail after `cycles`: chip state 18, DMA latches 16, SIO 4, ROM CRC 4.
-const CYCLES_FROM_END: usize = 8 + 18 + 16 + 4 + 4;
-const CHIP_FROM_END: usize = 18 + 16 + 4 + 4;
+/// Tail after `cycles`: chip state 18, DMA latches 16, SIO 4, ROM CRC 4,
+/// v11 live state 43.
+const LIVE_LEN: usize = 43;
+const CYCLES_FROM_END: usize = 8 + 18 + 16 + 4 + 4 + LIVE_LEN;
+const CHIP_FROM_END: usize = 18 + 16 + 4 + 4 + LIVE_LEN;
 
 fn idle() -> Gba {
     let mut gba = running(&cart(&[0xEAFF_FFFE], b"IDLE", b""));

@@ -41,11 +41,12 @@ pub struct Gba {
     /// `run_frame_slice`. Not machine state, so not in a save state.
     frame_start: u64,
     /// When the CPU's IRQ line (IE & IF with IME set) went high, for
-    /// `IRQ_DELAY`. A few cycles of state, so not in a save state either.
+    /// `IRQ_DELAY`. Survives a step boundary, so it is in a save state (v11).
     irq_since: Option<u64>,
     /// DMA cycles owed to the end of the next instruction: a transfer starts
     /// two cycles after the write that enabled it, which a one-cycle opcode
-    /// fetch and the access after it get in ahead of. Transient.
+    /// fetch and the access after it get in ahead of. Owed across a step
+    /// boundary, so it is in a save state (v11).
     dma_stall: u32,
 }
 
@@ -510,7 +511,6 @@ impl Gba {
         // A restored `cycles` from another frame would make a following
         // non-zero slice run far too long or not at all.
         self.frame_start = self.cycles;
-        self.irq_since = None;
         Ok(())
     }
 

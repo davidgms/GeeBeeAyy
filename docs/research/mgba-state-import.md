@@ -9,7 +9,7 @@ formats. Revisit only if players ask for mGBA specifically.
 ## Core-side findings (rust-engineer, read-only consult)
 
 - Our format (`core/src/savestate.rs`): magic `GBAS`, `SAVE_VERSION` 10,
-  versions 6 to 10 restore. Fixed-order little-endian fields, ending in the
+  versions 6 to 10 restore (11 since 2026-10-14, which appends live state). Fixed-order little-endian fields, ending in the
   ROM CRC-32, which must match.
 - Maps directly: registers and banks, CPSR/SPSRs, all memory regions, the I/O
   file, IE/IF/IME, WAITCNT, DMA registers, timer counter/reload/control, FIFO
@@ -24,7 +24,7 @@ formats. Revisit only if players ask for mGBA specifically.
   our stub).
 - Our own format also lacks the PPU dot position, the affine reference
   accumulators and the HLE IntrWait flags. That is an existing gap, not one
-  specific to import.
+  specific to import. (Closed by v11, 2026-10-14.)
 - Shape if built: a pure `from_mgba(bytes, &Gba)` in `core/` that emits our
   v10 layout and reuses `SaveState::restore`, one FFI function beside
   `gbee_state_write`, synthetic-blob tests in `core/tests/`. The frontend

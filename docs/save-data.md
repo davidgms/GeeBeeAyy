@@ -116,6 +116,15 @@ v10, for a state taken on a different ROM: v10 appends the ROM's CRC-32 and a
 mismatch is refused, because the state carries the battery save and would
 otherwise replace this cart's. v6-v9 states carry no CRC and still load.
 
+v11 appends the live state a machine carries between two instructions: the
+PPU's dot within the scanline and whether it has drawn the line, the affine
+reference accumulators, the HLE `IntrWait`/`Halt` flags, the BIOS read latch,
+and the cycles owed to the next step (exception entry, a DMA stall, the IRQ
+delay). Before it a restored machine kept the values of whatever it was
+running, so a state saved in `VBlankIntrWait` woke a frame late and the line
+timing moved. v6-v10 states still load with those derived or reset; see
+`core/tests/state_resume.rs`. Out-of-range values are refused like the rest.
+
 There is deliberately **no path-taking FFI**. Android hands out content URIs
 and file descriptors, not paths the core can `fs::write`. Storage policy is the
 frontend's job; bytes in, bytes out is the only honest boundary.
